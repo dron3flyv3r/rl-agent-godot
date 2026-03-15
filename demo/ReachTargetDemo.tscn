@@ -68,6 +68,7 @@ AgentConfig = SubResource("Resource_dj21h")
 shape = SubResource("CircleShape2D_cuwb5")
 
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1188714571]
+visible = false
 
 [node name="Panel" type="PanelContainer" parent="CanvasLayer" unique_id=1555430802]
 offset_left = 32.0

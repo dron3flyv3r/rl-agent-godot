@@ -18,5 +18,14 @@
         "titleBar.inactiveBackground": "#7378fb99",
         "titleBar.inactiveForeground": "#15202b99"
     },
-    "peacock.color": "#7378fb"
+    "peacock.color": "#7378fb",
+    "godotTools.editorPath.godot4": "/usr/lib/godot-mono/godot.linuxbsd.editor.x86_64.mono",
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/.DS_Store": true,
+        "**/Thumbs.db": true,
+        "**/*.uid": true
+    }
 }

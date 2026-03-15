@@ -38,6 +38,21 @@ public sealed class ObservationBuffer
         _values.Add(Mathf.Clamp(normalized, -1f, 1f));
     }
 
+    public void AddNormalized(Vector2 value, Vector2 min, Vector2 max)
+    {
+        AddNormalized(value.X, min.X, max.X);
+        AddNormalized(value.Y, min.Y, max.Y);
+    }
+
+    public void AddNormalized(Vector3 value, Vector3 min, Vector3 max)
+    {
+        AddNormalized(value.X, min.X, max.X);
+        AddNormalized(value.Y, min.Y, max.Y);
+        AddNormalized(value.Z, min.Z, max.Z);
+    }
+
+    public void AddNormalized(int value, int min, int max) => AddNormalized((float)value, (float)min, (float)max);
+
     internal float[] ToArray() => _values.ToArray();
     internal void Clear() => _values.Clear();
 }

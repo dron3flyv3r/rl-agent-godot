@@ -35,7 +35,6 @@ public partial class RLSetupDock : VBoxContainer
             ClipText = true,
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
         };
-        _scenePathLabel.AddThemeFontSizeOverride("font_size", 20);
         vbox.AddChild(_scenePathLabel);
 
         vbox.AddChild(MakeSpacer(4));
@@ -51,7 +50,6 @@ public partial class RLSetupDock : VBoxContainer
         {
             AutowrapMode = TextServer.AutowrapMode.WordSmart,
         };
-        _validationDetailLabel.AddThemeFontSizeOverride("font_size", 20);
         vbox.AddChild(_validationDetailLabel);
 
         vbox.AddChild(MakeSpacer(4));
@@ -65,7 +63,6 @@ public partial class RLSetupDock : VBoxContainer
             Text = "Configs: not resolved",
             AutowrapMode = TextServer.AutowrapMode.WordSmart,
         };
-        _configLabel.AddThemeFontSizeOverride("font_size", 20);
         vbox.AddChild(_configLabel);
 
         vbox.AddChild(MakeSpacer(6));
@@ -171,7 +168,7 @@ public partial class RLSetupDock : VBoxContainer
     private static Label MakeSectionHeader(string text)
     {
         var label = new Label { Text = text };
-        label.AddThemeFontSizeOverride("font_size", 24);
+        label.AddThemeFontSizeOverride("font_size", 13);
         return label;
     }
 

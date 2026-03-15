@@ -16,8 +16,9 @@ public sealed class TrainingLaunchManifest
     public string CheckpointPath { get; set; } = string.Empty;
     public string MetricsPath { get; set; } = string.Empty;
     public string StatusPath { get; set; } = string.Empty;
-    public int CheckpointSaveIntervalUpdates { get; set; } = 10;
+    public int CheckpointInterval { get; set; } = 10;
     public float SimulationSpeed { get; set; } = 1.0f;
+    public int ActionRepeat { get; set; } = 1;
 
     public static TrainingLaunchManifest CreateDefault() => new();
 
@@ -79,8 +80,9 @@ public sealed class TrainingLaunchManifest
             CheckpointPath = ReadString(data, nameof(CheckpointPath)),
             MetricsPath = ReadString(data, nameof(MetricsPath)),
             StatusPath = ReadString(data, nameof(StatusPath)),
-            CheckpointSaveIntervalUpdates = ReadInt(data, nameof(CheckpointSaveIntervalUpdates), 10),
+            CheckpointInterval = ReadInt(data, nameof(CheckpointInterval), 10),
             SimulationSpeed = ReadFloat(data, nameof(SimulationSpeed), 1.0f),
+            ActionRepeat = ReadInt(data, nameof(ActionRepeat), 1),
         };
     }
 
@@ -97,8 +99,9 @@ public sealed class TrainingLaunchManifest
             { nameof(CheckpointPath), CheckpointPath },
             { nameof(MetricsPath), MetricsPath },
             { nameof(StatusPath), StatusPath },
-            { nameof(CheckpointSaveIntervalUpdates), CheckpointSaveIntervalUpdates },
+            { nameof(CheckpointInterval), CheckpointInterval },
             { nameof(SimulationSpeed), SimulationSpeed },
+            { nameof(ActionRepeat), ActionRepeat },
         };
     }
 

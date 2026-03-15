@@ -55,10 +55,10 @@ public partial class RLDashboard : Control
     private FileDialog?     _exportDialog;
 
     // ── State ────────────────────────────────────────────────────────────────
-    private readonly List<Metric> _metrics = new();
-    private readonly List<string> _runIds  = new();
-    private string _selectedRunId      = "";
-    private long   _metricsFileOffset;
+    private readonly List<Metric>              _metrics            = new();
+    private readonly List<string>              _runIds             = new();
+    private readonly Dictionary<string, long>  _metricsFileOffsets = new();
+    private string _selectedRunId = "";
     private double _pollTimer;
     private double _livePulseAccum;
     private bool   _isLive;
@@ -434,8 +434,8 @@ public partial class RLDashboard : Control
 
     private void SelectRun(string runId)
     {
-        _selectedRunId     = runId;
-        _metricsFileOffset = 0;
+        _selectedRunId = runId;
+        _metricsFileOffsets.Clear();
         _metrics.Clear();
 
         var idx = _runIds.IndexOf(runId);
@@ -471,8 +471,13 @@ public partial class RLDashboard : Control
 
         if (string.IsNullOrEmpty(_selectedRunId)) return;
 
-        var runDir = $"res://RL-Agent-Training/runs/{_selectedRunId}";
-        ReadNewMetrics($"{runDir}/metrics.jsonl");
+        var runDir    = $"res://RL-Agent-Training/runs/{_selectedRunId}";
+        var runDirAbs = ProjectSettings.GlobalizePath(runDir);
+        if (System.IO.Directory.Exists(runDirAbs))
+        {
+            foreach (var file in System.IO.Directory.GetFiles(runDirAbs, "metrics__*.jsonl"))
+                ReadNewMetrics(file, absolute: true);
+        }
         var status = ReadStatusFile($"{runDir}/status.json");
         SetStatusUi(status);
         RefreshCharts();
@@ -486,19 +491,22 @@ public partial class RLDashboard : Control
         }
     }
 
-    private void ReadNewMetrics(string resPath)
+    private void ReadNewMetrics(string path, bool absolute = false)
     {
-        var absPath = ProjectSettings.GlobalizePath(resPath);
+        var absPath = absolute ? path : ProjectSettings.GlobalizePath(path);
         if (!System.IO.File.Exists(absPath)) return;
+
+        if (!_metricsFileOffsets.TryGetValue(absPath, out var offset))
+            offset = 0;
 
         try
         {
             using var stream = new System.IO.FileStream(
                 absPath, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite);
 
-            if (stream.Length <= _metricsFileOffset) return;
+            if (stream.Length <= offset) return;
 
-            stream.Seek(_metricsFileOffset, System.IO.SeekOrigin.Begin);
+            stream.Seek(offset, System.IO.SeekOrigin.Begin);
             using var reader = new System.IO.StreamReader(stream, leaveOpen: true);
 
             string? line;
@@ -509,7 +517,7 @@ public partial class RLDashboard : Control
                 if (m is not null) _metrics.Add(m);
             }
 
-            _metricsFileOffset = stream.Position;
+            _metricsFileOffsets[absPath] = stream.Position;
         }
         catch (Exception ex)
         {

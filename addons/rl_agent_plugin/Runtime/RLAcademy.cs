@@ -7,22 +7,69 @@ namespace RlAgentPlugin.Runtime;
 [GlobalClass]
 public partial class RLAcademy : Node
 {
-    [Export] public RLTrainerConfig? TrainerConfig { get; set; }
-    [Export] public RLNetworkConfig? NetworkConfig { get; set; }
-    [Export] public RLCheckpoint? Checkpoint { get; set; }
+    private RLTrainerConfig? _trainerConfig;
+    private RLNetworkConfig? _networkConfig;
 
-    [ExportGroup("Training")]
+    [ExportGroup("Configuration")]
+    [Export]
+    public RLTrainerConfig? TrainerConfig
+    {
+        get => _trainerConfig;
+        set { _trainerConfig = value; UpdateConfigurationWarnings(); }
+    }
+
+    [Export]
+    public RLNetworkConfig? NetworkConfig
+    {
+        get => _networkConfig;
+        set { _networkConfig = value; UpdateConfigurationWarnings(); }
+    }
+
+    [ExportGroup("Training Run")]
     [Export] public string RunPrefix { get; set; } = string.Empty;
-    [Export] public int CheckpointSaveIntervalUpdates { get; set; } = 10;
     [Export] public float SimulationSpeed { get; set; } = 1.0f;
+    // Number of gradient update steps between checkpoint saves
+    [Export] public int CheckpointInterval { get; set; } = 10;
+    // How many physics ticks to repeat each action before sampling the next one (1 = every tick)
+    [Export] public int ActionRepeat { get; set; } = 1;
+
+    [ExportGroup("Inference")]
+    [Export] public RLCheckpoint? Checkpoint { get; set; }
 
     public bool InferenceActive { get; private set; }
 
+    public override string[] _GetConfigurationWarnings()
+    {
+        var warnings = new List<string>();
+        if (TrainerConfig is null)
+            warnings.Add("TrainerConfig is not assigned. Assign a RLTrainerConfig resource.");
+        if (NetworkConfig is null)
+            warnings.Add("NetworkConfig is not assigned. Assign a RLNetworkConfig resource.");
+        return warnings.ToArray();
+    }
+
     private readonly Dictionary<RLAgent2D, PolicyValueNetwork> _agentInferenceNetworks = new();
+    private readonly Dictionary<RLAgent2D, int> _inferenceStepCounters = new();
+    private double _previousTimeScale = 1.0;
 
     public override void _Ready()
     {
         TryInitializeInference();
+
+        // Apply simulation speed when running outside of TrainingBootstrap (which manages it on its own).
+        if (ResolveSceneRoot().GetParent() is not TrainingBootstrap)
+        {
+            _previousTimeScale = Engine.TimeScale;
+            Engine.TimeScale = Math.Max(0.1f, SimulationSpeed);
+        }
+    }
+
+    public override void _ExitTree()
+    {
+        if (ResolveSceneRoot().GetParent() is not TrainingBootstrap)
+        {
+            Engine.TimeScale = _previousTimeScale;
+        }
     }
 
     public override void _PhysicsProcess(double delta)
@@ -31,6 +78,8 @@ public partial class RLAcademy : Node
         {
             return;
         }
+
+        var repeat = Math.Max(1, ActionRepeat);
 
         foreach (var pair in _agentInferenceNetworks)
         {
@@ -41,15 +90,29 @@ public partial class RLAcademy : Node
             if (agent.ConsumeDonePending())
             {
                 agent.ResetEpisode();
+                _inferenceStepCounters[agent] = 0;
             }
 
-            var observation = agent.GetObservation();
-            if (observation.Length == 0)
+            _inferenceStepCounters.TryGetValue(agent, out var stepCount);
+            stepCount++;
+            _inferenceStepCounters[agent] = stepCount;
+
+            if (stepCount >= repeat)
             {
-                continue;
-            }
+                _inferenceStepCounters[agent] = 0;
+                var observation = agent.GetObservation();
+                if (observation.Length == 0)
+                {
+                    continue;
+                }
 
-            agent.ApplyAction(network.SelectGreedyAction(observation));
+                agent.ApplyAction(network.SelectGreedyAction(observation));
+            }
+            else
+            {
+                // Re-apply current action so physics-driven movement continues each tick.
+                agent.ApplyAction(agent.CurrentActionIndex);
+            }
         }
     }
 

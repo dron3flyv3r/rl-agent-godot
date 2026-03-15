@@ -232,8 +232,9 @@ public partial class RLAgentPluginEditor : EditorPlugin
         manifest.NetworkConfigPath = validation.NetworkConfigPath;
         manifest.MetricsPath = $"{manifest.RunDirectory}/metrics.jsonl";
         manifest.StatusPath = $"{manifest.RunDirectory}/status.json";
-        manifest.CheckpointSaveIntervalUpdates = validation.CheckpointSaveIntervalUpdates;
+        manifest.CheckpointInterval = validation.CheckpointInterval;
         manifest.SimulationSpeed = validation.SimulationSpeed;
+        manifest.ActionRepeat = validation.ActionRepeat;
 
         var writeError = manifest.SaveToUserStorage();
         if (writeError != Error.Ok)
@@ -366,14 +367,15 @@ public partial class RLAgentPluginEditor : EditorPlugin
                 if (IsAgentNode(node))
                 {
                     var agentName = node.Name.ToString();
-                    var agentConfig = ReadResourceProperty(node, "AgentConfig") as RLAgentConfig;
                     validation.AgentNames.Add(string.IsNullOrWhiteSpace(agentName) ? "RLAgent2D" : agentName);
 
-                    var controlMode = agentConfig?.ControlMode ?? RLAgentControlMode.Train;
+                    // ControlMode and PolicyGroup are now inline exports on the node;
+                    // AgentConfig priority is baked into the property getters.
+                    var controlMode = ReadAgentControlMode(node);
                     if (controlMode == RLAgentControlMode.Train)
                     {
                         validation.TrainAgentCount += 1;
-                        var group = agentConfig?.PolicyGroup ?? string.Empty;
+                        var group = ReadStringProperty(node, "PolicyGroup");
                         if (string.IsNullOrEmpty(group))
                         {
                             group = $"__agent__{node.Name}";
@@ -404,8 +406,9 @@ public partial class RLAgentPluginEditor : EditorPlugin
                 validation.NetworkConfigPath = networkConfig?.ResourcePath ?? string.Empty;
                 validation.CheckpointPath = checkpoint?.ResourcePath ?? string.Empty;
                 validation.RunPrefix = ReadStringProperty(academy, "RunPrefix");
-                validation.CheckpointSaveIntervalUpdates = ReadIntProperty(academy, "CheckpointSaveIntervalUpdates", 10);
+                validation.CheckpointInterval = ReadIntProperty(academy, "CheckpointInterval", 10);
                 validation.SimulationSpeed = ReadFloatProperty(academy, "SimulationSpeed", 1.0f);
+                validation.ActionRepeat = ReadIntProperty(academy, "ActionRepeat", 1);
 
                 if (trainerConfigRes is null)
                 {
@@ -573,6 +576,19 @@ public partial class RLAgentPluginEditor : EditorPlugin
 
         var actionBinding = ResolveActionBinding(node);
         return actionBinding?.SupportsOnlyDiscreteActions ?? true;
+    }
+
+    private static RLAgentControlMode ReadAgentControlMode(Node node)
+    {
+        if (node is RLAgent2D agent)
+        {
+            return agent.ControlMode;
+        }
+
+        var variant = node.Get("ControlMode");
+        return variant.VariantType == Variant.Type.Int
+            ? (RLAgentControlMode)(int)variant
+            : RLAgentControlMode.Train;
     }
 
     private static Resource? ReadResourceProperty(Node node, string propertyName)

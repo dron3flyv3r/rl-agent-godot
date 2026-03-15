@@ -1,0 +1,158 @@
+[gd_scene format=3 uid="uid://4x0lwgom1myl"]
+
+[ext_resource type="Script" uid="uid://6k7h4e3y50oa" path="res://demo/TagArenaController.cs" id="1"]
+[ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/RLAcademy.cs" id="2"]
+[ext_resource type="Script" uid="uid://c36ruewg8fhfr" path="res://addons/rl_agent_plugin/Resources/RLTrainerConfig.cs" id="3"]
+[ext_resource type="Script" uid="uid://bnag1testwvvq" path="res://addons/rl_agent_plugin/Resources/RLNetworkConfig.cs" id="4"]
+[ext_resource type="Script" uid="uid://cyyxb04k8uacu" path="res://demo/TagAgent.cs" id="5"]
+[ext_resource type="Script" uid="uid://bdrwoeuh2mcbl" path="res://demo/TagPlayer.cs" id="6"]
+
+[sub_resource type="Resource" id="TrainerConfig"]
+script = ExtResource("3")
+MaxEpisodeSteps = 240
+
+[sub_resource type="Resource" id="NetworkConfig"]
+script = ExtResource("4")
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_q38m4"]
+radius = 14.0
+
+[sub_resource type="LabelSettings" id="TitleSettings"]
+font_size = 20
+font_color = Color(0.968627, 0.976471, 0.956863, 1)
+
+[sub_resource type="LabelSettings" id="BodySettings"]
+font_size = 14
+font_color = Color(0.792157, 0.858824, 0.8, 1)
+
+[node name="TagDemo" type="Node2D" unique_id=1899410076]
+script = ExtResource("1")
+ControlledAgent = 0
+
+[node name="ArenaBackdrop" type="Polygon2D" parent="." unique_id=292530115]
+color = Color(0.0823529, 0.152941, 0.12549, 1)
+polygon = PackedVector2Array(96, 96, 704, 96, 704, 416, 96, 416)
+
+[node name="ArenaBorder" type="Line2D" parent="." unique_id=1858214021]
+points = PackedVector2Array(96, 96, 704, 96, 704, 416, 96, 416, 96, 96)
+width = 4.0
+default_color = Color(0.596078, 0.882353, 0.65098, 1)
+
+[node name="CenterLine" type="Line2D" parent="." unique_id=973201875]
+points = PackedVector2Array(400, 96, 400, 416)
+width = 2.0
+default_color = Color(0.34902, 0.596078, 0.423529, 1)
+
+[node name="Academy" type="Node" parent="." unique_id=1794390983]
+script = ExtResource("2")
+TrainerConfig = SubResource("TrainerConfig")
+NetworkConfig = SubResource("NetworkConfig")
+RunPrefix = "TagDemo"
+SimulationSpeed = 12.0
+ActionRepeat = 4
+
+[node name="ChaserA" type="CharacterBody2D" parent="." unique_id=1432916565]
+position = Vector2(220, 160)
+script = ExtResource("6")
+Role = 0
+
+[node name="Agent" type="Node2D" parent="ChaserA" unique_id=1690261792]
+script = ExtResource("5")
+AgentId = "ChaserA"
+MaxEpisodeSteps = 240
+
+[node name="Visual" type="Polygon2D" parent="ChaserA" unique_id=693159168]
+color = Color(0.937255, 0.4, 0.364706, 1)
+polygon = PackedVector2Array(0, -16, 14, 0, 0, 16, -14, 0)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="ChaserA" unique_id=718592230]
+shape = SubResource("CircleShape2D_q38m4")
+
+[node name="ChaserB" type="CharacterBody2D" parent="." unique_id=529484080]
+position = Vector2(220, 320)
+script = ExtResource("6")
+Role = 0
+
+[node name="Agent" type="Node2D" parent="ChaserB" unique_id=1464470303]
+script = ExtResource("5")
+AgentId = "ChaserB"
+MaxEpisodeSteps = 240
+
+[node name="Visual" type="Polygon2D" parent="ChaserB" unique_id=1562436759]
+color = Color(0.890196, 0.301961, 0.27451, 1)
+polygon = PackedVector2Array(0, -16, 14, 0, 0, 16, -14, 0)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="ChaserB" unique_id=1673189355]
+shape = SubResource("CircleShape2D_q38m4")
+
+[node name="RunnerA" type="CharacterBody2D" parent="." unique_id=1317511240]
+position = Vector2(580, 160)
+script = ExtResource("6")
+
+[node name="Agent" type="Node2D" parent="RunnerA" unique_id=1105293076]
+script = ExtResource("5")
+AgentId = "RunnerA"
+MaxEpisodeSteps = 240
+
+[node name="Visual" type="Polygon2D" parent="RunnerA" unique_id=657237264]
+color = Color(0.298039, 0.741176, 0.941176, 1)
+polygon = PackedVector2Array(-14, -14, 14, -14, 14, 14, -14, 14)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="RunnerA" unique_id=191126213]
+shape = SubResource("CircleShape2D_q38m4")
+
+[node name="RunnerB" type="CharacterBody2D" parent="." unique_id=2122069439]
+position = Vector2(580, 320)
+script = ExtResource("6")
+
+[node name="Agent" type="Node2D" parent="RunnerB" unique_id=1113519001]
+script = ExtResource("5")
+AgentId = "RunnerB"
+MaxEpisodeSteps = 240
+
+[node name="Visual" type="Polygon2D" parent="RunnerB" unique_id=1444018664]
+color = Color(0.207843, 0.596078, 0.901961, 1)
+polygon = PackedVector2Array(-14, -14, 14, -14, 14, 14, -14, 14)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="RunnerB" unique_id=1283470595]
+shape = SubResource("CircleShape2D_q38m4")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1837841690]
+visible = false
+
+[node name="Panel" type="PanelContainer" parent="CanvasLayer" unique_id=399019360]
+offset_left = 24.0
+offset_top = 24.0
+offset_right = 520.0
+offset_bottom = 176.0
+
+[node name="Margin" type="MarginContainer" parent="CanvasLayer/Panel" unique_id=374918277]
+layout_mode = 2
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="VBox" type="VBoxContainer" parent="CanvasLayer/Panel/Margin" unique_id=1560798208]
+layout_mode = 2
+
+[node name="TitleLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=1215224201]
+layout_mode = 2
+text = "Multi-Agent Tag Demo"
+label_settings = SubResource("TitleSettings")
+
+[node name="ModeLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=1015167285]
+layout_mode = 2
+text = "Mode:"
+label_settings = SubResource("BodySettings")
+
+[node name="StatusLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=509496059]
+layout_mode = 2
+text = "Status:"
+label_settings = SubResource("BodySettings")
+
+[node name="FooterLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=2042812781]
+layout_mode = 2
+text = "Controls:"
+label_settings = SubResource("BodySettings")
+autowrap_mode = 3

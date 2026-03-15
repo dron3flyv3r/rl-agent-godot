@@ -25,7 +25,8 @@ public partial class TrainingBootstrap : Node
 
     private long _totalSteps;
     private double _previousTimeScale = 1.0;
-    private int _checkpointSaveIntervalUpdates = 10;
+    private int _checkpointInterval = 10;
+    private int _actionRepeat = 1;
 
     public override void _Ready()
     {
@@ -83,7 +84,8 @@ public partial class TrainingBootstrap : Node
             groupedAgents[group].Add(agent);
         }
 
-        _checkpointSaveIntervalUpdates = Math.Max(1, _manifest.CheckpointSaveIntervalUpdates);
+        _checkpointInterval = Math.Max(1, _manifest.CheckpointInterval);
+        _actionRepeat = Math.Max(1, _manifest.ActionRepeat);
         _previousTimeScale = Engine.TimeScale;
         Engine.TimeScale = Math.Max(0.1f, _manifest.SimulationSpeed);
 
@@ -215,48 +217,66 @@ public partial class TrainingBootstrap : Node
             agent.TickStep();
             var reward = agent.ConsumePendingReward();
             agent.AccumulateReward(reward);
+            state.WindowReward += reward;
+            state.StepsSinceDecision++;
+
             var done = agent.ConsumeDonePending() || agent.HasReachedEpisodeLimit();
-            var nextObservation = agent.GetObservation();
-            var nextValue = done ? 0.0f : trainer.EstimateValue(nextObservation);
 
-            var transition = new Transition
+            if (done || state.StepsSinceDecision >= _actionRepeat)
             {
-                Observation = state.LastObservation,
-                DiscreteAction = state.PendingAction,
-                ContinuousActions = state.PendingContinuousActions,
-                Reward = reward,
-                Done = done,
-                NextObservation = nextObservation,
-                OldLogProbability = state.LastLogProbability,
-                Value = state.LastValue,
-                NextValue = nextValue,
-            };
-            trainer.RecordTransition(transition);
-            _totalSteps += 1;
+                var nextObservation = agent.GetObservation();
+                var nextValue = done ? 0.0f : trainer.EstimateValue(nextObservation);
 
-            if (done)
-            {
-                _episodeCountByGroup[state.GroupId] += 1;
-                var episodeCount = _episodeCountByGroup[state.GroupId];
-                _metricsWritersByGroup[state.GroupId].AppendMetric(
-                    agent.EpisodeReward, agent.EpisodeSteps,
-                    _lastPolicyLossByGroup[state.GroupId],
-                    _lastValueLossByGroup[state.GroupId],
-                    _lastEntropyByGroup[state.GroupId],
-                    _totalSteps, episodeCount);
+                var transition = new Transition
+                {
+                    Observation = state.LastObservation,
+                    DiscreteAction = state.PendingAction,
+                    ContinuousActions = state.PendingContinuousActions,
+                    Reward = state.WindowReward,
+                    Done = done,
+                    NextObservation = nextObservation,
+                    OldLogProbability = state.LastLogProbability,
+                    Value = state.LastValue,
+                    NextValue = nextValue,
+                };
+                trainer.RecordTransition(transition);
+                _totalSteps += 1;
 
-                agent.ResetEpisode();
-                nextObservation = agent.GetObservation();
+                state.WindowReward = 0f;
+                state.StepsSinceDecision = 0;
+
+                if (done)
+                {
+                    _episodeCountByGroup[state.GroupId] += 1;
+                    var episodeCount = _episodeCountByGroup[state.GroupId];
+                    _metricsWritersByGroup[state.GroupId].AppendMetric(
+                        agent.EpisodeReward, agent.EpisodeSteps,
+                        _lastPolicyLossByGroup[state.GroupId],
+                        _lastValueLossByGroup[state.GroupId],
+                        _lastEntropyByGroup[state.GroupId],
+                        _totalSteps, episodeCount);
+
+                    agent.ResetEpisode();
+                    nextObservation = agent.GetObservation();
+                }
+
+                var nextDecision = trainer.SampleAction(nextObservation);
+                state.LastObservation = nextObservation;
+                state.PendingAction = nextDecision.DiscreteAction;
+                state.PendingContinuousActions = nextDecision.ContinuousActions;
+                state.LastLogProbability = nextDecision.LogProbability;
+                state.LastValue = nextDecision.Value;
+                _lastEntropyByGroup[state.GroupId] = nextDecision.Entropy;
+                ApplyDecision(agent, nextDecision);
             }
-
-            var nextDecision = trainer.SampleAction(nextObservation);
-            state.LastObservation = nextObservation;
-            state.PendingAction = nextDecision.DiscreteAction;
-            state.PendingContinuousActions = nextDecision.ContinuousActions;
-            state.LastLogProbability = nextDecision.LogProbability;
-            state.LastValue = nextDecision.Value;
-            _lastEntropyByGroup[state.GroupId] = nextDecision.Entropy;
-            ApplyDecision(agent, nextDecision);
+            else
+            {
+                // Re-apply the same action so physics-driven movement continues each tick.
+                if (state.PendingAction >= 0)
+                    agent.ApplyAction(state.PendingAction);
+                else if (state.PendingContinuousActions.Length > 0)
+                    agent.ApplyAction(state.PendingContinuousActions);
+            }
         }
 
         // Per-group updates
@@ -274,7 +294,7 @@ public partial class TrainingBootstrap : Node
                 lastCheckpoint = updateStats.Checkpoint;
 
                 var checkpointPath = GetGroupCheckpointPath(groupId);
-                if (checkpointPath is not null && _updateCountByGroup[groupId] % _checkpointSaveIntervalUpdates == 0)
+                if (checkpointPath is not null && _updateCountByGroup[groupId] % _checkpointInterval == 0)
                 {
                     RLCheckpoint.SaveToFile(updateStats.Checkpoint, checkpointPath);
                 }
@@ -375,5 +395,7 @@ public partial class TrainingBootstrap : Node
         public float[] PendingContinuousActions { get; set; } = Array.Empty<float>();
         public float LastLogProbability { get; set; }
         public float LastValue { get; set; }
+        public float WindowReward { get; set; }
+        public int StepsSinceDecision { get; set; }
     }
 }

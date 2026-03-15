@@ -14,16 +14,47 @@ public partial class RLAgent2D : Node2D
     private float _pendingReward;
     private bool _donePending;
     private string _agentId = "Agent";
+    private RLAgentControlMode _inlineControlMode = RLAgentControlMode.Train;
+    private string _inlinePolicyGroup = string.Empty;
+    private string _inlineInferenceCheckpointPath = string.Empty;
+    private RLAgentConfig? _agentConfig;
 
     [Export] public string AgentId { get => string.IsNullOrEmpty(_agentId) ? "Agent" : _agentId; set => _agentId = value; }
     [Export] public int MaxEpisodeSteps { get; set; } = 1024;
-    [Export] public RLAgentConfig? AgentConfig { get; set; }
+
+    [ExportGroup("Control")]
+    [Export]
+    public RLAgentControlMode ControlMode
+    {
+        get => _agentConfig?.ControlMode ?? _inlineControlMode;
+        set { _inlineControlMode = value; UpdateConfigurationWarnings(); }
+    }
+
+    [Export]
+    public string PolicyGroup
+    {
+        get => _agentConfig?.PolicyGroup ?? _inlinePolicyGroup;
+        set => _inlinePolicyGroup = value;
+    }
+
+    [Export(PropertyHint.File, "*.json,*.rlmodel")]
+    public string InferenceCheckpointPath
+    {
+        get => _agentConfig?.InferenceCheckpointPath ?? _inlineInferenceCheckpointPath;
+        set { _inlineInferenceCheckpointPath = value; UpdateConfigurationWarnings(); }
+    }
+
+    [ExportGroup("Advanced")]
+    [Export]
+    public RLAgentConfig? AgentConfig
+    {
+        get => _agentConfig;
+        set { _agentConfig = value; UpdateConfigurationWarnings(); }
+    }
 
     public int EpisodeSteps { get; private set; }
     public float EpisodeReward { get; private set; }
     public int CurrentActionIndex { get; private set; }
-    public RLAgentControlMode ControlMode => AgentConfig?.ControlMode ?? RLAgentControlMode.Train;
-    public string PolicyGroup => AgentConfig?.PolicyGroup ?? string.Empty;
 
     public override void _Ready()
     {
@@ -185,9 +216,14 @@ public partial class RLAgent2D : Node2D
         return MaxEpisodeSteps > 0 && EpisodeSteps >= MaxEpisodeSteps;
     }
 
-    public string GetInferenceCheckpointPath()
+    public string GetInferenceCheckpointPath() => InferenceCheckpointPath;
+
+    public override string[] _GetConfigurationWarnings()
     {
-        return AgentConfig?.InferenceCheckpointPath ?? string.Empty;
+        var warnings = new List<string>();
+        if (ControlMode == RLAgentControlMode.Inference && string.IsNullOrEmpty(GetInferenceCheckpointPath()))
+            warnings.Add("ControlMode is Inference but no checkpoint path is set.");
+        return warnings.ToArray();
     }
 
     // ── Framework-internal ────────────────────────────────────────────────────

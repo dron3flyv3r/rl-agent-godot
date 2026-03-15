@@ -20,8 +20,9 @@ public sealed class TrainingSceneValidation
     public string NetworkConfigPath { get; set; } = string.Empty;
     public string CheckpointPath { get; set; } = string.Empty;
     public string RunPrefix { get; set; } = string.Empty;
-    public int CheckpointSaveIntervalUpdates { get; set; } = 10;
+    public int CheckpointInterval { get; set; } = 10;
     public float SimulationSpeed { get; set; } = 1.0f;
+    public int ActionRepeat { get; set; } = 1;
     public int ExpectedActionCount { get; set; }
     public int TrainAgentCount { get; set; }
     public bool IsValid { get; set; }
