@@ -1,0 +1,70 @@
+using System;
+
+namespace RlAgentPlugin.Runtime;
+
+public enum RLAlgorithmKind
+{
+    PPO = 0,
+    SAC = 1,
+}
+
+public sealed class PolicyDecision
+{
+    /// <summary>Sampled discrete action index, or -1 if continuous-only.</summary>
+    public int DiscreteAction { get; init; } = -1;
+    /// <summary>Sampled continuous action vector (empty for discrete-only).</summary>
+    public float[] ContinuousActions { get; init; } = Array.Empty<float>();
+    public float LogProbability { get; init; }
+    public float Value { get; init; }
+    public float Entropy { get; init; }
+}
+
+public sealed class Transition
+{
+    public float[] Observation { get; init; } = Array.Empty<float>();
+    /// <summary>Taken discrete action index, or -1 if continuous.</summary>
+    public int DiscreteAction { get; init; } = -1;
+    public float[] ContinuousActions { get; init; } = Array.Empty<float>();
+    public float Reward { get; init; }
+    public bool Done { get; init; }
+    /// <summary>Next observation (used by SAC for target Q computation).</summary>
+    public float[] NextObservation { get; init; } = Array.Empty<float>();
+    /// <summary>Log probability of the taken action (used by PPO).</summary>
+    public float OldLogProbability { get; init; }
+    /// <summary>Value estimate at this state (used by PPO for GAE).</summary>
+    public float Value { get; init; }
+    /// <summary>Value estimate at next state (used by PPO for GAE).</summary>
+    public float NextValue { get; init; }
+}
+
+public sealed class TrainerUpdateStats
+{
+    public float PolicyLoss { get; init; }
+    public float ValueLoss { get; init; }
+    public float Entropy { get; init; }
+    public RLCheckpoint Checkpoint { get; init; } = new();
+}
+
+public sealed class PolicyGroupConfig
+{
+    public string GroupId { get; init; } = string.Empty;
+    public string RunId { get; init; } = string.Empty;
+    public RLAlgorithmKind Algorithm { get; init; } = RLAlgorithmKind.PPO;
+    public RLTrainerConfig TrainerConfig { get; init; } = new();
+    public RLNetworkConfig NetworkConfig { get; init; } = new();
+    public int ObservationSize { get; init; }
+    public int DiscreteActionCount { get; init; }
+    public int ContinuousActionDimensions { get; init; }
+    public string CheckpointPath { get; init; } = string.Empty;
+    public string MetricsPath { get; init; } = string.Empty;
+}
+
+public interface ITrainer
+{
+    PolicyDecision SampleAction(float[] observation);
+    /// <summary>Returns a value estimate (PPO: value head; SAC: returns 0).</summary>
+    float EstimateValue(float[] observation);
+    void RecordTransition(Transition transition);
+    TrainerUpdateStats? TryUpdate(string groupId, long totalSteps, long episodeCount);
+    RLCheckpoint CreateCheckpoint(string groupId, long totalSteps, long episodeCount, long updateCount);
+}

@@ -1,0 +1,85 @@
+using Godot;
+
+namespace RlAgentPlugin.Runtime;
+
+public sealed class RunMetricsWriter
+{
+    private readonly string _metricsPath;
+    private readonly string _statusPath;
+
+    public RunMetricsWriter(string metricsPath, string statusPath)
+    {
+        _metricsPath = metricsPath;
+        _statusPath = statusPath;
+    }
+
+    /// <summary>Legacy constructor for backward compatibility with single-group training.</summary>
+    public RunMetricsWriter(TrainingLaunchManifest manifest)
+        : this(manifest.MetricsPath, manifest.StatusPath) { }
+
+    public void WriteStatus(string status, string scenePath, long totalSteps, long episodeCount, string message)
+    {
+        EnsureFileDirectory(_statusPath);
+        using var file = FileAccess.Open(_statusPath, FileAccess.ModeFlags.Write);
+        if (file is null)
+        {
+            GD.PushError($"[RL] Failed to write status file '{_statusPath}': {FileAccess.GetOpenError()}");
+            return;
+        }
+
+        file.StoreString(Json.Stringify(new Godot.Collections.Dictionary
+        {
+            { "status", status },
+            { "scene_path", scenePath },
+            { "total_steps", totalSteps },
+            { "episode_count", episodeCount },
+            { "message", message },
+        }));
+    }
+
+    public void AppendMetric(float episodeReward, int episodeLength, float policyLoss, float valueLoss, float entropy, long totalSteps, long episodeCount)
+    {
+        EnsureFileDirectory(_metricsPath);
+        var mode = FileAccess.FileExists(_metricsPath)
+            ? FileAccess.ModeFlags.ReadWrite
+            : FileAccess.ModeFlags.Write;
+        using var file = FileAccess.Open(_metricsPath, mode);
+        if (file is null)
+        {
+            GD.PushError($"[RL] Failed to open metrics file '{_metricsPath}': {FileAccess.GetOpenError()}");
+            return;
+        }
+
+        if (mode == FileAccess.ModeFlags.ReadWrite)
+        {
+            file.SeekEnd();
+        }
+
+        file.StoreLine(Json.Stringify(new Godot.Collections.Dictionary
+        {
+            { "episode_reward", episodeReward },
+            { "episode_length", episodeLength },
+            { "policy_loss", policyLoss },
+            { "value_loss", valueLoss },
+            { "entropy", entropy },
+            { "total_steps", totalSteps },
+            { "episode_count", episodeCount },
+        }));
+    }
+
+    private static void EnsureFileDirectory(string filePath)
+    {
+        var dir = filePath.GetBaseDir();
+        if (string.IsNullOrEmpty(dir))
+        {
+            return;
+        }
+
+        var absDir = ProjectSettings.GlobalizePath(dir);
+        var err = DirAccess.MakeDirRecursiveAbsolute(absDir);
+        if (err != Error.Ok)
+        {
+            GD.PushError($"[RL] Failed to create directory '{absDir}': {err}");
+        }
+    }
+}
