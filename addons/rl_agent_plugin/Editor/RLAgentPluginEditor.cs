@@ -26,6 +26,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
     private TrainingSceneValidation? _lastValidation;
     private bool _launchedTrainingRun;
     private string _lastAutoScenePath = string.Empty;
+    private string _lastValidationSignature = string.Empty;
 
     public override void _EnterTree()
     {
@@ -138,7 +139,11 @@ public partial class RLAgentPluginEditor : EditorPlugin
 
         if (_startTrainingButton is not null)
         {
-            _startTrainingButton.Disabled = _launchedTrainingRun;
+            var validationBlocked = _lastValidation is { IsValid: false };
+            _startTrainingButton.Disabled = _launchedTrainingRun || validationBlocked;
+            _startTrainingButton.TooltipText = validationBlocked && _lastValidation!.Errors.Count > 0
+                ? _lastValidation.Errors[0]
+                : "Launch the configured training run.";
         }
 
         if (_stopTrainingButton is not null)
@@ -151,6 +156,13 @@ public partial class RLAgentPluginEditor : EditorPlugin
         if (currentScenePath != _lastAutoScenePath)
         {
             _lastAutoScenePath = currentScenePath;
+            RefreshValidationFromActiveScene();
+            return;
+        }
+
+        var currentSignature = BuildValidationSignature(EditorInterface.Singleton.GetEditedSceneRoot());
+        if (currentSignature != _lastValidationSignature)
+        {
             RefreshValidationFromActiveScene();
         }
     }
@@ -194,6 +206,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
 
         _setupDock.SetScenePath(scenePath);
         var validation = ValidateSceneSafely(scenePath, "auto validation");
+        _lastValidationSignature = BuildValidationSignature(EditorInterface.Singleton.GetEditedSceneRoot());
         UpdateValidationUi(validation);
     }
 
@@ -228,6 +241,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
         manifest.RunId = $"{runIdPrefix}_{Time.GetUnixTimeFromSystem()}";
         manifest.RunDirectory = $"res://RL-Agent-Training/runs/{manifest.RunId}";
         manifest.CheckpointPath = $"{manifest.RunDirectory}/{checkpointFileName}";
+        manifest.TrainingConfigPath = validation.TrainingConfigPath;
         manifest.TrainerConfigPath = validation.TrainerConfigPath;
         manifest.NetworkConfigPath = validation.NetworkConfigPath;
         manifest.MetricsPath = $"{manifest.RunDirectory}/metrics.jsonl";
@@ -235,6 +249,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
         manifest.CheckpointInterval = validation.CheckpointInterval;
         manifest.SimulationSpeed = validation.SimulationSpeed;
         manifest.ActionRepeat = validation.ActionRepeat;
+        manifest.BatchSize = Math.Max(1, validation.BatchSize);
 
         var writeError = manifest.SaveToUserStorage();
         if (writeError != Error.Ok)
@@ -246,7 +261,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
         _setupDock.SetLaunchStatus($"Launching {manifest.RunId}\n{ProjectSettings.GlobalizePath(manifest.RunDirectory)}");
 
         // Write initial meta.json so the dashboard can show agent names on export.
-        WriteRunMeta(manifest.RunId, validation.AgentNames);
+        WriteRunMeta(manifest.RunId, validation.AgentNames, validation.AgentGroups);
 
         var bootstrapScene = "res://addons/rl_agent_plugin/Scenes/TrainingBootstrap.tscn";
         EditorInterface.Singleton.PlayCustomScene(bootstrapScene);
@@ -256,7 +271,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
         _dashboard?.OnTrainingStarted(manifest.RunId);
     }
 
-    private static void WriteRunMeta(string runId, IReadOnlyList<string> agentNames)
+    private static void WriteRunMeta(string runId, IReadOnlyList<string> agentNames, IReadOnlyList<string> agentGroups)
     {
         try
         {
@@ -266,10 +281,14 @@ public partial class RLAgentPluginEditor : EditorPlugin
             var agentArr = new Godot.Collections.Array();
             foreach (var name in agentNames) agentArr.Add(Variant.From(name));
 
+            var groupArr = new Godot.Collections.Array();
+            foreach (var g in agentGroups) groupArr.Add(Variant.From(g));
+
             var d = new Godot.Collections.Dictionary
             {
-                { "display_name", "" },
-                { "agent_names",  agentArr },
+                { "display_name",  "" },
+                { "agent_names",   agentArr },
+                { "agent_groups",  groupArr },
             };
 
             System.IO.File.WriteAllText(
@@ -349,6 +368,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
             Node? academy = null;
             // groupId → list of agent nodes
             var agentsByGroup = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<Node>>();
+            var groupBindings = new System.Collections.Generic.Dictionary<string, ResolvedPolicyGroupBinding>();
 
             Traverse(root, node =>
             {
@@ -366,30 +386,45 @@ public partial class RLAgentPluginEditor : EditorPlugin
 
                 if (IsAgentNode(node))
                 {
-                    var agentName = node.Name.ToString();
-                    validation.AgentNames.Add(string.IsNullOrWhiteSpace(agentName) ? "RLAgent2D" : agentName);
+                    var agentId = ReadStringProperty(node, "AgentId");
+                    var agentName = string.IsNullOrWhiteSpace(agentId) ? node.Name.ToString() : agentId;
+                    validation.AgentNames.Add(agentName);
 
-                    // ControlMode and PolicyGroup are now inline exports on the node;
-                    // AgentConfig priority is baked into the property getters.
                     var controlMode = ReadAgentControlMode(node);
+                    var binding = RLPolicyGroupBindingResolver.Resolve(root, node);
+                    validation.AgentGroups.Add(binding.SafeGroupId);
+
                     if (controlMode == RLAgentControlMode.Train)
                     {
                         validation.TrainAgentCount += 1;
-                        var group = ReadStringProperty(node, "PolicyGroup");
-                        if (string.IsNullOrEmpty(group))
+
+                        if (!agentsByGroup.ContainsKey(binding.BindingKey))
                         {
-                            group = $"__agent__{node.Name}";
+                            agentsByGroup[binding.BindingKey] = new System.Collections.Generic.List<Node>();
+                            groupBindings[binding.BindingKey] = binding;
                         }
 
-                        if (!agentsByGroup.ContainsKey(group))
-                        {
-                            agentsByGroup[group] = new System.Collections.Generic.List<Node>();
-                        }
-
-                        agentsByGroup[group].Add(node);
+                        agentsByGroup[binding.BindingKey].Add(node);
                     }
                 }
             });
+
+            // Check for duplicate AgentIds across different policy groups (same group = shared brain = OK).
+            var agentIdToGroup = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
+            for (var i = 0; i < validation.AgentNames.Count; i++)
+            {
+                var id    = validation.AgentNames[i];
+                var group = i < validation.AgentGroups.Count ? validation.AgentGroups[i] : string.Empty;
+                if (agentIdToGroup.TryGetValue(id, out var existingGroup))
+                {
+                    if (existingGroup != group)
+                        validation.Errors.Add($"Duplicate AgentId \"{id}\" used by agents in different policy groups. Each brain must have a unique AgentId.");
+                }
+                else
+                {
+                    agentIdToGroup[id] = group;
+                }
+            }
 
             if (academy is null)
             {
@@ -398,31 +433,38 @@ public partial class RLAgentPluginEditor : EditorPlugin
             else
             {
                 validation.AcademyPath = root.GetPathTo(academy).ToString();
+                var trainingConfigRes = ReadResourceProperty(academy, "TrainingConfig");
                 var trainerConfigRes = ReadResourceProperty(academy, "TrainerConfig");
                 var networkConfig = ReadResourceProperty(academy, "NetworkConfig");
                 var checkpoint = ReadResourceProperty(academy, "Checkpoint");
 
-                validation.TrainerConfigPath = trainerConfigRes?.ResourcePath ?? string.Empty;
-                validation.NetworkConfigPath = networkConfig?.ResourcePath ?? string.Empty;
+                validation.TrainingConfigPath = trainingConfigRes?.ResourcePath ?? string.Empty;
+                validation.TrainerConfigPath = trainerConfigRes?.ResourcePath ?? validation.TrainingConfigPath;
+                validation.NetworkConfigPath = networkConfig?.ResourcePath ?? validation.TrainingConfigPath;
                 validation.CheckpointPath = checkpoint?.ResourcePath ?? string.Empty;
                 validation.RunPrefix = ReadStringProperty(academy, "RunPrefix");
                 validation.CheckpointInterval = ReadIntProperty(academy, "CheckpointInterval", 10);
                 validation.SimulationSpeed = ReadFloatProperty(academy, "SimulationSpeed", 1.0f);
                 validation.ActionRepeat = ReadIntProperty(academy, "ActionRepeat", 1);
+                validation.BatchSize = ReadIntProperty(academy, "BatchSize", 1);
 
-                if (trainerConfigRes is null)
+                if (trainingConfigRes is null && trainerConfigRes is null)
                 {
-                    validation.Errors.Add("RLAcademy is missing an RLTrainerConfig resource.");
+                    validation.Errors.Add("RLAcademy is missing an RLTrainingConfig resource or a legacy RLTrainerConfig resource.");
                 }
 
-                if (networkConfig is null)
+                if (trainingConfigRes is null && networkConfig is null)
                 {
-                    validation.Errors.Add("RLAcademy is missing an RLNetworkConfig resource.");
+                    validation.Errors.Add("RLAcademy is missing an RLTrainingConfig resource or a legacy RLNetworkConfig resource.");
                 }
 
                 // Determine algorithm from trainer config
                 var algorithm = RLAlgorithmKind.PPO;
-                if (trainerConfigRes is RLTrainerConfig trainerConfig)
+                if (trainingConfigRes is RLTrainingConfig trainingConfig)
+                {
+                    algorithm = trainingConfig.Algorithm;
+                }
+                else if (trainerConfigRes is RLTrainerConfig trainerConfig)
                 {
                     algorithm = trainerConfig.Algorithm;
                 }
@@ -430,20 +472,38 @@ public partial class RLAgentPluginEditor : EditorPlugin
                 // Per-group validation
                 foreach (var (groupId, groupNodes) in agentsByGroup)
                 {
+                    var binding = groupBindings[groupId];
                     var firstNode = groupNodes[0];
+                    var firstObservationSize = ReadAgentObservationSize(firstNode, root, validation);
                     var firstActionCount = ReadAgentActionCount(firstNode);
                     var firstIsDiscrete = SupportsOnlyDiscreteActions(firstNode);
                     var firstContinuousDims = ReadAgentContinuousDims(firstNode);
 
                     var groupSummary = new PolicyGroupSummary
                     {
-                        GroupId = groupId.StartsWith("__agent__") ? groupNodes[0].Name.ToString() : groupId,
+                        GroupId = binding.DisplayName,
                         AgentCount = groupNodes.Count,
+                        ObservationSize = firstObservationSize,
                         ActionCount = firstActionCount,
                         IsContinuous = !firstIsDiscrete,
                         ContinuousActionDimensions = firstContinuousDims,
+                        UsesExplicitConfig = binding.UsesExplicitConfig,
+                        PolicyConfigPath = binding.ConfigPath,
+                        SelfPlay = binding.Config?.SelfPlay ?? false,
                     };
+                    foreach (var node in groupNodes)
+                    {
+                        groupSummary.AgentPaths.Add(root.GetPathTo(node).ToString());
+                    }
+
                     validation.PolicyGroups.Add(groupSummary);
+
+                    if (binding.UsesExplicitConfig
+                        && string.IsNullOrWhiteSpace(binding.Config?.GroupId)
+                        && string.IsNullOrWhiteSpace(binding.ConfigPath))
+                    {
+                        validation.Errors.Add($"Group '{groupSummary.GroupId}': PolicyGroupConfig should set GroupId or be saved as a standalone resource so grouping remains stable across scene copies.");
+                    }
 
                     // PPO: discrete only
                     if (algorithm == RLAlgorithmKind.PPO && !firstIsDiscrete)
@@ -451,9 +511,15 @@ public partial class RLAgentPluginEditor : EditorPlugin
                         validation.Errors.Add($"Group '{groupSummary.GroupId}': PPO requires discrete-only actions.");
                     }
 
-                    if (algorithm == RLAlgorithmKind.PPO && firstActionCount <= 0 && firstIsDiscrete)
+                    if (algorithm == RLAlgorithmKind.PPO && firstActionCount == 0 && firstIsDiscrete)
                     {
                         validation.Errors.Add($"Group '{groupSummary.GroupId}': define at least one discrete action.");
+                    }
+
+                    // Skip when firstObservationSize == -1 (cast unavailable; not a real empty obs vector).
+                    if (firstObservationSize == 0)
+                    {
+                        validation.Errors.Add($"Group '{groupSummary.GroupId}': could not infer a non-zero observation size.");
                     }
 
                     // SAC: no mixing discrete + continuous
@@ -465,16 +531,23 @@ public partial class RLAgentPluginEditor : EditorPlugin
                     // All agents in group must be consistent
                     foreach (var node in groupNodes)
                     {
+                        var nodePath = root.GetPathTo(node).ToString();
+                        var observationSize = ReadAgentObservationSize(node, root, validation);
                         var actionCount = ReadAgentActionCount(node);
                         var isDiscrete = SupportsOnlyDiscreteActions(node);
                         if (isDiscrete != firstIsDiscrete)
                         {
-                            validation.Errors.Add($"Group '{groupSummary.GroupId}': {node.Name}: all agents in a group must use the same action type (discrete vs continuous).");
+                            validation.Errors.Add($"Group '{groupSummary.GroupId}': {nodePath}: all agents in a group must use the same action type (discrete vs continuous).");
                         }
 
-                        if (algorithm == RLAlgorithmKind.PPO && isDiscrete && actionCount != firstActionCount)
+                        if (firstObservationSize >= 0 && observationSize >= 0 && observationSize != firstObservationSize)
                         {
-                            validation.Errors.Add($"Group '{groupSummary.GroupId}': {node.Name}: all agents must share the same discrete action count.");
+                            validation.Errors.Add($"Group '{groupSummary.GroupId}': {nodePath}: all agents must emit the same observation vector length.");
+                        }
+
+                        if (algorithm == RLAlgorithmKind.PPO && isDiscrete && firstActionCount >= 0 && actionCount >= 0 && actionCount != firstActionCount)
+                        {
+                            validation.Errors.Add($"Group '{groupSummary.GroupId}': {nodePath}: all agents must share the same discrete action count.");
                         }
                     }
                 }
@@ -548,34 +621,43 @@ public partial class RLAgentPluginEditor : EditorPlugin
     private static int ReadAgentActionCount(Node node)
     {
         if (node is RLAgent2D agent)
-        {
             return agent.GetDiscreteActionCount();
-        }
-
-        var actionBinding = ResolveActionBinding(node);
-        return actionBinding?.ActionSpace.Length ?? 0;
+        // C# cast unavailable in editor context (e.g. assembly not yet fully loaded).
+        // Return -1 so callers can skip checks rather than produce false-positive errors.
+        return -1;
     }
 
     private static int ReadAgentContinuousDims(Node node)
     {
-        if (node is RLAgent2D agent)
+        return node is RLAgent2D agent ? agent.GetContinuousActionDimensions() : 0;
+    }
+
+    private static int ReadAgentObservationSize(Node node, Node root, TrainingSceneValidation validation)
+    {
+        if (node is not RLAgent2D agent)
         {
-            return agent.GetContinuousActionDimensions();
+            // -1 = unknown (cast unavailable). 0 = cast succeeded but returned empty obs.
+            return -1;
         }
 
-        var actionBinding = ResolveActionBinding(node);
-        return actionBinding?.ContinuousActionDimensions ?? 0;
+        try
+        {
+            agent.ResetEpisode();
+            return agent.CollectObservationArray().Length;
+        }
+        catch (Exception exception)
+        {
+            validation.Errors.Add($"Agent '{root.GetPathTo(node)}': observation inference failed: {exception.Message}");
+            return 0;
+        }
     }
 
     private static bool SupportsOnlyDiscreteActions(Node node)
     {
         if (node is RLAgent2D agent)
-        {
             return agent.SupportsOnlyDiscreteActions();
-        }
-
-        var actionBinding = ResolveActionBinding(node);
-        return actionBinding?.SupportsOnlyDiscreteActions ?? true;
+        // Cast unavailable: assume discrete to avoid false-positive "PPO requires discrete-only" errors.
+        return IsAgentNode(node);
     }
 
     private static RLAgentControlMode ReadAgentControlMode(Node node)
@@ -618,17 +700,6 @@ public partial class RLAgentPluginEditor : EditorPlugin
             Variant.Type.Int => (int)variant,
             _ => defaultValue,
         };
-    }
-
-    private static RLActionBinding? ResolveActionBinding(Node node)
-    {
-        var managedType = ResolveManagedScriptType(node);
-        if (managedType is null || !typeof(RLAgent2D).IsAssignableFrom(managedType))
-        {
-            return null;
-        }
-
-        return RLActionBinding.Create(managedType);
     }
 
     private static Type? ResolveManagedScriptType(Node node)
@@ -678,6 +749,62 @@ public partial class RLAgentPluginEditor : EditorPlugin
         }
 
         return false;
+    }
+
+    private static string BuildValidationSignature(Node? editedRoot)
+    {
+        if (editedRoot is null)
+        {
+            return string.Empty;
+        }
+
+        var builder = new System.Text.StringBuilder();
+        Traverse(editedRoot, node =>
+        {
+            if (IsAcademyNode(node))
+            {
+                builder.Append("academy|");
+                builder.Append(node.GetPath());
+                builder.Append('|');
+                builder.Append(ReadStringProperty(node, "RunPrefix"));
+                builder.Append('|');
+                builder.Append(ReadIntProperty(node, "CheckpointInterval", 10));
+                builder.Append('|');
+                builder.Append(ReadIntProperty(node, "ActionRepeat", 1));
+                builder.Append('|');
+                builder.Append(ReadIntProperty(node, "BatchSize", 1));
+                builder.Append('|');
+                builder.Append(ReadFloatProperty(node, "SimulationSpeed", 1.0f));
+                builder.Append('|');
+                builder.Append(ReadResourceProperty(node, "TrainingConfig")?.ResourcePath ?? string.Empty);
+                builder.Append('|');
+                builder.Append(ReadResourceProperty(node, "TrainerConfig")?.ResourcePath ?? string.Empty);
+                builder.Append('|');
+                builder.Append(ReadResourceProperty(node, "NetworkConfig")?.ResourcePath ?? string.Empty);
+                builder.Append('|');
+                builder.Append(ReadResourceProperty(node, "Checkpoint")?.ResourcePath ?? string.Empty);
+                builder.AppendLine();
+            }
+
+            if (IsAgentNode(node))
+            {
+                builder.Append("agent|");
+                builder.Append(node.GetPath());
+                builder.Append('|');
+                builder.Append(ReadStringProperty(node, "AgentId"));
+                builder.Append('|');
+                builder.Append((int)ReadAgentControlMode(node));
+                builder.Append('|');
+                builder.Append(ReadStringProperty(node, "PolicyGroup"));
+                builder.Append('|');
+                builder.Append(ReadAgentActionCount(node));
+                builder.Append('|');
+                builder.Append(ReadAgentContinuousDims(node));
+                builder.AppendLine();
+            }
+        });
+
+        return builder.ToString();
     }
 
     private static Dictionary<string, Type> BuildScriptTypeIndex()

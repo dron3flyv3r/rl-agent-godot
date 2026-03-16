@@ -50,6 +50,7 @@ public sealed class PolicyGroupConfig
     public string GroupId { get; init; } = string.Empty;
     public string RunId { get; init; } = string.Empty;
     public RLAlgorithmKind Algorithm { get; init; } = RLAlgorithmKind.PPO;
+    public RLPolicyGroupConfig? SharedPolicy { get; init; }
     public RLTrainerConfig TrainerConfig { get; init; } = new();
     public RLNetworkConfig NetworkConfig { get; init; } = new();
     public int ObservationSize { get; init; }
@@ -57,6 +58,9 @@ public sealed class PolicyGroupConfig
     public int ContinuousActionDimensions { get; init; }
     public string CheckpointPath { get; init; } = string.Empty;
     public string MetricsPath { get; init; } = string.Empty;
+    public bool SelfPlay { get; init; }
+    public float HistoricalOpponentRate { get; init; }
+    public int FrozenCheckpointInterval { get; init; } = 10;
 }
 
 public interface ITrainer

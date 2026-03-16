@@ -33,7 +33,7 @@ public partial class RLDashboard : Control
         public string Message      = "";
     }
 
-    private sealed record RunMeta(string DisplayName, string[] AgentNames);
+    private sealed record RunMeta(string DisplayName, string[] AgentNames, string[] AgentGroups);
 
     // ── UI handles ───────────────────────────────────────────────────────────
     private OptionButton?   _runDropdown;
@@ -276,7 +276,8 @@ public partial class RLDashboard : Control
     private Control BuildStatsBar()
     {
         var panel = new PanelContainer();
-        panel.CustomMinimumSize = new Vector2(0, 48);
+        panel.CustomMinimumSize = new Vector2(0, 40);
+        panel.SizeFlagsVertical = SizeFlags.ShrinkBegin;
 
         var hbox = new HBoxContainer();
         hbox.AddThemeConstantOverride("separation", 0);
@@ -353,7 +354,7 @@ public partial class RLDashboard : Control
         var chart = new LineChartPanel { ChartTitle = title };
         chart.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         chart.SizeFlagsVertical   = SizeFlags.ExpandFill;
-        chart.CustomMinimumSize   = new Vector2(200, 160);
+        chart.CustomMinimumSize   = new Vector2(0, 60);
         return chart;
     }
 
@@ -606,28 +607,60 @@ public partial class RLDashboard : Control
     {
         if (string.IsNullOrEmpty(_selectedRunId)) return;
 
-        var runDirAbs      = ProjectSettings.GlobalizePath($"res://RL-Agent-Training/runs/{_selectedRunId}");
-        var checkpointPath = RLModelExporter.FindCheckpointInRunDir(runDirAbs);
+        var runDirAbs = ProjectSettings.GlobalizePath($"res://RL-Agent-Training/runs/{_selectedRunId}");
+        var meta      = ReadMeta(runDirAbs);
 
-        if (checkpointPath is null)
+        // Build a list of (exportName, checkpointPath) pairs, deduplicating by checkpoint
+        // so agents that share a policy group produce only one output file (named after the first agent).
+        var exports = new List<(string Name, string CheckpointPath)>();
+        var seenCheckpoints = new System.Collections.Generic.HashSet<string>();
+
+        if (meta.AgentNames.Length > 0)
+        {
+            for (var i = 0; i < meta.AgentNames.Length; i++)
+            {
+                var agentName  = meta.AgentNames[i];
+                var safeGroup  = i < meta.AgentGroups.Length ? meta.AgentGroups[i] : string.Empty;
+                var cpPath     = string.IsNullOrEmpty(safeGroup)
+                    ? null
+                    : System.IO.Path.Combine(runDirAbs, $"checkpoint__{safeGroup}.json");
+
+                if (cpPath is null || !System.IO.File.Exists(cpPath))
+                {
+                    // Fall back to first checkpoint in the run directory.
+                    cpPath = RLModelExporter.FindCheckpointInRunDir(runDirAbs);
+                }
+
+                if (cpPath is null) continue;
+                if (!seenCheckpoints.Add(cpPath)) continue; // shared group — skip duplicate
+
+                exports.Add((agentName, cpPath));
+            }
+        }
+        else
+        {
+            // No agent names in meta — fall back to single export named after the run.
+            var cpPath = RLModelExporter.FindCheckpointInRunDir(runDirAbs);
+            if (cpPath is not null)
+                exports.Add((_selectedRunId, cpPath));
+        }
+
+        if (exports.Count == 0)
         {
             SetHeaderStatus("Export failed: no checkpoint found in run directory.");
             return;
         }
 
-        var meta       = ReadMeta(runDirAbs);
-        var agentNames = meta.AgentNames.Length > 0 ? meta.AgentNames : new[] { _selectedRunId };
-
         var failed = new List<string>();
-        foreach (var agentName in agentNames)
+        foreach (var (agentName, cpPath) in exports)
         {
             var destPath = System.IO.Path.Combine(dir, $"{SanitizeFileName(agentName)}.rlmodel");
-            if (RLModelExporter.Export(checkpointPath, destPath) != Error.Ok)
+            if (RLModelExporter.Export(cpPath, destPath) != Error.Ok)
                 failed.Add(agentName);
         }
 
         SetHeaderStatus(failed.Count == 0
-            ? $"Exported {agentNames.Length} file(s) → {dir}"
+            ? $"Exported {exports.Count} file(s) → {dir}"
             : $"Export failed for: {string.Join(", ", failed)}");
     }
 
@@ -652,23 +685,25 @@ public partial class RLDashboard : Control
     private static RunMeta ReadMeta(string runDirAbsPath)
     {
         var metaPath = System.IO.Path.Combine(runDirAbsPath, "meta.json");
-        if (!System.IO.File.Exists(metaPath)) return new RunMeta("", Array.Empty<string>());
+        if (!System.IO.File.Exists(metaPath)) return new RunMeta("", Array.Empty<string>(), Array.Empty<string>());
 
         try
         {
             var variant = Json.ParseString(System.IO.File.ReadAllText(metaPath));
-            if (variant.VariantType != Variant.Type.Dictionary) return new RunMeta("", Array.Empty<string>());
+            if (variant.VariantType != Variant.Type.Dictionary) return new RunMeta("", Array.Empty<string>(), Array.Empty<string>());
 
-            var d          = variant.AsGodotDictionary();
+            var d           = variant.AsGodotDictionary();
             var displayName = GetString(d, "display_name", "");
-            var agentArr    = d.ContainsKey("agent_names") ? d["agent_names"].AsGodotArray() : new Godot.Collections.Array();
+            var agentArr    = d.ContainsKey("agent_names")  ? d["agent_names"].AsGodotArray()  : new Godot.Collections.Array();
+            var groupArr    = d.ContainsKey("agent_groups") ? d["agent_groups"].AsGodotArray()  : new Godot.Collections.Array();
             var agentNames  = agentArr.Select(v => v.AsString()).ToArray();
+            var agentGroups = groupArr.Select(v => v.AsString()).ToArray();
 
-            return new RunMeta(displayName, agentNames);
+            return new RunMeta(displayName, agentNames, agentGroups);
         }
         catch
         {
-            return new RunMeta("", Array.Empty<string>());
+            return new RunMeta("", Array.Empty<string>(), Array.Empty<string>());
         }
     }
 
@@ -681,10 +716,14 @@ public partial class RLDashboard : Control
             var agentArr = new Godot.Collections.Array();
             foreach (var name in meta.AgentNames) agentArr.Add(Variant.From(name));
 
+            var groupArr = new Godot.Collections.Array();
+            foreach (var g in meta.AgentGroups) groupArr.Add(Variant.From(g));
+
             var d = new Godot.Collections.Dictionary
             {
-                { "display_name", meta.DisplayName },
-                { "agent_names",  agentArr },
+                { "display_name",  meta.DisplayName },
+                { "agent_names",   agentArr },
+                { "agent_groups",  groupArr },
             };
 
             System.IO.File.WriteAllText(

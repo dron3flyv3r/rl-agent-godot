@@ -7,18 +7,26 @@ namespace RlAgentPlugin.Runtime;
 [GlobalClass]
 public partial class RLAcademy : Node
 {
+    private RLTrainingConfig? _trainingConfig;
     private RLTrainerConfig? _trainerConfig;
     private RLNetworkConfig? _networkConfig;
 
     [ExportGroup("Configuration")]
     [Export]
+    public RLTrainingConfig? TrainingConfig
+    {
+        get => _trainingConfig;
+        set { _trainingConfig = value; UpdateConfigurationWarnings(); }
+    }
+
+    [Export(PropertyHint.ResourceType, "RLTrainerConfig")]
     public RLTrainerConfig? TrainerConfig
     {
         get => _trainerConfig;
         set { _trainerConfig = value; UpdateConfigurationWarnings(); }
     }
 
-    [Export]
+    [Export(PropertyHint.ResourceType, "RLNetworkConfig")]
     public RLNetworkConfig? NetworkConfig
     {
         get => _networkConfig;
@@ -32,6 +40,8 @@ public partial class RLAcademy : Node
     [Export] public int CheckpointInterval { get; set; } = 10;
     // How many physics ticks to repeat each action before sampling the next one (1 = every tick)
     [Export] public int ActionRepeat { get; set; } = 1;
+    // Number of parallel scene instances to run during training (vectorised environments)
+    [Export(PropertyHint.Range, "1, 256, 8, or_greater")] public int BatchSize { get; set; } = 1;
 
     [ExportGroup("Inference")]
     [Export] public RLCheckpoint? Checkpoint { get; set; }
@@ -41,16 +51,19 @@ public partial class RLAcademy : Node
     public override string[] _GetConfigurationWarnings()
     {
         var warnings = new List<string>();
-        if (TrainerConfig is null)
-            warnings.Add("TrainerConfig is not assigned. Assign a RLTrainerConfig resource.");
-        if (NetworkConfig is null)
-            warnings.Add("NetworkConfig is not assigned. Assign a RLNetworkConfig resource.");
+        if (TrainingConfig is not null && (TrainerConfig is not null || NetworkConfig is not null))
+            warnings.Add("TrainingConfig is assigned. Legacy TrainerConfig and NetworkConfig are ignored until they are migrated.");
+        if (TrainingConfig is null && ResolveTrainerConfig() is null)
+            warnings.Add("TrainingConfig is not assigned. Assign an RLTrainingConfig resource or a legacy RLTrainerConfig resource.");
+        if (TrainingConfig is null && ResolveNetworkConfig() is null)
+            warnings.Add("TrainingConfig is not assigned. Assign an RLTrainingConfig resource or a legacy RLNetworkConfig resource.");
         return warnings.ToArray();
     }
 
     private readonly Dictionary<RLAgent2D, PolicyValueNetwork> _agentInferenceNetworks = new();
     private readonly Dictionary<RLAgent2D, int> _inferenceStepCounters = new();
     private double _previousTimeScale = 1.0;
+    private int _previousMaxPhysicsStepsPerFrame = 8;
 
     public override void _Ready()
     {
@@ -60,7 +73,9 @@ public partial class RLAcademy : Node
         if (ResolveSceneRoot().GetParent() is not TrainingBootstrap)
         {
             _previousTimeScale = Engine.TimeScale;
+            _previousMaxPhysicsStepsPerFrame = Engine.MaxPhysicsStepsPerFrame;
             Engine.TimeScale = Math.Max(0.1f, SimulationSpeed);
+            Engine.MaxPhysicsStepsPerFrame = Math.Max(8, (int)Math.Ceiling(SimulationSpeed) + 1);
         }
     }
 
@@ -69,6 +84,7 @@ public partial class RLAcademy : Node
         if (ResolveSceneRoot().GetParent() is not TrainingBootstrap)
         {
             Engine.TimeScale = _previousTimeScale;
+            Engine.MaxPhysicsStepsPerFrame = _previousMaxPhysicsStepsPerFrame;
         }
     }
 
@@ -100,7 +116,7 @@ public partial class RLAcademy : Node
             if (stepCount >= repeat)
             {
                 _inferenceStepCounters[agent] = 0;
-                var observation = agent.GetObservation();
+                var observation = agent.CollectObservationArray();
                 if (observation.Length == 0)
                 {
                     continue;
@@ -175,7 +191,8 @@ public partial class RLAcademy : Node
 
     private void TryInitializeInference()
     {
-        if (ResolveSceneRoot().GetParent() is TrainingBootstrap || NetworkConfig is null)
+        var networkConfig = ResolveNetworkConfig();
+        if (ResolveSceneRoot().GetParent() is TrainingBootstrap || networkConfig is null)
         {
             return;
         }
@@ -245,7 +262,7 @@ public partial class RLAcademy : Node
             }
 
             // Read obs size and action count from the checkpoint's embedded layer shapes
-            // rather than calling GetObservation() at _Ready time, which may return empty
+            // rather than calling CollectObservationArray() at _Ready time, which may return empty
             // before OnEpisodeBegin() has had a chance to set up the scene.
             var layerCount = checkpoint.LayerShapeBuffer.Length / 3;
             var obsSize    = checkpoint.LayerShapeBuffer[0];
@@ -259,7 +276,7 @@ public partial class RLAcademy : Node
 
             try
             {
-                var network = new PolicyValueNetwork(obsSize, actionCount, NetworkConfig);
+                var network = new PolicyValueNetwork(obsSize, actionCount, networkConfig);
                 network.LoadCheckpoint(checkpoint);
                 _agentInferenceNetworks[agent] = network;
                 InferenceActive = true;
@@ -276,5 +293,15 @@ public partial class RLAcademy : Node
         {
             Checkpoint = GD.Load<RLCheckpoint>(firstLoadedCheckpointPath);
         }
+    }
+
+    public RLTrainerConfig? ResolveTrainerConfig()
+    {
+        return TrainingConfig?.ToTrainerConfig() ?? TrainerConfig;
+    }
+
+    public RLNetworkConfig? ResolveNetworkConfig()
+    {
+        return TrainingConfig?.ToNetworkConfig() ?? NetworkConfig;
     }
 }

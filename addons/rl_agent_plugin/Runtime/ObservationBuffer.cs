@@ -6,8 +6,10 @@ namespace RlAgentPlugin.Runtime;
 public sealed class ObservationBuffer
 {
     private readonly List<float> _values = new();
+    private readonly List<ObservationSegment> _segments = new();
 
     public int Count => _values.Count;
+    public IReadOnlyList<ObservationSegment> Segments => _segments;
 
     /// <summary>Add a single float value as-is.</summary>
     public void Add(float value) => _values.Add(value);
@@ -53,6 +55,27 @@ public sealed class ObservationBuffer
 
     public void AddNormalized(int value, int min, int max) => AddNormalized((float)value, (float)min, (float)max);
 
+    public void AddSensor(IObservationSensor sensor)
+    {
+        sensor.Write(this);
+    }
+
+    public void AddSensor(string name, IObservationSensor sensor)
+    {
+        var startIndex = Count;
+        sensor.Write(this);
+        var length = Count - startIndex;
+        if (length > 0)
+        {
+            _segments.Add(new ObservationSegment(name, startIndex, length));
+        }
+    }
+
     internal float[] ToArray() => _values.ToArray();
-    internal void Clear() => _values.Clear();
+
+    internal void Clear()
+    {
+        _values.Clear();
+        _segments.Clear();
+    }
 }

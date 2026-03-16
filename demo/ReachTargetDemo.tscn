@@ -25,14 +25,27 @@ metadata/_custom_type_script = "uid://v06yiv1d22xm"
 [sub_resource type="CircleShape2D" id="CircleShape2D_cuwb5"]
 
 [sub_resource type="LabelSettings" id="LabelSettings_ne8s5"]
-font_size = 18
+font_size = 22
 font_color = Color(0.972549, 0.980392, 0.988235, 1)
 
 [sub_resource type="LabelSettings" id="LabelSettings_kep4b"]
-font_size = 14
+font_size = 15
 font_color = Color(0.796078, 0.835294, 0.882353, 1)
 
 [node name="ReachTargetDemo" type="Node2D" unique_id=1061837225]
+
+[node name="Background" type="Polygon2D" parent="." unique_id=1031762451]
+color = Color(0.0470588, 0.0823529, 0.129412, 1)
+polygon = PackedVector2Array(0, 0, 800, 0, 800, 600, 0, 600)
+
+[node name="LanePanel" type="Polygon2D" parent="." unique_id=1641178328]
+color = Color(0.0901961, 0.160784, 0.231373, 1)
+polygon = PackedVector2Array(72, 196, 728, 196, 728, 500, 72, 500)
+
+[node name="LaneBorder" type="Line2D" parent="." unique_id=176045348]
+points = PackedVector2Array(72, 196, 728, 196, 728, 500, 72, 500, 72, 196)
+width = 3.0
+default_color = Color(0.352941, 0.537255, 0.682353, 1)
 
 [node name="Academy" type="Node" parent="." unique_id=2119179183]
 script = ExtResource("1_cgdt7")
@@ -40,23 +53,46 @@ TrainerConfig = SubResource("Resource_q0lq2")
 NetworkConfig = SubResource("Resource_0uxd8")
 RunPrefix = "Test"
 
+[node name="TrackGlow" type="Line2D" parent="." unique_id=102336968]
+points = PackedVector2Array(126, 338, 674, 338)
+width = 56.0
+default_color = Color(0.376471, 0.643137, 0.866667, 0.1)
+
 [node name="Track" type="Line2D" parent="." unique_id=2091839360]
-points = PackedVector2Array(60, 190, 580, 190)
-width = 4.0
-default_color = Color(0.541176, 0.631373, 0.694118, 1)
+points = PackedVector2Array(126, 338, 674, 338)
+width = 10.0
+default_color = Color(0.584314, 0.694118, 0.784314, 1)
+
+[node name="StartCap" type="Line2D" parent="." unique_id=1606955190]
+points = PackedVector2Array(126, 304, 126, 372)
+width = 5.0
+default_color = Color(0.317647, 0.505882, 0.658824, 1)
+
+[node name="EndCap" type="Line2D" parent="." unique_id=1753567840]
+points = PackedVector2Array(674, 304, 674, 372)
+width = 5.0
+default_color = Color(0.317647, 0.505882, 0.658824, 1)
 
 [node name="GoalMarker" type="Node2D" parent="." unique_id=1495694201]
+position = Vector2(548, 338)
+
+[node name="GoalHalo" type="Polygon2D" parent="GoalMarker" unique_id=1356608114]
+color = Color(1, 0.819608, 0.4, 0.18)
+polygon = PackedVector2Array(0, -28, 28, 0, 0, 28, -28, 0)
 
 [node name="GoalVisual" type="Polygon2D" parent="GoalMarker" unique_id=1004410880]
 color = Color(1, 0.819608, 0.4, 1)
 polygon = PackedVector2Array(0, -14, 14, 0, 0, 14, -14, 0)
 
 [node name="Player" type="CharacterBody2D" parent="." unique_id=473174080]
-position = Vector2(320, 190)
+position = Vector2(400, 338)
 script = ExtResource("5_6k30s")
+LaneMinX = 126.0
+LaneMaxX = 674.0
+LaneY = 338.0
 
 [node name="BodyVisual" type="Polygon2D" parent="Player" unique_id=1201743833]
-color = Color(0.298039, 0.788235, 0.941176, 1)
+color = Color(0.34902, 0.854902, 0.980392, 1)
 polygon = PackedVector2Array(-16, -16, 16, -16, 16, 16, -16, 16)
 
 [node name="Agent" type="Node2D" parent="Player" unique_id=527052923]
@@ -68,19 +104,19 @@ AgentConfig = SubResource("Resource_dj21h")
 shape = SubResource("CircleShape2D_cuwb5")
 
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1188714571]
-visible = false
+visible = true
 
 [node name="Panel" type="PanelContainer" parent="CanvasLayer" unique_id=1555430802]
-offset_left = 32.0
-offset_top = 32.0
-offset_right = 608.0
-offset_bottom = 312.0
+offset_left = 24.0
+offset_top = 24.0
+offset_right = 776.0
+offset_bottom = 156.0
 
 [node name="Margin" type="MarginContainer" parent="CanvasLayer/Panel" unique_id=828825247]
 layout_mode = 2
-theme_override_constants/margin_left = 20
+theme_override_constants/margin_left = 22
 theme_override_constants/margin_top = 20
-theme_override_constants/margin_right = 20
+theme_override_constants/margin_right = 22
 theme_override_constants/margin_bottom = 20
 
 [node name="VBox" type="VBoxContainer" parent="CanvasLayer/Panel/Margin" unique_id=145574204]
@@ -93,12 +129,12 @@ label_settings = SubResource("LabelSettings_ne8s5")
 
 [node name="ObsLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=169366458]
 layout_mode = 2
-text = "Observation: [player_x, goal_x, delta]"
+text = "Observation: player x, goal x, and signed distance along the lane."
 label_settings = SubResource("LabelSettings_kep4b")
 
 [node name="ActionLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=849323049]
 layout_mode = 2
-text = "Actions: 0 = move left, 1 = move right"
+text = "Actions: 0 moves left, 1 moves right."
 label_settings = SubResource("LabelSettings_kep4b")
 
 [node name="DistanceLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=1404891785]
@@ -108,6 +144,6 @@ label_settings = SubResource("LabelSettings_kep4b")
 
 [node name="FooterLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=512919374]
 layout_mode = 2
-text = "Run Scene: Left/Right to move, Enter to reset. Plugin: Use Start Training."
+text = "Controls: Left/Right move, Enter resets. Use Start Training in the plugin to begin learning."
 label_settings = SubResource("LabelSettings_kep4b")
 autowrap_mode = 3

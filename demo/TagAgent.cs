@@ -1,3 +1,4 @@
+using System;
 using Godot;
 using RlAgentPlugin.Runtime;
 
@@ -5,10 +6,18 @@ namespace RlAgentPlugin.Demo;
 
 public partial class TagAgent : RLAgent2D
 {
-    [DiscreteAction(5, "Idle", "Up", "Down", "Left", "Right", Name = "Move")]
-    private int _movementAction;
+    private int _moveActionIndex;
 
-    public Vector2 MoveIntent => _movementAction switch
+    enum MoveAction
+    {
+        Idle,
+        Up,
+        Down,
+        Left,
+        Right
+    }
+
+    public Vector2 MoveIntent => _moveActionIndex switch
     {
         1 => Vector2.Up,
         2 => Vector2.Down,
@@ -25,6 +34,16 @@ public partial class TagAgent : RLAgent2D
         base._Ready();
         _player = GetParent() as TagPlayer;
         _arena = _player?.GetParent() as TagArenaController;
+    }
+
+    public override void DefineActions(ActionSpaceBuilder builder)
+    {
+        builder.AddDiscrete<MoveAction>();
+    }
+
+    protected override void OnActionsReceived(ActionBuffer actions)
+    {
+        _moveActionIndex = (int)actions.GetDiscreteAsEnum<MoveAction>();;
     }
 
     public override void CollectObservations(ObservationBuffer obs)

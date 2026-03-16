@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Godot;
 
 namespace RlAgentPlugin.Runtime;
@@ -37,7 +38,15 @@ public sealed class RunMetricsWriter
         }));
     }
 
-    public void AppendMetric(float episodeReward, int episodeLength, float policyLoss, float valueLoss, float entropy, long totalSteps, long episodeCount)
+    public void AppendMetric(
+        float episodeReward,
+        int episodeLength,
+        float policyLoss,
+        float valueLoss,
+        float entropy,
+        long totalSteps,
+        long episodeCount,
+        IReadOnlyDictionary<string, float>? rewardComponents = null)
     {
         EnsureFileDirectory(_metricsPath);
         var mode = FileAccess.FileExists(_metricsPath)
@@ -55,7 +64,7 @@ public sealed class RunMetricsWriter
             file.SeekEnd();
         }
 
-        file.StoreLine(Json.Stringify(new Godot.Collections.Dictionary
+        var payload = new Godot.Collections.Dictionary
         {
             { "episode_reward", episodeReward },
             { "episode_length", episodeLength },
@@ -64,7 +73,20 @@ public sealed class RunMetricsWriter
             { "entropy", entropy },
             { "total_steps", totalSteps },
             { "episode_count", episodeCount },
-        }));
+        };
+
+        if (rewardComponents is not null && rewardComponents.Count > 0)
+        {
+            var rewardBreakdown = new Godot.Collections.Dictionary();
+            foreach (var (tag, amount) in rewardComponents)
+            {
+                rewardBreakdown[tag] = amount;
+            }
+
+            payload["reward_components"] = rewardBreakdown;
+        }
+
+        file.StoreLine(Json.Stringify(payload));
     }
 
     private static void EnsureFileDirectory(string filePath)

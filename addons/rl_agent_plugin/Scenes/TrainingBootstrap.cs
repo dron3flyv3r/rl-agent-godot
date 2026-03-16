@@ -8,7 +8,8 @@ namespace RlAgentPlugin.Runtime;
 public partial class TrainingBootstrap : Node
 {
     private TrainingLaunchManifest? _manifest;
-    private RLAcademy? _academy;
+    private readonly List<RLAcademy> _academies = new();
+    private List<RLAgent2D> _allTrainAgents = new();
     private RunMetricsWriter? _statusWriter;
 
     // Per-group state
@@ -25,8 +26,10 @@ public partial class TrainingBootstrap : Node
 
     private long _totalSteps;
     private double _previousTimeScale = 1.0;
+    private int _previousMaxPhysicsStepsPerFrame = 8;
     private int _checkpointInterval = 10;
     private int _actionRepeat = 1;
+    private int _batchSize = 1;
 
     public override void _Ready()
     {
@@ -46,20 +49,90 @@ public partial class TrainingBootstrap : Node
             return;
         }
 
-        var sceneInstance = packedScene.Instantiate();
-        AddChild(sceneInstance);
+        _batchSize = Math.Max(1, _manifest.BatchSize);
+        _checkpointInterval = Math.Max(1, _manifest.CheckpointInterval);
+        _actionRepeat = Math.Max(1, _manifest.ActionRepeat);
 
-        _academy = FindNodeByPath(sceneInstance, _manifest.AcademyNodePath) as RLAcademy;
-        if (_academy is null)
+        // Apply simulation speed. MaxPhysicsStepsPerFrame must be >= SimulationSpeed so the
+        // engine can actually run that many physics ticks per rendered frame.
+        _previousTimeScale = Engine.TimeScale;
+        _previousMaxPhysicsStepsPerFrame = Engine.MaxPhysicsStepsPerFrame;
+        var simulationSpeed = Math.Max(0.1f, _manifest.SimulationSpeed);
+        Engine.TimeScale = simulationSpeed;
+        Engine.MaxPhysicsStepsPerFrame = Math.Max(8, (int)Math.Ceiling(simulationSpeed) + 1);
+
+        RLTrainingConfig? trainingConfig = null;
+        RLTrainerConfig? trainerConfig = null;
+        RLNetworkConfig? networkConfig = null;
+
+        // Group agents by explicit shared-policy config when present, then legacy PolicyGroup,
+        // and finally by scene-relative path as a deterministic fallback.
+        var groupedAgents = new Dictionary<string, List<RLAgent2D>>();
+        var groupBindings = new Dictionary<string, ResolvedPolicyGroupBinding>();
+
+        for (var batchIdx = 0; batchIdx < _batchSize; batchIdx++)
         {
-            GD.PushError("Could not resolve RLAcademy in the launched training scene.");
+            var sceneInstance = packedScene.Instantiate();
+
+            // Offset each batch copy so their physics bodies don't visually overlap.
+            if (sceneInstance is Node2D node2D && _batchSize > 1)
+            {
+                node2D.Position = new Vector2(batchIdx * 1200, 0);
+            }
+
+            AddChild(sceneInstance);
+
+            var academy = FindNodeByPath(sceneInstance, _manifest.AcademyNodePath) as RLAcademy;
+            if (academy is null)
+            {
+                GD.PushError($"Could not resolve RLAcademy in batch copy {batchIdx}.");
+                GetTree().Quit(1);
+                return;
+            }
+
+            _academies.Add(academy);
+
+            // Use config from the first batch copy.
+            if (batchIdx == 0)
+            {
+                trainingConfig = academy.TrainingConfig;
+                if (trainingConfig is null && !string.IsNullOrWhiteSpace(_manifest.TrainingConfigPath))
+                {
+                    trainingConfig = GD.Load<RLTrainingConfig>(_manifest.TrainingConfigPath);
+                }
+
+                trainerConfig = academy.ResolveTrainerConfig()
+                    ?? trainingConfig?.ToTrainerConfig()
+                    ?? GD.Load<RLTrainerConfig>(_manifest.TrainerConfigPath);
+                networkConfig = academy.ResolveNetworkConfig()
+                    ?? trainingConfig?.ToNetworkConfig()
+                    ?? GD.Load<RLNetworkConfig>(_manifest.NetworkConfigPath);
+            }
+
+            var batchAgents = academy.GetAgents(RLAgentControlMode.Train);
+            foreach (var agent in batchAgents)
+            {
+                var binding = RLPolicyGroupBindingResolver.Resolve(sceneInstance, agent);
+                var group = binding.BindingKey;
+
+                if (!groupedAgents.ContainsKey(group))
+                {
+                    groupedAgents[group] = new List<RLAgent2D>();
+                    groupBindings[group] = binding;
+                }
+
+                groupedAgents[group].Add(agent);
+            }
+        }
+
+        if (_academies.Count == 0)
+        {
+            GD.PushError("No academy instances could be created.");
             GetTree().Quit(1);
             return;
         }
 
-        var trainerConfig = _academy.TrainerConfig ?? GD.Load<RLTrainerConfig>(_manifest.TrainerConfigPath);
-        var networkConfig = _academy.NetworkConfig ?? GD.Load<RLNetworkConfig>(_manifest.NetworkConfigPath);
-        var agents = _academy.GetAgents(RLAgentControlMode.Train);
+        var agents = _academies.SelectMany(a => a.GetAgents(RLAgentControlMode.Train)).ToList();
 
         if (trainerConfig is null || networkConfig is null || agents.Count == 0)
         {
@@ -68,34 +141,14 @@ public partial class TrainingBootstrap : Node
             return;
         }
 
-        // Group agents by PolicyGroup; empty → unique key from NodePath
-        var groupedAgents = new Dictionary<string, List<RLAgent2D>>();
-        foreach (var agent in agents)
-        {
-            var group = string.IsNullOrEmpty(agent.PolicyGroup)
-                ? $"__agent__{agent.GetPath()}"
-                : agent.PolicyGroup;
-
-            if (!groupedAgents.ContainsKey(group))
-            {
-                groupedAgents[group] = new List<RLAgent2D>();
-            }
-
-            groupedAgents[group].Add(agent);
-        }
-
-        _checkpointInterval = Math.Max(1, _manifest.CheckpointInterval);
-        _actionRepeat = Math.Max(1, _manifest.ActionRepeat);
-        _previousTimeScale = Engine.TimeScale;
-        Engine.TimeScale = Math.Max(0.1f, _manifest.SimulationSpeed);
-
         var algorithm = trainerConfig.Algorithm;
 
         // Validate and create trainers per group
         foreach (var (groupId, groupAgents) in groupedAgents)
         {
+            var binding = groupBindings[groupId];
             var firstAgent = groupAgents[0];
-            var obsSize = firstAgent.GetObservation().Length;
+            var obsSize = firstAgent.CollectObservationArray().Length;
             var discreteCount = firstAgent.GetDiscreteActionCount();
             var continuousDims = firstAgent.GetContinuousActionDimensions();
 
@@ -125,7 +178,7 @@ public partial class TrainingBootstrap : Node
             // Validate all agents in group are consistent
             foreach (var agent in groupAgents)
             {
-                if (agent.GetObservation().Length != obsSize)
+                if (agent.CollectObservationArray().Length != obsSize)
                 {
                     GD.PushError($"[RL] Group '{groupId}': all agents must emit the same observation vector length.");
                     GetTree().Quit(1);
@@ -140,7 +193,7 @@ public partial class TrainingBootstrap : Node
                 }
             }
 
-            var safeGroupId = MakeSafeGroupId(groupId);
+            var safeGroupId = binding.SafeGroupId;
             var checkpointPath = $"{_manifest.RunDirectory}/checkpoint__{safeGroupId}.json";
             var metricsPath = $"{_manifest.RunDirectory}/metrics__{safeGroupId}.jsonl";
 
@@ -149,6 +202,7 @@ public partial class TrainingBootstrap : Node
                 GroupId = groupId,
                 RunId = _manifest.RunId,
                 Algorithm = algorithm,
+                SharedPolicy = binding.Config,
                 TrainerConfig = trainerConfig,
                 NetworkConfig = networkConfig,
                 ObservationSize = obsSize,
@@ -156,6 +210,9 @@ public partial class TrainingBootstrap : Node
                 ContinuousActionDimensions = continuousDims,
                 CheckpointPath = checkpointPath,
                 MetricsPath = metricsPath,
+                SelfPlay = binding.Config?.SelfPlay ?? false,
+                HistoricalOpponentRate = binding.Config?.HistoricalOpponentRate ?? 0f,
+                FrozenCheckpointInterval = binding.Config?.FrozenCheckpointInterval ?? 10,
             };
 
             var trainer = TrainerFactory.Create(groupConfig);
@@ -171,7 +228,7 @@ public partial class TrainingBootstrap : Node
             foreach (var agent in groupAgents)
             {
                 agent.ResetEpisode();
-                var obs = agent.GetObservation();
+                var obs = agent.CollectObservationArray();
                 var decision = trainer.SampleAction(obs);
                 _agentStates[agent] = new AgentRuntimeState
                 {
@@ -185,24 +242,33 @@ public partial class TrainingBootstrap : Node
                 ApplyDecision(agent, decision);
             }
 
-            GD.Print($"[RL] Group '{groupId}': {groupAgents.Count} agent(s), {algorithm}, obs={obsSize}, discrete={discreteCount}, continuous={continuousDims}");
+            GD.Print($"[RL] Group '{binding.DisplayName}': {groupAgents.Count} agent(s), {algorithm}, obs={obsSize}, discrete={discreteCount}, continuous={continuousDims}");
             GD.Print($"[RL]   Checkpoint: {checkpointPath}");
             GD.Print($"[RL]   Metrics:    {metricsPath}");
+            if (groupConfig.SelfPlay)
+            {
+                GD.Print($"[RL]   Self-play configured (historical rate={groupConfig.HistoricalOpponentRate:0.00}, freeze interval={groupConfig.FrozenCheckpointInterval})");
+            }
         }
+
+        // Cache the full list of train agents across all batch copies.
+        _allTrainAgents = _academies.SelectMany(a => a.GetAgents(RLAgentControlMode.Train)).ToList();
 
         _statusWriter = new RunMetricsWriter(string.Empty, _manifest.StatusPath);
         _statusWriter.WriteStatus("running", _manifest.ScenePath, _totalSteps, 0, "Training started.");
         GD.Print($"[RL] Run: {_manifest.RunId}");
+        if (_batchSize > 1)
+            GD.Print($"[RL] Batch size: {_batchSize} ({_allTrainAgents.Count} total agents)");
     }
 
     public override void _PhysicsProcess(double delta)
     {
-        if (_academy is null || _manifest is null || _statusWriter is null)
+        if (_academies.Count == 0 || _manifest is null || _statusWriter is null)
         {
             return;
         }
 
-        foreach (var agent in _academy.GetAgents(RLAgentControlMode.Train))
+        foreach (var agent in _allTrainAgents)
         {
             if (!_agentStates.TryGetValue(agent, out var state))
             {
@@ -216,7 +282,8 @@ public partial class TrainingBootstrap : Node
 
             agent.TickStep();
             var reward = agent.ConsumePendingReward();
-            agent.AccumulateReward(reward);
+            var rewardBreakdown = agent.ConsumePendingRewardBreakdown();
+            agent.AccumulateReward(reward, rewardBreakdown);
             state.WindowReward += reward;
             state.StepsSinceDecision++;
 
@@ -224,7 +291,7 @@ public partial class TrainingBootstrap : Node
 
             if (done || state.StepsSinceDecision >= _actionRepeat)
             {
-                var nextObservation = agent.GetObservation();
+                var nextObservation = agent.CollectObservationArray();
                 var nextValue = done ? 0.0f : trainer.EstimateValue(nextObservation);
 
                 var transition = new Transition
@@ -254,10 +321,11 @@ public partial class TrainingBootstrap : Node
                         _lastPolicyLossByGroup[state.GroupId],
                         _lastValueLossByGroup[state.GroupId],
                         _lastEntropyByGroup[state.GroupId],
-                        _totalSteps, episodeCount);
+                        _totalSteps, episodeCount,
+                        agent.GetEpisodeRewardBreakdown());
 
                     agent.ResetEpisode();
-                    nextObservation = agent.GetObservation();
+                    nextObservation = agent.CollectObservationArray();
                 }
 
                 var nextDecision = trainer.SampleAction(nextObservation);
@@ -301,12 +369,13 @@ public partial class TrainingBootstrap : Node
             }
         }
 
-        if (lastCheckpoint is not null && _academy is not null)
+        if (lastCheckpoint is not null)
         {
-            _academy.Checkpoint = lastCheckpoint;
+            foreach (var academy in _academies)
+                academy.Checkpoint = lastCheckpoint;
         }
 
-        var trainerConfig = _academy?.TrainerConfig;
+        var trainerConfig = _academies.Count > 0 ? _academies[0].TrainerConfig : null;
         if (trainerConfig is not null && _totalSteps % Math.Max(1, trainerConfig.StatusWriteIntervalSteps) == 0)
         {
             var totalEpisodes = _episodeCountByGroup.Values.Sum();
@@ -318,6 +387,7 @@ public partial class TrainingBootstrap : Node
     public override void _ExitTree()
     {
         Engine.TimeScale = _previousTimeScale;
+        Engine.MaxPhysicsStepsPerFrame = _previousMaxPhysicsStepsPerFrame;
 
         if (_manifest is null) return;
 
@@ -333,10 +403,8 @@ public partial class TrainingBootstrap : Node
                 RLCheckpoint.SaveToFile(finalCheckpoint, checkpointPath);
             }
 
-            if (_academy is not null)
-            {
-                _academy.Checkpoint = finalCheckpoint;
-            }
+            foreach (var academy in _academies)
+                academy.Checkpoint = finalCheckpoint;
         }
 
         var totalEpisodes = _episodeCountByGroup.Values.Sum();
@@ -357,24 +425,8 @@ public partial class TrainingBootstrap : Node
 
     private string? GetGroupCheckpointPath(string groupId)
     {
-        var safeId = MakeSafeGroupId(groupId);
+        var safeId = RLPolicyGroupBindingResolver.MakeSafeGroupId(groupId);
         return $"{_manifest?.RunDirectory}/checkpoint__{safeId}.json";
-    }
-
-    private static string MakeSafeGroupId(string groupId)
-    {
-        // Collapse NodePath separators and problematic chars to underscores
-        var safe = new System.Text.StringBuilder(groupId.Length);
-        foreach (var c in groupId)
-        {
-            safe.Append(char.IsLetterOrDigit(c) || c == '-' ? c : '_');
-        }
-
-        var result = safe.ToString().Trim('_');
-        if (string.IsNullOrEmpty(result)) result = "default";
-        // Limit length
-        if (result.Length > 64) result = result[..64];
-        return result;
     }
 
     private static Node? FindNodeByPath(Node root, string nodePath)

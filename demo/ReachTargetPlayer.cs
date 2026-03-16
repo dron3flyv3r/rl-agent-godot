@@ -5,8 +5,12 @@ namespace RlAgentPlugin.Demo;
 
 public partial class ReachTargetPlayer : CharacterBody2D
 {
-    private const float LaneMinX = 60.0f;
-    private const float LaneMaxX = 580.0f;
+    [ExportGroup("Lane")]
+    [Export] public float LaneMinX { get; set; } = 126.0f;
+    [Export] public float LaneMaxX { get; set; } = 674.0f;
+    [Export] public float LaneY { get; set; } = 338.0f;
+    [Export] public float SpawnPadding { get; set; } = 54.0f;
+    [Export] public float MinGoalSeparation { get; set; } = 120.0f;
 
     [Export] public float MoveStep { get; set; } = 18.0f;
     [Export] public float SuccessThreshold { get; set; } = 18.0f;
@@ -59,8 +63,8 @@ public partial class ReachTargetPlayer : CharacterBody2D
 
         var previousDistance = _lastDistance;
         Position = new Vector2(
-            Mathf.Clamp(Position.X + (_agent.MoveDirection * MoveStep), LaneMinX, LaneMaxX),
-            Position.Y);
+            Mathf.Clamp(Position.X + (_agent.MoveDirection * MoveStep), GetLaneMinX(), GetLaneMaxX()),
+            LaneY);
 
         _lastDistance = Mathf.Abs(GoalX - Position.X);
         _stepReward = Mathf.Clamp((previousDistance - _lastDistance) / MoveStep, -1.0f, 1.0f) * 0.25f;
@@ -92,18 +96,28 @@ public partial class ReachTargetPlayer : CharacterBody2D
     {
         IsAtGoal = false;
         _stepReward = 0.0f;
-        Position = new Vector2(_rng.RandfRange(120.0f, 520.0f), 190.0f);
-        GoalX = _rng.RandfRange(120.0f, 520.0f);
-
-        while (Mathf.Abs(GoalX - Position.X) < 96.0f)
+        var laneMin = GetLaneMinX();
+        var laneMax = GetLaneMaxX();
+        var spawnMin = Mathf.Min(laneMin + SpawnPadding, laneMax);
+        var spawnMax = Mathf.Max(laneMax - SpawnPadding, laneMin);
+        if (spawnMin > spawnMax)
         {
-            GoalX = _rng.RandfRange(120.0f, 520.0f);
+            spawnMin = laneMin;
+            spawnMax = laneMax;
+        }
+
+        Position = new Vector2(_rng.RandfRange(spawnMin, spawnMax), LaneY);
+        GoalX = _rng.RandfRange(spawnMin, spawnMax);
+
+        while (Mathf.Abs(GoalX - Position.X) < MinGoalSeparation)
+        {
+            GoalX = _rng.RandfRange(spawnMin, spawnMax);
         }
 
         _lastDistance = Mathf.Abs(GoalX - Position.X);
         if (_goalMarker is not null)
         {
-            _goalMarker.Position = new Vector2(GoalX, 190.0f);
+            _goalMarker.Position = new Vector2(GoalX, LaneY);
         }
 
         UpdateUi();
@@ -120,8 +134,18 @@ public partial class ReachTargetPlayer : CharacterBody2D
         {
             _footerLabel.Text = IsTrainingRun()
                 ? "Training run active. Metrics are still being written to the run folder."
-                : "Run Scene: Left/Right to move, Enter to reset. Plugin: Use Start Training.";
+                : "Controls: Left/Right move, Enter resets. Use Start Training in the plugin to switch to learning.";
         }
+    }
+
+    private float GetLaneMinX()
+    {
+        return Mathf.Min(LaneMinX, LaneMaxX);
+    }
+
+    private float GetLaneMaxX()
+    {
+        return Mathf.Max(LaneMinX, LaneMaxX);
     }
 
     private bool IsTrainingRun()

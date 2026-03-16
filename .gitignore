@@ -18,3 +18,4 @@ mono_crash.*.json
 
 # Agent-specific ignores
 RL-Agent-Training/*
+*.rlmodel

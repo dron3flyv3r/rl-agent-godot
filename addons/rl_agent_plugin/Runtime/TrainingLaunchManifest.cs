@@ -11,6 +11,7 @@ public sealed class TrainingLaunchManifest
     public string AcademyNodePath { get; set; } = string.Empty;
     public string RunId { get; set; } = string.Empty;
     public string RunDirectory { get; set; } = string.Empty;
+    public string TrainingConfigPath { get; set; } = string.Empty;
     public string TrainerConfigPath { get; set; } = string.Empty;
     public string NetworkConfigPath { get; set; } = string.Empty;
     public string CheckpointPath { get; set; } = string.Empty;
@@ -19,6 +20,7 @@ public sealed class TrainingLaunchManifest
     public int CheckpointInterval { get; set; } = 10;
     public float SimulationSpeed { get; set; } = 1.0f;
     public int ActionRepeat { get; set; } = 1;
+    public int BatchSize { get; set; } = 1;
 
     public static TrainingLaunchManifest CreateDefault() => new();
 
@@ -75,6 +77,7 @@ public sealed class TrainingLaunchManifest
             AcademyNodePath = ReadString(data, nameof(AcademyNodePath)),
             RunId = ReadString(data, nameof(RunId)),
             RunDirectory = ReadString(data, nameof(RunDirectory)),
+            TrainingConfigPath = ReadString(data, nameof(TrainingConfigPath)),
             TrainerConfigPath = ReadString(data, nameof(TrainerConfigPath)),
             NetworkConfigPath = ReadString(data, nameof(NetworkConfigPath)),
             CheckpointPath = ReadString(data, nameof(CheckpointPath)),
@@ -83,6 +86,7 @@ public sealed class TrainingLaunchManifest
             CheckpointInterval = ReadInt(data, nameof(CheckpointInterval), 10),
             SimulationSpeed = ReadFloat(data, nameof(SimulationSpeed), 1.0f),
             ActionRepeat = ReadInt(data, nameof(ActionRepeat), 1),
+            BatchSize = ReadInt(data, nameof(BatchSize), 1),
         };
     }
 
@@ -94,6 +98,7 @@ public sealed class TrainingLaunchManifest
             { nameof(AcademyNodePath), AcademyNodePath },
             { nameof(RunId), RunId },
             { nameof(RunDirectory), RunDirectory },
+            { nameof(TrainingConfigPath), TrainingConfigPath },
             { nameof(TrainerConfigPath), TrainerConfigPath },
             { nameof(NetworkConfigPath), NetworkConfigPath },
             { nameof(CheckpointPath), CheckpointPath },
@@ -102,6 +107,7 @@ public sealed class TrainingLaunchManifest
             { nameof(CheckpointInterval), CheckpointInterval },
             { nameof(SimulationSpeed), SimulationSpeed },
             { nameof(ActionRepeat), ActionRepeat },
+            { nameof(BatchSize), BatchSize },
         };
     }
 

@@ -25,7 +25,7 @@ public partial class TagArenaController : Node2D
     [Export] public float MinimumSpawnSeparation { get; set; } = 72.0f;
 
     [ExportGroup("Episode")]
-    [Export] public int EpisodeStepLimit { get; set; } = 240;
+    [Export] public int EpisodeStepLimit { get; set; } = 600;
     [Export] public float ChaserDistanceRewardScale { get; set; } = 0.02f;
     [Export] public float RunnerDistanceRewardScale { get; set; } = 0.02f;
     [Export] public float ChaserStepPenalty { get; set; } = 0.005f;
@@ -530,7 +530,9 @@ public partial class TagArenaController : Node2D
         {
             _footerLabel.Text = IsTrainingRun()
                 ? "Training uses four train-mode agents with separate policies and shared arena resets."
-                : "Controls: arrows move the selected human agent, Enter resets the arena.";
+                : ControlledAgent == StandaloneControlledAgent.None
+                    ? "Controls: Enter resets the arena. Set ControlledAgent to a player to enable manual control."
+                    : "Controls: arrows move the selected human agent, Enter resets the arena.";
         }
     }
 }

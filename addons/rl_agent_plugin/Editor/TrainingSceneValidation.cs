@@ -7,15 +7,21 @@ public sealed class PolicyGroupSummary
 {
     public string GroupId { get; set; } = string.Empty;
     public int AgentCount { get; set; }
+    public int ObservationSize { get; set; }
     public int ActionCount { get; set; }
     public bool IsContinuous { get; set; }
     public int ContinuousActionDimensions { get; set; }
+    public bool UsesExplicitConfig { get; set; }
+    public string PolicyConfigPath { get; set; } = string.Empty;
+    public bool SelfPlay { get; set; }
+    public List<string> AgentPaths { get; } = new();
 }
 
 public sealed class TrainingSceneValidation
 {
     public string ScenePath { get; set; } = string.Empty;
     public string AcademyPath { get; set; } = string.Empty;
+    public string TrainingConfigPath { get; set; } = string.Empty;
     public string TrainerConfigPath { get; set; } = string.Empty;
     public string NetworkConfigPath { get; set; } = string.Empty;
     public string CheckpointPath { get; set; } = string.Empty;
@@ -23,10 +29,13 @@ public sealed class TrainingSceneValidation
     public int CheckpointInterval { get; set; } = 10;
     public float SimulationSpeed { get; set; } = 1.0f;
     public int ActionRepeat { get; set; } = 1;
+    public int BatchSize { get; set; } = 1;
     public int ExpectedActionCount { get; set; }
     public int TrainAgentCount { get; set; }
     public bool IsValid { get; set; }
-    public List<string> AgentNames { get; } = new();
+    public List<string> AgentNames  { get; } = new();
+    /// <summary>Safe group ID for each entry in AgentNames (same index). Used to locate per-agent checkpoint files.</summary>
+    public List<string> AgentGroups { get; } = new();
     public List<string> Errors { get; } = new();
     public List<PolicyGroupSummary> PolicyGroups { get; } = new();
 
@@ -51,7 +60,15 @@ public sealed class TrainingSceneValidation
                 var actionInfo = group.IsContinuous
                     ? $"{group.ContinuousActionDimensions}D continuous"
                     : $"{group.ActionCount} discrete";
-                builder.AppendLine($"  '{group.GroupId}': {group.AgentCount} agent(s), {actionInfo}");
+                var sourceInfo = group.UsesExplicitConfig
+                    ? $"explicit config ({group.PolicyConfigPath})"
+                    : "legacy/fallback binding";
+                var selfPlayInfo = group.SelfPlay ? ", self-play" : string.Empty;
+                builder.AppendLine($"  '{group.GroupId}': {group.AgentCount} agent(s), obs={group.ObservationSize}, {actionInfo}, {sourceInfo}{selfPlayInfo}");
+                foreach (var agentPath in group.AgentPaths)
+                {
+                    builder.AppendLine($"    - {agentPath}");
+                }
             }
         }
 

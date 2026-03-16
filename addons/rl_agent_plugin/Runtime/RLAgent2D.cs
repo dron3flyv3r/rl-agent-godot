@@ -7,11 +7,14 @@ namespace RlAgentPlugin.Runtime;
 [GlobalClass]
 public partial class RLAgent2D : Node2D
 {
-    private RLActionBinding? _actionBinding;
-    private bool _actionBindingResolved;
+    private ActionSpaceBuilder? _explicitActionSpace;
+    private bool _explicitActionSpaceResolved;
 
     private readonly ObservationBuffer _observationBuffer = new();
+    private int? _validatedObservationSize;
     private float _pendingReward;
+    private readonly Dictionary<string, float> _pendingRewardComponents = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, float> _episodeRewardComponents = new(StringComparer.Ordinal);
     private bool _donePending;
     private string _agentId = "Agent";
     private RLAgentControlMode _inlineControlMode = RLAgentControlMode.Train;
@@ -20,7 +23,8 @@ public partial class RLAgent2D : Node2D
     private RLAgentConfig? _agentConfig;
 
     [Export] public string AgentId { get => string.IsNullOrEmpty(_agentId) ? "Agent" : _agentId; set => _agentId = value; }
-    [Export] public int MaxEpisodeSteps { get; set; } = 1024;
+    /// <summary>Maximum steps per episode. Set to 0 to disable the built-in limit (e.g. when a game controller manages episode length).</summary>
+    [Export] public int MaxEpisodeSteps { get; set; } = 0;
 
     [ExportGroup("Control")]
     [Export]
@@ -63,23 +67,14 @@ public partial class RLAgent2D : Node2D
 
     // ── New API ───────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Override to fill the observation buffer each step.
-    /// Preferred over GetObservation().
-    /// </summary>
+    /// <summary>Override to fill the observation buffer each step.</summary>
     public virtual void CollectObservations(ObservationBuffer buffer) { }
 
     /// <summary>
     /// Called each physics step. Override to compute rewards and call
     /// EndEpisode() when the episode is complete.
-    /// Default falls back to ComputeReward() / IsEpisodeDone() for compatibility.
     /// </summary>
-    public virtual void OnStep()
-    {
-        var reward = ComputeReward();
-        if (reward != 0f) AddReward(reward);
-        if (IsEpisodeDone()) EndEpisode();
-    }
+    public virtual void OnStep() { }
 
     /// <summary>Called at the start of every episode. Override to reset scene state.</summary>
     public virtual void OnEpisodeBegin() { }
@@ -87,116 +82,98 @@ public partial class RLAgent2D : Node2D
     /// <summary>Accumulate reward for the current step.</summary>
     protected void AddReward(float reward) => _pendingReward += reward;
 
-    /// <summary>Replace the current pending reward with a specific value.</summary>
-    protected void SetReward(float reward) => _pendingReward = reward;
-
-    /// <summary>Signal that the episode has ended.</summary>
-    protected void EndEpisode() => _donePending = true;
-
-    // ── Legacy / Fallback API ─────────────────────────────────────────────────
-
-    /// <summary>
-    /// Override to return an observation array directly.
-    /// Default calls CollectObservations() internally.
-    /// Prefer CollectObservations() for new agents.
-    /// </summary>
-    public virtual float[] GetObservation()
+    /// <summary>Accumulate a named reward component for the current step.</summary>
+    protected void AddReward(float reward, string tag)
     {
-        _observationBuffer.Clear();
-        CollectObservations(_observationBuffer);
-        return _observationBuffer.ToArray();
+        _pendingReward += reward;
+        AddRewardComponent(_pendingRewardComponents, tag, reward);
     }
 
-    /// <summary>Legacy: return a reward scalar. Prefer OnStep() + AddReward().</summary>
-    public virtual float ComputeReward() => 0.0f;
+    /// <summary>Replace the current pending reward with a specific value.</summary>
+    protected void SetReward(float reward)
+    {
+        _pendingReward = reward;
+        _pendingRewardComponents.Clear();
+    }
 
-    /// <summary>Legacy: return true when episode ends. Prefer OnStep() + EndEpisode().</summary>
-    public virtual bool IsEpisodeDone() => false;
+    /// <summary>Replace the current pending reward with a single named reward component.</summary>
+    protected void SetReward(float reward, string tag)
+    {
+        _pendingReward = reward;
+        _pendingRewardComponents.Clear();
+        AddRewardComponent(_pendingRewardComponents, tag, reward);
+    }
+
+    /// <summary>Signal that the episode has ended. Can be called from external scripts (e.g. a game controller).</summary>
+    public void EndEpisode() => _donePending = true;
+
+    /// <summary>Returns true if EndEpisode() has been called and the done signal is pending. Does not consume it.</summary>
+    public bool IsDone => _donePending;
 
     // ── Action API ────────────────────────────────────────────────────────────
 
+    public virtual void DefineActions(ActionSpaceBuilder builder) { }
+
+    protected virtual void OnActionsReceived(ActionBuffer actions) { }
+
     public virtual RLActionDefinition[] GetActionSpace()
     {
-        return ResolveActionBinding()?.ActionSpace ?? Array.Empty<RLActionDefinition>();
+        return ResolveExplicitActionSpace()?.Build() ?? Array.Empty<RLActionDefinition>();
     }
 
     public virtual string[] GetDiscreteActionLabels()
     {
-        var actionSpace = GetActionSpace();
-        if (actionSpace.Length == 0)
-        {
-            return Array.Empty<string>();
-        }
-
-        var labels = new List<string>(actionSpace.Length);
-        foreach (var action in actionSpace)
-        {
-            if (action.VariableType == RLActionVariableType.Discrete)
-            {
-                labels.Add(action.Name);
-            }
-        }
-
-        return labels.ToArray();
+        return ResolveExplicitActionSpace()?.BuildDiscreteActionLabels() ?? Array.Empty<string>();
     }
 
     public int GetDiscreteActionCount()
     {
-        return GetDiscreteActionLabels().Length;
+        return ResolveExplicitActionSpace()?.GetDiscreteActionCount() ?? 0;
     }
 
     public bool SupportsOnlyDiscreteActions()
     {
-        var actionBinding = ResolveActionBinding();
-        if (actionBinding is not null)
-        {
-            return actionBinding.SupportsOnlyDiscreteActions;
-        }
-
-        foreach (var action in GetActionSpace())
-        {
-            if (action.VariableType != RLActionVariableType.Discrete)
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return ResolveExplicitActionSpace()?.SupportsOnlyDiscreteActions() ?? false;
     }
 
     public virtual void ApplyAction(int action)
     {
-        if (GetDiscreteActionCount() > 0 && (action < 0 || action >= GetDiscreteActionCount()))
+        var explicitActionSpace = ResolveExplicitActionSpace();
+        var discreteActionCount = GetDiscreteActionCount();
+        if (discreteActionCount > 0 && (action < 0 || action >= discreteActionCount))
         {
             return;
         }
 
         CurrentActionIndex = action;
-        if (!TryApplyActionSettings(action))
+        if (explicitActionSpace is not null)
         {
-            OnActionApplied(action);
+            OnActionsReceived(explicitActionSpace.CreateDiscreteActionBuffer(action));
         }
     }
 
     public virtual void ApplyAction(float[] continuousActions)
     {
-        if (!TryApplyContinuousActionSettings(continuousActions))
+        var explicitActionSpace = ResolveExplicitActionSpace();
+        if (explicitActionSpace is not null)
         {
-            OnContinuousActionApplied(continuousActions);
+            OnActionsReceived(explicitActionSpace.CreateContinuousActionBuffer(continuousActions));
         }
     }
 
     public int GetContinuousActionDimensions()
     {
-        return ResolveActionBinding()?.ContinuousActionDimensions ?? 0;
+        return ResolveExplicitActionSpace()?.GetContinuousActionDimensions() ?? 0;
     }
 
     public virtual void ResetEpisode()
     {
         EpisodeSteps = 0;
         EpisodeReward = 0.0f;
+        _episodeRewardComponents.Clear();
         CurrentActionIndex = 0;
         _pendingReward = 0f;
+        _pendingRewardComponents.Clear();
         _donePending = false;
         OnEpisodeBegin();
         if (GetDiscreteActionCount() > 0)
@@ -205,10 +182,20 @@ public partial class RLAgent2D : Node2D
         }
     }
 
-    public void AccumulateReward(float reward)
+    public void AccumulateReward(float reward, IReadOnlyDictionary<string, float>? rewardBreakdown = null)
     {
         EpisodeReward += reward;
         EpisodeSteps += 1;
+
+        if (rewardBreakdown is null)
+        {
+            return;
+        }
+
+        foreach (var (tag, amount) in rewardBreakdown)
+        {
+            AddRewardComponent(_episodeRewardComponents, tag, amount);
+        }
     }
 
     public bool HasReachedEpisodeLimit()
@@ -239,6 +226,13 @@ public partial class RLAgent2D : Node2D
         return reward;
     }
 
+    internal Dictionary<string, float> ConsumePendingRewardBreakdown()
+    {
+        var breakdown = new Dictionary<string, float>(_pendingRewardComponents, StringComparer.Ordinal);
+        _pendingRewardComponents.Clear();
+        return breakdown;
+    }
+
     /// <summary>Returns the done flag and clears it.</summary>
     internal bool ConsumeDonePending()
     {
@@ -247,32 +241,55 @@ public partial class RLAgent2D : Node2D
         return done;
     }
 
-    // ── Private ───────────────────────────────────────────────────────────────
-
-    private RLActionBinding? ResolveActionBinding()
+    internal float[] CollectObservationArray()
     {
-        if (_actionBindingResolved)
+        _observationBuffer.Clear();
+        CollectObservations(_observationBuffer);
+
+        var observation = _observationBuffer.ToArray();
+        if (_validatedObservationSize is null)
         {
-            return _actionBinding;
+            _validatedObservationSize = observation.Length;
+        }
+        else if (_validatedObservationSize.Value != observation.Length)
+        {
+            GD.PushError(
+                $"[RLAgent2D] Agent '{Name}' changed observation size from {_validatedObservationSize.Value} to {observation.Length}. " +
+                "Observation size must remain stable across steps and episodes.");
         }
 
-        _actionBinding = RLActionBinding.Create(GetType());
-        _actionBindingResolved = true;
-        return _actionBinding;
+        return observation;
     }
 
-    private bool TryApplyActionSettings(int action)
+    public IReadOnlyDictionary<string, float> GetEpisodeRewardBreakdown()
     {
-        var actionBinding = ResolveActionBinding();
-        return actionBinding is not null && actionBinding.TryApply(this, action);
+        return new Dictionary<string, float>(_episodeRewardComponents, StringComparer.Ordinal);
     }
 
-    private bool TryApplyContinuousActionSettings(float[] actions)
+    // ── Private ───────────────────────────────────────────────────────────────
+
+    private ActionSpaceBuilder? ResolveExplicitActionSpace()
     {
-        var actionBinding = ResolveActionBinding();
-        return actionBinding is not null && actionBinding.TryApplyContinuous(this, actions);
+        if (_explicitActionSpaceResolved)
+        {
+            return _explicitActionSpace;
+        }
+
+        var builder = new ActionSpaceBuilder();
+        DefineActions(builder);
+        _explicitActionSpace = builder.HasActions ? builder : null;
+        _explicitActionSpaceResolved = true;
+        return _explicitActionSpace;
     }
 
-    protected virtual void OnActionApplied(int action) { }
-    protected virtual void OnContinuousActionApplied(float[] continuousActions) { }
+    private static void AddRewardComponent(IDictionary<string, float> target, string tag, float amount)
+    {
+        if (string.IsNullOrWhiteSpace(tag))
+        {
+            return;
+        }
+
+        target.TryGetValue(tag, out var current);
+        target[tag] = current + amount;
+    }
 }

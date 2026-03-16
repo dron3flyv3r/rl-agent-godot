@@ -9,7 +9,7 @@
 
 [sub_resource type="Resource" id="TrainerConfig"]
 script = ExtResource("3")
-MaxEpisodeSteps = 240
+MaxEpisodeSteps = 0
 
 [sub_resource type="Resource" id="NetworkConfig"]
 script = ExtResource("4")
@@ -18,28 +18,46 @@ script = ExtResource("4")
 radius = 14.0
 
 [sub_resource type="LabelSettings" id="TitleSettings"]
-font_size = 20
+font_size = 22
 font_color = Color(0.968627, 0.976471, 0.956863, 1)
 
 [sub_resource type="LabelSettings" id="BodySettings"]
-font_size = 14
+font_size = 15
 font_color = Color(0.792157, 0.858824, 0.8, 1)
 
 [node name="TagDemo" type="Node2D" unique_id=1899410076]
 script = ExtResource("1")
+ArenaMin = Vector2(92, 152)
+ArenaMax = Vector2(708, 516)
+TagRadius = 32.0
+SpawnMargin = 60.0
+MinimumSpawnSeparation = 96.0
 ControlledAgent = 0
+
+[node name="Background" type="Polygon2D" parent="." unique_id=1192768225]
+color = Color(0.0431373, 0.0901961, 0.0745098, 1)
+polygon = PackedVector2Array(0, 0, 800, 0, 800, 600, 0, 600)
+
+[node name="ArenaShadow" type="Polygon2D" parent="." unique_id=712144601]
+color = Color(0.0980392, 0.180392, 0.14902, 1)
+polygon = PackedVector2Array(78, 138, 722, 138, 722, 530, 78, 530)
 
 [node name="ArenaBackdrop" type="Polygon2D" parent="." unique_id=292530115]
 color = Color(0.0823529, 0.152941, 0.12549, 1)
-polygon = PackedVector2Array(96, 96, 704, 96, 704, 416, 96, 416)
+polygon = PackedVector2Array(92, 152, 708, 152, 708, 516, 92, 516)
 
 [node name="ArenaBorder" type="Line2D" parent="." unique_id=1858214021]
-points = PackedVector2Array(96, 96, 704, 96, 704, 416, 96, 416, 96, 96)
+points = PackedVector2Array(92, 152, 708, 152, 708, 516, 92, 516, 92, 152)
 width = 4.0
 default_color = Color(0.596078, 0.882353, 0.65098, 1)
 
+[node name="CenterGlow" type="Line2D" parent="." unique_id=1645492719]
+points = PackedVector2Array(400, 152, 400, 516)
+width = 42.0
+default_color = Color(0.352941, 0.596078, 0.423529, 0.12)
+
 [node name="CenterLine" type="Line2D" parent="." unique_id=973201875]
-points = PackedVector2Array(400, 96, 400, 416)
+points = PackedVector2Array(400, 152, 400, 516)
 width = 2.0
 default_color = Color(0.34902, 0.596078, 0.423529, 1)
 
@@ -48,18 +66,18 @@ script = ExtResource("2")
 TrainerConfig = SubResource("TrainerConfig")
 NetworkConfig = SubResource("NetworkConfig")
 RunPrefix = "TagDemo"
-SimulationSpeed = 12.0
-ActionRepeat = 4
+ActionRepeat = 2
 
 [node name="ChaserA" type="CharacterBody2D" parent="." unique_id=1432916565]
-position = Vector2(220, 160)
+position = Vector2(238, 244)
 script = ExtResource("6")
 Role = 0
 
 [node name="Agent" type="Node2D" parent="ChaserA" unique_id=1690261792]
 script = ExtResource("5")
 AgentId = "ChaserA"
-MaxEpisodeSteps = 240
+ControlMode = 1
+InferenceCheckpointPath = "res://Demo2AgentExports/ChaserA.rlmodel"
 
 [node name="Visual" type="Polygon2D" parent="ChaserA" unique_id=693159168]
 color = Color(0.937255, 0.4, 0.364706, 1)
@@ -69,14 +87,15 @@ polygon = PackedVector2Array(0, -16, 14, 0, 0, 16, -14, 0)
 shape = SubResource("CircleShape2D_q38m4")
 
 [node name="ChaserB" type="CharacterBody2D" parent="." unique_id=529484080]
-position = Vector2(220, 320)
+position = Vector2(238, 424)
 script = ExtResource("6")
 Role = 0
 
 [node name="Agent" type="Node2D" parent="ChaserB" unique_id=1464470303]
 script = ExtResource("5")
 AgentId = "ChaserB"
-MaxEpisodeSteps = 240
+ControlMode = 1
+InferenceCheckpointPath = "res://Demo2AgentExports/ChaserB.rlmodel"
 
 [node name="Visual" type="Polygon2D" parent="ChaserB" unique_id=1562436759]
 color = Color(0.890196, 0.301961, 0.27451, 1)
@@ -86,13 +105,14 @@ polygon = PackedVector2Array(0, -16, 14, 0, 0, 16, -14, 0)
 shape = SubResource("CircleShape2D_q38m4")
 
 [node name="RunnerA" type="CharacterBody2D" parent="." unique_id=1317511240]
-position = Vector2(580, 160)
+position = Vector2(562, 244)
 script = ExtResource("6")
 
 [node name="Agent" type="Node2D" parent="RunnerA" unique_id=1105293076]
 script = ExtResource("5")
 AgentId = "RunnerA"
-MaxEpisodeSteps = 240
+ControlMode = 1
+InferenceCheckpointPath = "res://Demo2AgentExports/RunnerA.rlmodel"
 
 [node name="Visual" type="Polygon2D" parent="RunnerA" unique_id=657237264]
 color = Color(0.298039, 0.741176, 0.941176, 1)
@@ -102,13 +122,14 @@ polygon = PackedVector2Array(-14, -14, 14, -14, 14, 14, -14, 14)
 shape = SubResource("CircleShape2D_q38m4")
 
 [node name="RunnerB" type="CharacterBody2D" parent="." unique_id=2122069439]
-position = Vector2(580, 320)
+position = Vector2(562, 424)
 script = ExtResource("6")
 
 [node name="Agent" type="Node2D" parent="RunnerB" unique_id=1113519001]
 script = ExtResource("5")
 AgentId = "RunnerB"
-MaxEpisodeSteps = 240
+ControlMode = 1
+InferenceCheckpointPath = "res://Demo2AgentExports/RunnerB.rlmodel"
 
 [node name="Visual" type="Polygon2D" parent="RunnerB" unique_id=1444018664]
 color = Color(0.207843, 0.596078, 0.901961, 1)
@@ -118,19 +139,18 @@ polygon = PackedVector2Array(-14, -14, 14, -14, 14, 14, -14, 14)
 shape = SubResource("CircleShape2D_q38m4")
 
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1837841690]
-visible = false
 
 [node name="Panel" type="PanelContainer" parent="CanvasLayer" unique_id=399019360]
 offset_left = 24.0
 offset_top = 24.0
-offset_right = 520.0
-offset_bottom = 176.0
+offset_right = 776.0
+offset_bottom = 138.0
 
 [node name="Margin" type="MarginContainer" parent="CanvasLayer/Panel" unique_id=374918277]
 layout_mode = 2
-theme_override_constants/margin_left = 18
+theme_override_constants/margin_left = 22
 theme_override_constants/margin_top = 18
-theme_override_constants/margin_right = 18
+theme_override_constants/margin_right = 22
 theme_override_constants/margin_bottom = 18
 
 [node name="VBox" type="VBoxContainer" parent="CanvasLayer/Panel/Margin" unique_id=1560798208]

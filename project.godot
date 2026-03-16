@@ -15,6 +15,12 @@ run/main_scene="res://demo/TagDemo.tscn"
 config/features=PackedStringArray("4.6", "C#", "Forward Plus")
 config/icon="res://icon.svg"
 
+[display]
+
+window/size/viewport_width=800
+window/size/viewport_height=600
+window/stretch/mode="viewport"
+
 [dotnet]
 
 project/assembly_name="RL agent plugin"
@@ -30,3 +36,4 @@ enabled=PackedStringArray("res://addons/rl_agent_plugin/plugin.cfg")
 [rendering]
 
 rendering_device/driver.windows="d3d12"
+viewport/transparent_background=true

@@ -14,17 +14,27 @@ public partial class RLSetupDock : VBoxContainer
     public RLSetupDock()
     {
         Name = "RL Setup";
-        CustomMinimumSize = new Vector2(300f, 280f);
+        CustomMinimumSize = new Vector2(220f, 0f);
+        SizeFlagsHorizontal = SizeFlags.ExpandFill;
 
-        var outer = new MarginContainer
+        var scroll = new ScrollContainer
         {
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
             SizeFlagsVertical = SizeFlags.ExpandFill,
         };
-        SetMargins(outer, 8);
-        AddChild(outer);
+        AddChild(scroll);
 
-        var vbox = new VBoxContainer();
+        var outer = new MarginContainer
+        {
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+        };
+        SetMargins(outer, 8);
+        scroll.AddChild(outer);
+
+        var vbox = new VBoxContainer
+        {
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+        };
         outer.AddChild(vbox);
 
         // Scene
