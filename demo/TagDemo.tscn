@@ -2,17 +2,13 @@
 
 [ext_resource type="Script" uid="uid://6k7h4e3y50oa" path="res://demo/TagArenaController.cs" id="1"]
 [ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/RLAcademy.cs" id="2"]
-[ext_resource type="Script" uid="uid://c36ruewg8fhfr" path="res://addons/rl_agent_plugin/Resources/RLTrainerConfig.cs" id="3"]
-[ext_resource type="Script" uid="uid://bnag1testwvvq" path="res://addons/rl_agent_plugin/Resources/RLNetworkConfig.cs" id="4"]
+[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl_agent_plugin/Resources/RLTrainingConfig.cs" id="3"]
 [ext_resource type="Script" uid="uid://cyyxb04k8uacu" path="res://demo/TagAgent.cs" id="5"]
 [ext_resource type="Script" uid="uid://bdrwoeuh2mcbl" path="res://demo/TagPlayer.cs" id="6"]
 
-[sub_resource type="Resource" id="TrainerConfig"]
+[sub_resource type="Resource" id="TrainingConfig"]
 script = ExtResource("3")
 MaxEpisodeSteps = 0
-
-[sub_resource type="Resource" id="NetworkConfig"]
-script = ExtResource("4")
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_q38m4"]
 radius = 14.0
@@ -63,10 +59,10 @@ default_color = Color(0.34902, 0.596078, 0.423529, 1)
 
 [node name="Academy" type="Node" parent="." unique_id=1794390983]
 script = ExtResource("2")
-TrainerConfig = SubResource("TrainerConfig")
-NetworkConfig = SubResource("NetworkConfig")
+TrainingConfig = SubResource("TrainingConfig")
 RunPrefix = "TagDemo"
 ActionRepeat = 2
+BatchSize = 64
 
 [node name="ChaserA" type="CharacterBody2D" parent="." unique_id=1432916565]
 position = Vector2(238, 244)
@@ -76,7 +72,6 @@ Role = 0
 [node name="Agent" type="Node2D" parent="ChaserA" unique_id=1690261792]
 script = ExtResource("5")
 AgentId = "ChaserA"
-ControlMode = 1
 InferenceCheckpointPath = "res://Demo2AgentExports/ChaserA.rlmodel"
 
 [node name="Visual" type="Polygon2D" parent="ChaserA" unique_id=693159168]
@@ -94,7 +89,6 @@ Role = 0
 [node name="Agent" type="Node2D" parent="ChaserB" unique_id=1464470303]
 script = ExtResource("5")
 AgentId = "ChaserB"
-ControlMode = 1
 InferenceCheckpointPath = "res://Demo2AgentExports/ChaserB.rlmodel"
 
 [node name="Visual" type="Polygon2D" parent="ChaserB" unique_id=1562436759]
@@ -111,7 +105,6 @@ script = ExtResource("6")
 [node name="Agent" type="Node2D" parent="RunnerA" unique_id=1105293076]
 script = ExtResource("5")
 AgentId = "RunnerA"
-ControlMode = 1
 InferenceCheckpointPath = "res://Demo2AgentExports/RunnerA.rlmodel"
 
 [node name="Visual" type="Polygon2D" parent="RunnerA" unique_id=657237264]
@@ -128,7 +121,6 @@ script = ExtResource("6")
 [node name="Agent" type="Node2D" parent="RunnerB" unique_id=1113519001]
 script = ExtResource("5")
 AgentId = "RunnerB"
-ControlMode = 1
 InferenceCheckpointPath = "res://Demo2AgentExports/RunnerB.rlmodel"
 
 [node name="Visual" type="Polygon2D" parent="RunnerB" unique_id=1444018664]

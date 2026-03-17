@@ -406,6 +406,10 @@ public partial class RLAgentPluginEditor : EditorPlugin
 
                         agentsByGroup[binding.BindingKey].Add(node);
                     }
+                    else if (controlMode == RLAgentControlMode.Inference)
+                    {
+                        ValidateInferenceCheckpoint(node, root, validation);
+                    }
                 }
             });
 
@@ -658,6 +662,72 @@ public partial class RLAgentPluginEditor : EditorPlugin
             return agent.SupportsOnlyDiscreteActions();
         // Cast unavailable: assume discrete to avoid false-positive "PPO requires discrete-only" errors.
         return IsAgentNode(node);
+    }
+
+    private static void ValidateInferenceCheckpoint(Node node, Node root, TrainingSceneValidation validation)
+    {
+        if (node is not RLAgent2D agent)
+        {
+            return;
+        }
+
+        var checkpointPath = agent.GetInferenceCheckpointPath();
+        var nodePath = root.GetPathTo(node).ToString();
+        if (string.IsNullOrWhiteSpace(checkpointPath))
+        {
+            validation.Errors.Add($"Agent '{nodePath}' is in Inference mode but has no checkpoint path.");
+            return;
+        }
+
+        RLCheckpoint? checkpoint;
+        if (checkpointPath.EndsWith(".rlmodel", StringComparison.OrdinalIgnoreCase))
+        {
+            checkpoint = RLModelLoader.LoadFromFile(checkpointPath);
+        }
+        else
+        {
+            var resolvedPath = CheckpointRegistry.ResolveCheckpointPath(checkpointPath);
+            checkpoint = string.IsNullOrWhiteSpace(resolvedPath)
+                ? null
+                : RLCheckpoint.LoadFromFile(resolvedPath);
+        }
+
+        if (checkpoint is null)
+        {
+            validation.Errors.Add($"Agent '{nodePath}': failed to load inference checkpoint '{checkpointPath}'.");
+            return;
+        }
+
+        var observationSize = ReadAgentObservationSize(node, root, validation);
+        var discreteCount = agent.GetDiscreteActionCount();
+        var continuousDims = agent.GetContinuousActionDimensions();
+
+        if (checkpoint.ObservationSize != observationSize)
+        {
+            validation.Errors.Add(
+                $"Agent '{nodePath}': checkpoint observation size {checkpoint.ObservationSize} " +
+                $"does not match agent observation size {observationSize}.");
+        }
+
+        if (string.Equals(checkpoint.Algorithm, RLCheckpoint.PpoAlgorithm, StringComparison.OrdinalIgnoreCase)
+            && continuousDims > 0)
+        {
+            validation.Errors.Add($"Agent '{nodePath}': PPO checkpoints cannot drive continuous actions.");
+        }
+
+        if (checkpoint.DiscreteActionCount > 0 && checkpoint.DiscreteActionCount != discreteCount)
+        {
+            validation.Errors.Add(
+                $"Agent '{nodePath}': checkpoint discrete action count {checkpoint.DiscreteActionCount} " +
+                $"does not match agent count {discreteCount}.");
+        }
+
+        if (checkpoint.ContinuousActionDimensions > 0 && checkpoint.ContinuousActionDimensions != continuousDims)
+        {
+            validation.Errors.Add(
+                $"Agent '{nodePath}': checkpoint continuous action dims {checkpoint.ContinuousActionDimensions} " +
+                $"does not match agent dims {continuousDims}.");
+        }
     }
 
     private static RLAgentControlMode ReadAgentControlMode(Node node)

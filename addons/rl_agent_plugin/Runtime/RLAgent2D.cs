@@ -59,6 +59,7 @@ public partial class RLAgent2D : Node2D
     public int EpisodeSteps { get; private set; }
     public float EpisodeReward { get; private set; }
     public int CurrentActionIndex { get; private set; }
+    public float[] CurrentContinuousActions { get; private set; } = Array.Empty<float>();
 
     public override void _Ready()
     {
@@ -146,6 +147,7 @@ public partial class RLAgent2D : Node2D
         }
 
         CurrentActionIndex = action;
+        CurrentContinuousActions = Array.Empty<float>();
         if (explicitActionSpace is not null)
         {
             OnActionsReceived(explicitActionSpace.CreateDiscreteActionBuffer(action));
@@ -154,10 +156,12 @@ public partial class RLAgent2D : Node2D
 
     public virtual void ApplyAction(float[] continuousActions)
     {
+        CurrentActionIndex = -1;
+        CurrentContinuousActions = continuousActions is null ? Array.Empty<float>() : (float[])continuousActions.Clone();
         var explicitActionSpace = ResolveExplicitActionSpace();
         if (explicitActionSpace is not null)
         {
-            OnActionsReceived(explicitActionSpace.CreateContinuousActionBuffer(continuousActions));
+            OnActionsReceived(explicitActionSpace.CreateContinuousActionBuffer(CurrentContinuousActions));
         }
     }
 
@@ -171,7 +175,8 @@ public partial class RLAgent2D : Node2D
         EpisodeSteps = 0;
         EpisodeReward = 0.0f;
         _episodeRewardComponents.Clear();
-        CurrentActionIndex = 0;
+        CurrentActionIndex = GetDiscreteActionCount() > 0 ? 0 : -1;
+        CurrentContinuousActions = Array.Empty<float>();
         _pendingReward = 0f;
         _pendingRewardComponents.Clear();
         _donePending = false;
@@ -204,6 +209,11 @@ public partial class RLAgent2D : Node2D
     }
 
     public string GetInferenceCheckpointPath() => InferenceCheckpointPath;
+
+    public int GetExpectedObservationSize()
+    {
+        return CollectObservationArray().Length;
+    }
 
     public override string[] _GetConfigurationWarnings()
     {

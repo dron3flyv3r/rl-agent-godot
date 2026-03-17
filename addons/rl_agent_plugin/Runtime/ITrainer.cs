@@ -53,6 +53,7 @@ public sealed class PolicyGroupConfig
     public RLPolicyGroupConfig? SharedPolicy { get; init; }
     public RLTrainerConfig TrainerConfig { get; init; } = new();
     public RLNetworkConfig NetworkConfig { get; init; } = new();
+    public RLActionDefinition[] ActionDefinitions { get; init; } = Array.Empty<RLActionDefinition>();
     public int ObservationSize { get; init; }
     public int DiscreteActionCount { get; init; }
     public int ContinuousActionDimensions { get; init; }

@@ -43,7 +43,7 @@ public partial class TagAgent : RLAgent2D
 
     protected override void OnActionsReceived(ActionBuffer actions)
     {
-        _moveActionIndex = (int)actions.GetDiscreteAsEnum<MoveAction>();;
+        _moveActionIndex = (int)actions.GetDiscreteAsEnum<MoveAction>();
     }
 
     public override void CollectObservations(ObservationBuffer obs)
@@ -61,7 +61,11 @@ public partial class TagAgent : RLAgent2D
             return;
         }
 
-        AddReward(_arena.ConsumeStepReward(_player));
+        foreach (var (tag, amount) in _arena.ConsumeStepRewardBreakdown(_player))
+        {
+            AddReward(amount, tag);
+        }
+
         if (_arena.IsEpisodeResolvedFor(_player))
         {
             EndEpisode();

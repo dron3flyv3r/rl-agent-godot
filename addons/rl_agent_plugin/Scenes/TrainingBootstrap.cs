@@ -151,6 +151,7 @@ public partial class TrainingBootstrap : Node
             var obsSize = firstAgent.CollectObservationArray().Length;
             var discreteCount = firstAgent.GetDiscreteActionCount();
             var continuousDims = firstAgent.GetContinuousActionDimensions();
+            var actionDefinitions = firstAgent.GetActionSpace();
 
             // PPO: discrete only
             if (algorithm == RLAlgorithmKind.PPO && continuousDims > 0)
@@ -205,6 +206,7 @@ public partial class TrainingBootstrap : Node
                 SharedPolicy = binding.Config,
                 TrainerConfig = trainerConfig,
                 NetworkConfig = networkConfig,
+                ActionDefinitions = actionDefinitions,
                 ObservationSize = obsSize,
                 DiscreteActionCount = discreteCount,
                 ContinuousActionDimensions = continuousDims,
@@ -359,12 +361,13 @@ public partial class TrainingBootstrap : Node
                 _lastPolicyLossByGroup[groupId] = updateStats.PolicyLoss;
                 _lastValueLossByGroup[groupId] = updateStats.ValueLoss;
                 _lastEntropyByGroup[groupId] = updateStats.Entropy;
-                lastCheckpoint = updateStats.Checkpoint;
+                var currentCheckpoint = trainer.CreateCheckpoint(groupId, _totalSteps, episodeCount, _updateCountByGroup[groupId]);
+                lastCheckpoint = currentCheckpoint;
 
                 var checkpointPath = GetGroupCheckpointPath(groupId);
                 if (checkpointPath is not null && _updateCountByGroup[groupId] % _checkpointInterval == 0)
                 {
-                    RLCheckpoint.SaveToFile(updateStats.Checkpoint, checkpointPath);
+                    RLCheckpoint.SaveToFile(currentCheckpoint, checkpointPath);
                 }
             }
         }
@@ -375,7 +378,7 @@ public partial class TrainingBootstrap : Node
                 academy.Checkpoint = lastCheckpoint;
         }
 
-        var trainerConfig = _academies.Count > 0 ? _academies[0].TrainerConfig : null;
+        var trainerConfig = _academies.Count > 0 ? _academies[0].ResolveTrainerConfig() : null;
         if (trainerConfig is not null && _totalSteps % Math.Max(1, trainerConfig.StatusWriteIntervalSteps) == 0)
         {
             var totalEpisodes = _episodeCountByGroup.Values.Sum();

@@ -1,0 +1,92 @@
+using System;
+using System.Collections.Generic;
+
+namespace RlAgentPlugin.Runtime;
+
+internal static class CheckpointMetadataBuilder
+{
+    public static RLCheckpoint Apply(RLCheckpoint checkpoint, PolicyGroupConfig config)
+    {
+        checkpoint.FormatVersion = RLCheckpoint.CurrentFormatVersion;
+        checkpoint.Algorithm = config.Algorithm == RLAlgorithmKind.SAC
+            ? RLCheckpoint.SacAlgorithm
+            : RLCheckpoint.PpoAlgorithm;
+        checkpoint.ObservationSize = config.ObservationSize;
+        checkpoint.DiscreteActionCount = config.DiscreteActionCount;
+        checkpoint.ContinuousActionDimensions = config.ContinuousActionDimensions;
+        checkpoint.HiddenLayerSizes = (int[])config.NetworkConfig.HiddenLayerSizes.Clone();
+        checkpoint.DiscreteActionLabels = BuildDiscreteActionLabels(config.ActionDefinitions);
+        checkpoint.ContinuousActionRanges = BuildContinuousActionRanges(config.ActionDefinitions);
+        checkpoint.Hyperparams = BuildHyperparams(config);
+        return checkpoint;
+    }
+
+    private static Dictionary<string, string[]> BuildDiscreteActionLabels(IEnumerable<RLActionDefinition> actionDefinitions)
+    {
+        var labels = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        foreach (var action in actionDefinitions)
+        {
+            if (action.VariableType != RLActionVariableType.Discrete)
+            {
+                continue;
+            }
+
+            labels[action.Name] = (string[])action.Labels.Clone();
+        }
+
+        return labels;
+    }
+
+    private static Dictionary<string, RLContinuousActionRange> BuildContinuousActionRanges(IEnumerable<RLActionDefinition> actionDefinitions)
+    {
+        var ranges = new Dictionary<string, RLContinuousActionRange>(StringComparer.Ordinal);
+        foreach (var action in actionDefinitions)
+        {
+            if (action.VariableType != RLActionVariableType.Continuous)
+            {
+                continue;
+            }
+
+            ranges[action.Name] = new RLContinuousActionRange
+            {
+                Dimensions = action.Dimensions,
+                Min = action.MinValue,
+                Max = action.MaxValue,
+            };
+        }
+
+        return ranges;
+    }
+
+    private static Dictionary<string, float> BuildHyperparams(PolicyGroupConfig config)
+    {
+        var trainer = config.TrainerConfig;
+        var values = new Dictionary<string, float>(StringComparer.Ordinal)
+        {
+            ["learning_rate"] = trainer.LearningRate,
+            ["gamma"] = trainer.Gamma,
+        };
+
+        if (config.Algorithm == RLAlgorithmKind.PPO)
+        {
+            values["rollout_length"] = trainer.RolloutLength;
+            values["epochs_per_update"] = trainer.EpochsPerUpdate;
+            values["gae_lambda"] = trainer.GaeLambda;
+            values["clip_epsilon"] = trainer.ClipEpsilon;
+            values["value_loss_coefficient"] = trainer.ValueLossCoefficient;
+            values["entropy_coefficient"] = trainer.EntropyCoefficient;
+        }
+        else
+        {
+            values["replay_buffer_capacity"] = trainer.ReplayBufferCapacity;
+            values["sac_batch_size"] = trainer.SacBatchSize;
+            values["sac_warmup_steps"] = trainer.SacWarmupSteps;
+            values["sac_tau"] = trainer.SacTau;
+            values["sac_init_alpha"] = trainer.SacInitAlpha;
+            values["sac_auto_tune_alpha"] = trainer.SacAutoTuneAlpha ? 1f : 0f;
+            values["sac_update_every_steps"] = trainer.SacUpdateEverySteps;
+        }
+
+        return values;
+    }
+}

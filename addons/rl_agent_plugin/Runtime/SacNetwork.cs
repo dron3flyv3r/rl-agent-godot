@@ -166,6 +166,18 @@ internal sealed class SacNetwork
         return (action, logProb, eps, u);
     }
 
+    public float[] DeterministicContinuousAction(float[] obs)
+    {
+        var actorOut = ForwardActor(obs);
+        var action = new float[_actionDim];
+        for (var i = 0; i < _actionDim; i++)
+        {
+            action[i] = MathF.Tanh(actorOut[i]);
+        }
+
+        return action;
+    }
+
     /// <summary>
     /// Returns online Q1 and Q2 for a continuous [obs, action] input.
     /// </summary>
@@ -368,6 +380,18 @@ internal sealed class SacNetwork
 
         // Reconstruct targets from online networks
         HardCopyToTargets();
+    }
+
+    public void LoadActorCheckpoint(RLCheckpoint checkpoint)
+    {
+        var weightIndex = 0;
+        var shapeIndex = 0;
+        foreach (var layer in _actorTrunk)
+        {
+            layer.LoadSerialized(checkpoint.WeightBuffer, ref weightIndex, checkpoint.LayerShapeBuffer, ref shapeIndex);
+        }
+
+        _actorHead.LoadSerialized(checkpoint.WeightBuffer, ref weightIndex, checkpoint.LayerShapeBuffer, ref shapeIndex);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

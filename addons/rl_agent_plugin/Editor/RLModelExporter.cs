@@ -1,6 +1,6 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using Godot;
 using RlAgentPlugin.Runtime;
 
@@ -11,9 +11,9 @@ namespace RlAgentPlugin.Editor;
 ///
 /// Binary layout (little-endian):
 ///   [8  bytes] magic "RLMODEL\0"
-///   [2  bytes] uint16 version = 1
+///   [2  bytes] uint16 version = 2
 ///   [4  bytes] int32  obs_size
-///   [4  bytes] int32  action_count
+///   [4  bytes] int32  action_dims
 ///   [4  bytes] int32  layer_count
 ///   Per layer:
 ///     [4  bytes] int32  in_size
@@ -21,8 +21,8 @@ namespace RlAgentPlugin.Editor;
 ///     [4  bytes] int32  activation  (0=linear, 1=Tanh, 2=Relu — matches internal encoding)
 ///     [n*4 bytes] float32[in_size * out_size]  weights (row-major)
 ///     [m*4 bytes] float32[out_size]            biases
-///
-/// Layer order: trunk layers in order, then policy head, then value head.
+///   [4  bytes] int32  metadata_json_length
+///   [n bytes] UTF-8 metadata JSON
 /// </summary>
 public static class RLModelExporter
 {
@@ -51,10 +51,13 @@ public static class RLModelExporter
             return Error.Failed;
         }
 
-        var layerCount  = shapes.Length / 3;
-        var obsSize     = shapes[0];
-        // Policy head is second-to-last layer; its out_size is the action count.
-        var actionCount = shapes[(layerCount - 2) * 3 + 1];
+        var layerCount = shapes.Length / 3;
+        var obsSize = checkpoint.ObservationSize;
+        var actionDims = checkpoint.DiscreteActionCount > 0
+            ? checkpoint.DiscreteActionCount
+            : checkpoint.ContinuousActionDimensions;
+        var metadataJson = checkpoint.CreateMetadataJson();
+        var metadataBytes = Encoding.UTF8.GetBytes(metadataJson);
 
         try
         {
@@ -66,9 +69,9 @@ public static class RLModelExporter
             using var writer = new BinaryWriter(stream);
 
             writer.Write(Magic);
-            writer.Write((ushort)1); // version
+            writer.Write((ushort)RLCheckpoint.CurrentFormatVersion);
             writer.Write(obsSize);
-            writer.Write(actionCount);
+            writer.Write(actionDims);
             writer.Write(layerCount);
 
             var weightOffset = 0;
@@ -88,6 +91,9 @@ public static class RLModelExporter
                 for (var j = 0; j < outSize; j++)
                     writer.Write(weights[weightOffset++]);
             }
+
+            writer.Write(metadataBytes.Length);
+            writer.Write(metadataBytes);
 
             GD.Print($"[RLModelExporter] Exported {layerCount} layers → {destAbsPath}");
             return Error.Ok;
@@ -122,39 +128,12 @@ public static class RLModelExporter
 
     private static RLCheckpoint? LoadCheckpointJson(string absPath)
     {
-        if (!File.Exists(absPath))
+        var checkpoint = RLCheckpoint.LoadFromFile(absPath);
+        if (checkpoint is null)
         {
-            GD.PushError($"[RLModelExporter] Checkpoint not found: {absPath}");
-            return null;
+            GD.PushError($"[RLModelExporter] Failed to parse checkpoint: {absPath}");
         }
 
-        try
-        {
-            var json    = File.ReadAllText(absPath);
-            var variant = Json.ParseString(json);
-
-            if (variant.VariantType != Variant.Type.Dictionary)
-            {
-                GD.PushError($"[RLModelExporter] Invalid checkpoint JSON at {absPath}");
-                return null;
-            }
-
-            var data      = variant.AsGodotDictionary();
-            var weightArr = data.ContainsKey("weights") ? data["weights"].AsGodotArray() : new Godot.Collections.Array();
-            var shapeArr  = data.ContainsKey("shapes")  ? data["shapes"].AsGodotArray()  : new Godot.Collections.Array();
-
-            var w = new float[weightArr.Count];
-            for (var i = 0; i < weightArr.Count; i++) w[i] = weightArr[i].AsSingle();
-
-            var s = new int[shapeArr.Count];
-            for (var i = 0; i < shapeArr.Count; i++) s[i] = (int)shapeArr[i].AsInt64();
-
-            return new RLCheckpoint { WeightBuffer = w, LayerShapeBuffer = s };
-        }
-        catch (Exception ex)
-        {
-            GD.PushError($"[RLModelExporter] Failed to parse checkpoint: {ex.Message}");
-            return null;
-        }
+        return checkpoint;
     }
 }

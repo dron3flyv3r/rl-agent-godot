@@ -41,7 +41,7 @@ public partial class TagArenaController : Node2D
 
     private readonly RandomNumberGenerator _rng = new();
     private readonly List<TagPlayer> _players = new();
-    private readonly Dictionary<TagPlayer, float> _stepRewards = new();
+    private readonly Dictionary<TagPlayer, Dictionary<string, float>> _stepRewardComponents = new();
     private readonly Dictionary<TagPlayer, bool> _resetRequested = new();
     private readonly Dictionary<TagPlayer, Vector2> _terminalPositions = new();
 
@@ -67,7 +67,7 @@ public partial class TagArenaController : Node2D
 
         foreach (var player in _players)
         {
-            _stepRewards[player] = 0f;
+            _stepRewardComponents[player] = new Dictionary<string, float>(StringComparer.Ordinal);
             _resetRequested[player] = false;
         }
 
@@ -101,7 +101,7 @@ public partial class TagArenaController : Node2D
         foreach (var player in _players)
         {
             player.StepMovement(this, delta);
-            _stepRewards[player] = 0f;
+            _stepRewardComponents[player].Clear();
         }
 
         _episodeStep += 1;
@@ -117,12 +117,14 @@ public partial class TagArenaController : Node2D
             if (player.Role == TagAgentRole.Chaser)
             {
                 var progress = beforeDistance - afterDistance;
-                _stepRewards[player] += (progress * ChaserDistanceRewardScale) - ChaserStepPenalty;
+                AddStepReward(player, progress * ChaserDistanceRewardScale, "distance_progress");
+                AddStepReward(player, -ChaserStepPenalty, "step_penalty");
             }
             else
             {
                 var escape = afterDistance - beforeDistance;
-                _stepRewards[player] += (escape * RunnerDistanceRewardScale) + RunnerSurvivalReward;
+                AddStepReward(player, escape * RunnerDistanceRewardScale, "distance_escape");
+                AddStepReward(player, RunnerSurvivalReward, "survival_reward");
             }
         }
 
@@ -181,14 +183,19 @@ public partial class TagArenaController : Node2D
         obs.Add(self.Role == TagAgentRole.Chaser);
     }
 
-    public float ConsumeStepReward(TagPlayer player)
+    public IReadOnlyDictionary<string, float> ConsumeStepRewardBreakdown(TagPlayer player)
     {
         if (_resetRequested.GetValueOrDefault(player))
         {
-            return 0f;
+            return new Dictionary<string, float>(StringComparer.Ordinal);
         }
 
-        return _stepRewards.GetValueOrDefault(player, 0f);
+        if (!_stepRewardComponents.TryGetValue(player, out var breakdown))
+        {
+            return new Dictionary<string, float>(StringComparer.Ordinal);
+        }
+
+        return new Dictionary<string, float>(breakdown, StringComparer.Ordinal);
     }
 
     public bool IsEpisodeResolvedFor(TagPlayer player)
@@ -231,7 +238,7 @@ public partial class TagArenaController : Node2D
 
         foreach (var player in _players)
         {
-            _stepRewards[player] = 0f;
+            _stepRewardComponents[player].Clear();
             _resetRequested[player] = false;
         }
 
@@ -268,7 +275,7 @@ public partial class TagArenaController : Node2D
 
         foreach (var player in _players)
         {
-            _stepRewards[player] = 0f;
+            _stepRewardComponents[player].Clear();
             _resetRequested[player] = false;
         }
 
@@ -284,11 +291,11 @@ public partial class TagArenaController : Node2D
         {
             if (player.Role == TagAgentRole.Chaser)
             {
-                _stepRewards[player] += ChaserTagReward;
+                AddStepReward(player, ChaserTagReward, "tag_reward");
             }
             else
             {
-                _stepRewards[player] += RunnerTaggedPenalty;
+                AddStepReward(player, RunnerTaggedPenalty, "tagged_penalty");
             }
         }
 
@@ -304,11 +311,11 @@ public partial class TagArenaController : Node2D
         {
             if (player.Role == TagAgentRole.Chaser)
             {
-                _stepRewards[player] += ChaserTimeoutPenalty;
+                AddStepReward(player, ChaserTimeoutPenalty, "timeout_penalty");
             }
             else
             {
-                _stepRewards[player] += RunnerTimeoutReward;
+                AddStepReward(player, RunnerTimeoutReward, "timeout_reward");
             }
         }
 
@@ -341,6 +348,18 @@ public partial class TagArenaController : Node2D
                 DiscoverPlayers(childNode);
             }
         }
+    }
+
+    private void AddStepReward(TagPlayer player, float amount, string tag)
+    {
+        if (!_stepRewardComponents.TryGetValue(player, out var breakdown))
+        {
+            breakdown = new Dictionary<string, float>(StringComparer.Ordinal);
+            _stepRewardComponents[player] = breakdown;
+        }
+
+        breakdown.TryGetValue(tag, out var currentAmount);
+        breakdown[tag] = currentAmount + amount;
     }
 
     private void ConfigureStandaloneControl()

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using Godot;
 
 namespace RlAgentPlugin.Runtime;
@@ -56,14 +57,14 @@ public static class RLModelLoader
             }
 
             var version = reader.ReadUInt16();
-            if (version != 1)
+            if (version != 1 && version != RLCheckpoint.CurrentFormatVersion)
             {
                 GD.PushError($"[RLModelLoader] Unsupported .rlmodel version {version} in {absPath}.");
                 return null;
             }
 
-            _ = reader.ReadInt32(); // obs_size  (stored for convenience; derived from layer shapes)
-            _ = reader.ReadInt32(); // action_count (same)
+            var headerObsSize = reader.ReadInt32();
+            var headerActionDims = reader.ReadInt32();
             var layerCount = reader.ReadInt32();
 
             // ── Layers ────────────────────────────────────────────────────────
@@ -85,13 +86,30 @@ public static class RLModelLoader
                 for (var j = 0; j < outSize;          j++) weights.Add(reader.ReadSingle());
             }
 
-            GD.Print($"[RLModelLoader] Loaded {layerCount} layers from {absPath}");
-
-            return new RLCheckpoint
+            var checkpoint = new RLCheckpoint
             {
-                WeightBuffer      = weights.ToArray(),
-                LayerShapeBuffer  = shapes.ToArray(),
+                WeightBuffer = weights.ToArray(),
+                LayerShapeBuffer = shapes.ToArray(),
             };
+
+            if (version >= RLCheckpoint.CurrentFormatVersion && stream.Position < stream.Length)
+            {
+                var metadataLength = reader.ReadInt32();
+                var metadataBytes = reader.ReadBytes(metadataLength);
+                checkpoint.ApplyMetadataJson(Encoding.UTF8.GetString(metadataBytes));
+            }
+            else
+            {
+                checkpoint.PopulateLegacyMetadata();
+                checkpoint.ObservationSize = checkpoint.ObservationSize > 0 ? checkpoint.ObservationSize : headerObsSize;
+                if (checkpoint.DiscreteActionCount <= 0)
+                {
+                    checkpoint.DiscreteActionCount = headerActionDims;
+                }
+            }
+
+            GD.Print($"[RLModelLoader] Loaded {layerCount} layers from {absPath}");
+            return checkpoint;
         }
         catch (Exception ex)
         {

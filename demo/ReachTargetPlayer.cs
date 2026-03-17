@@ -20,7 +20,9 @@ public partial class ReachTargetPlayer : CharacterBody2D
     public bool IsAtGoal { get; private set; }
 
     private readonly RandomNumberGenerator _rng = new();
-    private float _stepReward;
+    private float _distanceProgressReward;
+    private float _stepPenaltyReward;
+    private float _successReward;
     private float _lastDistance;
     private ReachTargetAgent? _agent;
     private RLAcademy? _academy;
@@ -67,13 +69,14 @@ public partial class ReachTargetPlayer : CharacterBody2D
             LaneY);
 
         _lastDistance = Mathf.Abs(GoalX - Position.X);
-        _stepReward = Mathf.Clamp((previousDistance - _lastDistance) / MoveStep, -1.0f, 1.0f) * 0.25f;
-        _stepReward -= 0.01f;
+        _distanceProgressReward = Mathf.Clamp((previousDistance - _lastDistance) / MoveStep, -1.0f, 1.0f) * 0.25f;
+        _stepPenaltyReward = -0.01f;
+        _successReward = 0.0f;
 
         if (_lastDistance <= SuccessThreshold)
         {
             IsAtGoal = true;
-            _stepReward += 1.0f;
+            _successReward = 1.0f;
         }
 
         if (!IsTrainingRun() && Input.IsActionJustPressed("ui_accept"))
@@ -84,18 +87,23 @@ public partial class ReachTargetPlayer : CharacterBody2D
         UpdateUi();
     }
 
-    /// <summary>Returns the reward accumulated this physics step and resets it.</summary>
-    public float ConsumeStepReward()
+    /// <summary>Returns the reward components accumulated this physics step and resets them.</summary>
+    public void ConsumeStepRewards(out float distanceProgress, out float stepPenalty, out float successBonus)
     {
-        var reward = _stepReward;
-        _stepReward = 0.0f;
-        return reward;
+        distanceProgress = _distanceProgressReward;
+        stepPenalty = _stepPenaltyReward;
+        successBonus = _successReward;
+        _distanceProgressReward = 0.0f;
+        _stepPenaltyReward = 0.0f;
+        _successReward = 0.0f;
     }
 
     public void ResetEpisodeState()
     {
         IsAtGoal = false;
-        _stepReward = 0.0f;
+        _distanceProgressReward = 0.0f;
+        _stepPenaltyReward = 0.0f;
+        _successReward = 0.0f;
         var laneMin = GetLaneMinX();
         var laneMax = GetLaneMaxX();
         var spawnMin = Mathf.Min(laneMin + SpawnPadding, laneMax);

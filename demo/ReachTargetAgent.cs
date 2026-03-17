@@ -5,6 +5,11 @@ namespace RlAgentPlugin.Demo;
 
 public partial class ReachTargetAgent : RLAgent2D
 {
+    private enum MoveAction
+    {
+        Left = 0,
+        Right = 1,
+    }
 
     private int _moveActionIndex;
     private ReachTargetPlayer? _player;
@@ -19,12 +24,12 @@ public partial class ReachTargetAgent : RLAgent2D
 
     public override void DefineActions(ActionSpaceBuilder builder)
     {
-        builder.AddDiscrete("Move", "Move Left", "Move Right");
+        builder.AddDiscrete<MoveAction>();
     }
 
     protected override void OnActionsReceived(ActionBuffer actions)
     {
-        _moveActionIndex = actions.GetDiscrete("Move");
+        _moveActionIndex = (int)actions.GetDiscreteAsEnum<MoveAction>();
     }
 
     public override void CollectObservations(ObservationBuffer obs)
@@ -42,7 +47,10 @@ public partial class ReachTargetAgent : RLAgent2D
     public override void OnStep()
     {
         if (_player is null) return;
-        AddReward(_player.ConsumeStepReward());
+        _player.ConsumeStepRewards(out var distanceProgress, out var stepPenalty, out var successBonus);
+        AddReward(distanceProgress, "distance_progress");
+        AddReward(stepPenalty, "step_penalty");
+        AddReward(successBonus, "goal_reached");
         if (_player.IsAtGoal) EndEpisode();
     }
 

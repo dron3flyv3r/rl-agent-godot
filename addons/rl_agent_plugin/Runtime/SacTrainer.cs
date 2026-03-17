@@ -114,13 +114,15 @@ public sealed class SacTrainer : ITrainer
             PolicyLoss = policyLoss / n,
             ValueLoss = valueLoss / n,
             Entropy = entropySum / n,
-            Checkpoint = _network.SaveCheckpoint(groupId, totalSteps, episodeCount, 0),
+            Checkpoint = CreateCheckpoint(groupId, totalSteps, episodeCount, 0),
         };
     }
 
     public RLCheckpoint CreateCheckpoint(string groupId, long totalSteps, long episodeCount, long updateCount)
     {
-        return _network.SaveCheckpoint(groupId, totalSteps, episodeCount, updateCount);
+        return CheckpointMetadataBuilder.Apply(
+            _network.SaveCheckpoint(groupId, totalSteps, episodeCount, updateCount),
+            _config);
     }
 
     // ── Discrete SAC update ──────────────────────────────────────────────────

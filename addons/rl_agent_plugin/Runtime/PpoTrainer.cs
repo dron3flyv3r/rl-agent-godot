@@ -7,6 +7,7 @@ namespace RlAgentPlugin.Runtime;
 
 public sealed class PpoTrainer : ITrainer
 {
+    private readonly PolicyGroupConfig _config;
     private readonly RLTrainerConfig _trainerConfig;
     private readonly PolicyValueNetwork _network;
     private readonly List<PpoTransition> _transitions = new();
@@ -14,6 +15,7 @@ public sealed class PpoTrainer : ITrainer
 
     public PpoTrainer(PolicyGroupConfig config)
     {
+        _config = config;
         _trainerConfig = config.TrainerConfig;
         _network = new PolicyValueNetwork(config.ObservationSize, config.DiscreteActionCount, config.NetworkConfig);
         _rng.Randomize();
@@ -90,13 +92,15 @@ public sealed class PpoTrainer : ITrainer
             PolicyLoss = policyLoss / samples.Count,
             ValueLoss = valueLoss / samples.Count,
             Entropy = entropy / samples.Count,
-            Checkpoint = _network.SaveCheckpoint(groupId, totalSteps, episodeCount, 0),
+            Checkpoint = CreateCheckpoint(groupId, totalSteps, episodeCount, 0),
         };
     }
 
     public RLCheckpoint CreateCheckpoint(string groupId, long totalSteps, long episodeCount, long updateCount)
     {
-        return _network.SaveCheckpoint(groupId, totalSteps, episodeCount, updateCount);
+        return CheckpointMetadataBuilder.Apply(
+            _network.SaveCheckpoint(groupId, totalSteps, episodeCount, updateCount),
+            _config);
     }
 
     private List<TrainingSample> BuildTrainingSamples()

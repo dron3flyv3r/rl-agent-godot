@@ -564,9 +564,9 @@ Suggested implementation order for the first five items:
 | Yes | 1 (blocking) | Replace attribute/reflection actions with `DefineActions` / `OnActionsReceived` |
 | Yes | 1 (blocking) | Remove the dual lifecycle API so `OnStep()` is the only supported path |
 | Yes | 1 (blocking) | Auto-infer observation/action sizes in `RLAcademy` and validate before launch |
-| No | 1 (blocking) | Implement continuous action inference |
-| No | 1 (blocking) | Make inference algorithm-aware instead of hardwiring `PolicyValueNetwork` |
-| Partial | 1 (blocking) | Store full checkpoint metadata so inference and validation can trust the file |
+| Yes | 1 (blocking) | Implement continuous action inference |
+| Yes | 1 (blocking) | Make inference algorithm-aware instead of hardwiring `PolicyValueNetwork` |
+| Yes | 1 (blocking) | Store full checkpoint metadata so inference and validation can trust the file |
 | Yes | 2 (high) | Replace string `PolicyGroup` with `RLPolicyGroupConfig` |
 | Partial | 2 (high) | Add typed `ObservationBuffer`, sensors, and observation-size validation |
 | Yes | 2 (high) | Disable invalid training launches and keep validation live while editing |
