@@ -14,7 +14,9 @@ internal static class CheckpointMetadataBuilder
         checkpoint.ObservationSize = config.ObservationSize;
         checkpoint.DiscreteActionCount = config.DiscreteActionCount;
         checkpoint.ContinuousActionDimensions = config.ContinuousActionDimensions;
-        checkpoint.HiddenLayerSizes = (int[])config.NetworkConfig.HiddenLayerSizes.Clone();
+        checkpoint.GraphLayerSizes = config.NetworkGraph.GetLayerSizes();
+        checkpoint.GraphLayerActivations = config.NetworkGraph.GetLayerActivations();
+        checkpoint.GraphOptimizer = (int)config.NetworkGraph.Optimizer;
         checkpoint.DiscreteActionLabels = BuildDiscreteActionLabels(config.ActionDefinitions);
         checkpoint.ContinuousActionRanges = BuildContinuousActionRanges(config.ActionDefinitions);
         checkpoint.Hyperparams = BuildHyperparams(config);
@@ -71,9 +73,13 @@ internal static class CheckpointMetadataBuilder
         {
             values["rollout_length"] = trainer.RolloutLength;
             values["epochs_per_update"] = trainer.EpochsPerUpdate;
+            values["ppo_minibatch_size"] = trainer.PpoMiniBatchSize;
             values["gae_lambda"] = trainer.GaeLambda;
             values["clip_epsilon"] = trainer.ClipEpsilon;
+            values["max_gradient_norm"] = trainer.MaxGradientNorm;
             values["value_loss_coefficient"] = trainer.ValueLossCoefficient;
+            values["use_value_clipping"] = trainer.UseValueClipping ? 1f : 0f;
+            values["value_clip_epsilon"] = trainer.ValueClipEpsilon;
             values["entropy_coefficient"] = trainer.EntropyCoefficient;
         }
         else

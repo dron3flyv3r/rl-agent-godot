@@ -6,9 +6,19 @@ namespace RlAgentPlugin.Runtime;
 [Tool]
 public partial class RLPolicyGroupConfig : Resource
 {
-    [Export] public string GroupId { get; set; } = string.Empty;
-    [Export(PropertyHint.File, "*.json,*.rlmodel")] public string InferenceCheckpointPath { get; set; } = string.Empty;
-    [Export] public bool SelfPlay { get; set; }
-    [Export(PropertyHint.Range, "0,1,0.01")] public float HistoricalOpponentRate { get; set; } = 0.5f;
-    [Export(PropertyHint.Range, "1,100000,1,or_greater")] public int FrozenCheckpointInterval { get; set; } = 10;
+    private Resource? _networkGraph;
+
+    [Export] public string AgentId { get; set; } = string.Empty;
+    [Export] public int MaxEpisodeSteps { get; set; } = 0;
+    [Export(PropertyHint.File, "*.rlmodel")] public string InferenceModelPath { get; set; } = string.Empty;
+
+    [ExportGroup("Network")]
+    [Export(PropertyHint.ResourceType, nameof(RLNetworkGraph))]
+    public Resource? NetworkGraph
+    {
+        get => _networkGraph;
+        set => _networkGraph = value;
+    }
+
+    public RLNetworkGraph? ResolvedNetworkGraph => _networkGraph as RLNetworkGraph;
 }

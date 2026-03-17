@@ -12,13 +12,16 @@ public partial class RLTrainerConfig : Resource
     // ── PPO hyperparameters ─────────────────────────────────────────────────
     [Export] public int RolloutLength { get; set; } = 256;
     [Export] public int EpochsPerUpdate { get; set; } = 4;
+    [Export] public int PpoMiniBatchSize { get; set; } = 64;
     [Export] public float LearningRate { get; set; } = 0.0005f;
     [Export] public float Gamma { get; set; } = 0.99f;
     [Export] public float GaeLambda { get; set; } = 0.95f;
     [Export] public float ClipEpsilon { get; set; } = 0.2f;
+    [Export] public float MaxGradientNorm { get; set; } = 0.5f;
     [Export] public float ValueLossCoefficient { get; set; } = 0.5f;
+    [Export] public bool UseValueClipping { get; set; } = true;
+    [Export] public float ValueClipEpsilon { get; set; } = 0.2f;
     [Export] public float EntropyCoefficient { get; set; } = 0.01f;
-    [Export] public int MaxEpisodeSteps { get; set; } = 1024;
     [Export] public int StatusWriteIntervalSteps { get; set; } = 32;
     [Export] public int CheckpointIntervalUpdates { get; set; } = 10;
 

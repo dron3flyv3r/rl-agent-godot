@@ -24,28 +24,37 @@ public partial class RLAcademy : Node
     [Export] public int CheckpointInterval { get; set; } = 10;
     // How many physics ticks to repeat each action before sampling the next one (1 = every tick)
     [Export] public int ActionRepeat { get; set; } = 1;
+    // Global episode length cap used when agents and policy groups do not override it (0 = no cap).
+    [Export(PropertyHint.Range, "0,100000,1,or_greater")] public int MaxEpisodeSteps { get; set; } = 0;
     // Number of parallel scene instances to run during training (vectorised environments)
     [Export(PropertyHint.Range, "1, 256, 8, or_greater")] public int BatchSize { get; set; } = 1;
 
+    [ExportGroup("Self-Play")]
+    [Export] public Godot.Collections.Array<RLPolicyPairingConfig> SelfPlayPairings { get; set; } = new();
+
     [ExportGroup("Inference")]
     [Export] public RLCheckpoint? Checkpoint { get; set; }
+
+    [ExportGroup("Debug")]
+    /// <summary>Show the observation/reward/action spy overlay when running outside of training. Press Tab to cycle agents.</summary>
+    [Export] public bool EnableSpyOverlay { get; set; } = false;
 
     public bool InferenceActive { get; private set; }
 
     public override string[] _GetConfigurationWarnings()
     {
         var warnings = new List<string>();
-        // if (TrainingConfig is not null && (TrainerConfig is not null || NetworkConfig is not null))
-        //     warnings.Add("TrainingConfig is assigned. Legacy TrainerConfig and NetworkConfig are ignored until they are migrated.");
         if (TrainingConfig is null && ResolveTrainerConfig() is null)
-            warnings.Add("TrainingConfig is not assigned. Assign an RLTrainingConfig resource or a legacy RLTrainerConfig resource.");
-        if (TrainingConfig is null && ResolveNetworkConfig() is null)
-            warnings.Add("TrainingConfig is not assigned. Assign an RLTrainingConfig resource or a legacy RLNetworkConfig resource.");
+            warnings.Add("TrainingConfig is not assigned. Assign an RLTrainingConfig resource.");
         return warnings.ToArray();
     }
 
+    private RLAgentSpyOverlay? _spyOverlay;
     private readonly Dictionary<RLAgent2D, IInferencePolicy> _agentInferencePolicies = new();
+    private readonly Dictionary<RLAgent2D, string> _agentObservationGroups = new();
     private readonly Dictionary<RLAgent2D, int> _inferenceStepCounters = new();
+    private readonly Dictionary<string, string> _observationGroupDisplayNames = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _validatedObservationSizesByGroup = new(StringComparer.Ordinal);
     private double _previousTimeScale = 1.0;
     private int _previousMaxPhysicsStepsPerFrame = 8;
 
@@ -60,6 +69,13 @@ public partial class RLAcademy : Node
             _previousMaxPhysicsStepsPerFrame = Engine.MaxPhysicsStepsPerFrame;
             Engine.TimeScale = Math.Max(0.1f, SimulationSpeed);
             Engine.MaxPhysicsStepsPerFrame = Math.Max(8, (int)Math.Ceiling(SimulationSpeed) + 1);
+
+            if (EnableSpyOverlay)
+            {
+                _spyOverlay = new RLAgentSpyOverlay();
+                _spyOverlay.Initialize(this);
+                AddChild(_spyOverlay);
+            }
         }
     }
 
@@ -87,7 +103,10 @@ public partial class RLAcademy : Node
             var policy = pair.Value;
 
             agent.TickStep();
-            if (agent.ConsumeDonePending())
+            var stepReward = agent.ConsumePendingReward();
+            var stepBreakdown = agent.ConsumePendingRewardBreakdown();
+            agent.AccumulateReward(stepReward, stepBreakdown.Count > 0 ? stepBreakdown : null);
+            if (agent.ConsumeDonePending() || agent.HasReachedEpisodeLimit())
             {
                 agent.ResetEpisode();
                 _inferenceStepCounters[agent] = 0;
@@ -100,7 +119,7 @@ public partial class RLAcademy : Node
             if (stepCount >= repeat)
             {
                 _inferenceStepCounters[agent] = 0;
-                var observation = agent.CollectObservationArray();
+                var observation = CollectValidatedObservation(agent);
                 if (observation.Length == 0)
                 {
                     continue;
@@ -161,6 +180,17 @@ public partial class RLAcademy : Node
         }
     }
 
+    public List<RLPolicyPairingConfig> GetResolvedSelfPlayPairings()
+    {
+        return new List<RLPolicyPairingConfig>(SelfPlayPairings);
+    }
+
+    public ObservationSizeInferenceResult InferObservationSizes(RLAgentControlMode? controlMode = null, bool resetEpisodes = true)
+    {
+        var agents = controlMode.HasValue ? GetAgents(controlMode.Value) : GetAgents();
+        return ObservationSizeInference.Infer(ResolveSceneRoot(), agents, resetEpisodes);
+    }
+
     private static void CollectAgents(Node node, ICollection<RLAgent2D> agents)
     {
         if (node is RLAgent2D agent)
@@ -195,7 +225,7 @@ public partial class RLAcademy : Node
             return;
         }
 
-        var fallbackNetworkConfig = ResolveNetworkConfig();
+        var fallbackNetworkGraph = RLNetworkGraph.CreateDefault();
         var agents = GetAgents();
         if (agents.Count == 0)
         {
@@ -215,6 +245,12 @@ public partial class RLAcademy : Node
         }
 
         RLCheckpoint? firstLoadedCheckpoint = null;
+        var observationInference = InferObservationSizes(RLAgentControlMode.Inference);
+        foreach (var error in observationInference.Errors)
+        {
+            GD.PushError($"[RLAcademy] {error}");
+        }
+
         foreach (var agent in agents)
         {
             if (agent.ControlMode != RLAgentControlMode.Inference)
@@ -222,7 +258,7 @@ public partial class RLAcademy : Node
                 continue;
             }
 
-            var checkpointPath = agent.GetInferenceCheckpointPath();
+            var checkpointPath = agent.GetInferenceModelPath();
 
             // For .rlmodel files resolve path directly; for .json fall back to registry.
             RLCheckpoint? checkpoint;
@@ -257,9 +293,28 @@ public partial class RLAcademy : Node
             var actionCount = checkpoint.DiscreteActionCount > 0
                 ? checkpoint.DiscreteActionCount
                 : checkpoint.ContinuousActionDimensions;
-            var agentObsSize = agent.GetExpectedObservationSize();
+            observationInference.AgentBindings.TryGetValue(agent, out var binding);
+            if (binding is not null)
+            {
+                _agentObservationGroups[agent] = binding.BindingKey;
+                _observationGroupDisplayNames[binding.BindingKey] = binding.DisplayName;
+                if (observationInference.GroupSizes.TryGetValue(binding.BindingKey, out var groupObservationSize))
+                {
+                    _validatedObservationSizesByGroup[binding.BindingKey] = groupObservationSize;
+                }
+            }
+
+            var agentObsSize = observationInference.AgentSizes.TryGetValue(agent, out var inferredObservationSize)
+                ? inferredObservationSize
+                : 0;
             var agentDiscreteCount = agent.GetDiscreteActionCount();
             var agentContinuousDims = agent.GetContinuousActionDimensions();
+
+            if (agentObsSize <= 0)
+            {
+                GD.PushError($"[RLAcademy] Could not infer observations for agent '{agent.Name}'.");
+                continue;
+            }
 
             if (obsSize != agentObsSize)
             {
@@ -300,7 +355,7 @@ public partial class RLAcademy : Node
 
             try
             {
-                var policy = InferencePolicyFactory.Create(checkpoint, fallbackNetworkConfig);
+                var policy = InferencePolicyFactory.Create(checkpoint, fallbackNetworkGraph);
                 policy.LoadCheckpoint(checkpoint);
                 _agentInferencePolicies[agent] = policy;
                 _inferenceStepCounters[agent] = 0;
@@ -328,8 +383,36 @@ public partial class RLAcademy : Node
         return TrainingConfig?.ToTrainerConfig();
     }
 
-    public RLNetworkConfig? ResolveNetworkConfig()
+    private float[] CollectValidatedObservation(RLAgent2D agent)
     {
-        return TrainingConfig?.ToNetworkConfig();
+        var observation = agent.CollectObservationArray();
+        ValidateGroupObservationSize(agent, observation.Length);
+        return observation;
+    }
+
+    private void ValidateGroupObservationSize(RLAgent2D agent, int observationSize)
+    {
+        if (!_agentObservationGroups.TryGetValue(agent, out var groupKey))
+        {
+            return;
+        }
+
+        if (!_validatedObservationSizesByGroup.TryGetValue(groupKey, out var expectedSize))
+        {
+            _validatedObservationSizesByGroup[groupKey] = observationSize;
+            return;
+        }
+
+        if (expectedSize == observationSize)
+        {
+            return;
+        }
+
+        var displayName = _observationGroupDisplayNames.TryGetValue(groupKey, out var name)
+            ? name
+            : groupKey;
+        GD.PushError(
+            $"[RLAcademy] Agent '{agent.Name}' in policy group '{displayName}' emitted {observationSize} observations, " +
+            $"expected {expectedSize}. Observation size must remain stable for the whole group.");
     }
 }

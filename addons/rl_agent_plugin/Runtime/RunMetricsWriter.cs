@@ -44,9 +44,15 @@ public sealed class RunMetricsWriter
         float policyLoss,
         float valueLoss,
         float entropy,
+        float? clipFraction,
         long totalSteps,
         long episodeCount,
-        IReadOnlyDictionary<string, float>? rewardComponents = null)
+        IReadOnlyDictionary<string, float>? rewardComponents = null,
+        string policyGroup = "",
+        string opponentGroup = "",
+        string opponentSource = "",
+        string opponentCheckpointPath = "",
+        long? opponentUpdateCount = null)
     {
         EnsureFileDirectory(_metricsPath);
         var mode = FileAccess.FileExists(_metricsPath)
@@ -75,6 +81,11 @@ public sealed class RunMetricsWriter
             { "episode_count", episodeCount },
         };
 
+        if (clipFraction.HasValue)
+        {
+            payload["clip_fraction"] = clipFraction.Value;
+        }
+
         if (rewardComponents is not null && rewardComponents.Count > 0)
         {
             var rewardBreakdown = new Godot.Collections.Dictionary();
@@ -84,6 +95,31 @@ public sealed class RunMetricsWriter
             }
 
             payload["reward_components"] = rewardBreakdown;
+        }
+
+        if (!string.IsNullOrWhiteSpace(policyGroup))
+        {
+            payload["policy_group"] = policyGroup;
+        }
+
+        if (!string.IsNullOrWhiteSpace(opponentGroup))
+        {
+            payload["opponent_group"] = opponentGroup;
+        }
+
+        if (!string.IsNullOrWhiteSpace(opponentSource))
+        {
+            payload["opponent_source"] = opponentSource;
+        }
+
+        if (!string.IsNullOrWhiteSpace(opponentCheckpointPath))
+        {
+            payload["opponent_checkpoint_path"] = opponentCheckpointPath;
+        }
+
+        if (opponentUpdateCount.HasValue)
+        {
+            payload["opponent_update_count"] = opponentUpdateCount.Value;
         }
 
         file.StoreLine(Json.Stringify(payload));

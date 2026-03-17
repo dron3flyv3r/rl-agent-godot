@@ -9,22 +9,19 @@ public partial class RLTrainingConfig : Resource
     [ExportGroup("Algorithm")]
     [Export] public RLAlgorithmKind Algorithm { get; set; } = RLAlgorithmKind.PPO;
 
-    [ExportGroup("Network")]
-    [Export] public int[] HiddenLayerSizes { get; set; } = new[] { 64, 64 };
-    [Export] public RLActivationKind Activation { get; set; } = RLActivationKind.Tanh;
-    [Export] public bool SharedTrunk { get; set; } = true;
-    [Export] public RLOptimizerKind Optimizer { get; set; } = RLOptimizerKind.Adam;
-
     [ExportGroup("PPO")]
     [Export] public int RolloutLength { get; set; } = 256;
     [Export] public int EpochsPerUpdate { get; set; } = 4;
+    [Export] public int PpoMiniBatchSize { get; set; } = 64;
     [Export] public float LearningRate { get; set; } = 0.0005f;
     [Export] public float Gamma { get; set; } = 0.99f;
     [Export] public float GaeLambda { get; set; } = 0.95f;
     [Export] public float ClipEpsilon { get; set; } = 0.2f;
+    [Export] public float MaxGradientNorm { get; set; } = 0.5f;
     [Export] public float ValueLossCoefficient { get; set; } = 0.5f;
+    [Export] public bool UseValueClipping { get; set; } = true;
+    [Export] public float ValueClipEpsilon { get; set; } = 0.2f;
     [Export] public float EntropyCoefficient { get; set; } = 0.01f;
-    [Export] public int MaxEpisodeSteps { get; set; } = 1024;
     [Export] public int StatusWriteIntervalSteps { get; set; } = 32;
     [Export] public int CheckpointIntervalUpdates { get; set; } = 10;
 
@@ -44,13 +41,16 @@ public partial class RLTrainingConfig : Resource
             Algorithm = Algorithm,
             RolloutLength = RolloutLength,
             EpochsPerUpdate = EpochsPerUpdate,
+            PpoMiniBatchSize = PpoMiniBatchSize,
             LearningRate = LearningRate,
             Gamma = Gamma,
             GaeLambda = GaeLambda,
             ClipEpsilon = ClipEpsilon,
+            MaxGradientNorm = MaxGradientNorm,
             ValueLossCoefficient = ValueLossCoefficient,
+            UseValueClipping = UseValueClipping,
+            ValueClipEpsilon = ValueClipEpsilon,
             EntropyCoefficient = EntropyCoefficient,
-            MaxEpisodeSteps = MaxEpisodeSteps,
             StatusWriteIntervalSteps = StatusWriteIntervalSteps,
             CheckpointIntervalUpdates = CheckpointIntervalUpdates,
             ReplayBufferCapacity = ReplayBufferCapacity,
@@ -63,14 +63,4 @@ public partial class RLTrainingConfig : Resource
         };
     }
 
-    public RLNetworkConfig ToNetworkConfig()
-    {
-        return new RLNetworkConfig
-        {
-            HiddenLayerSizes = HiddenLayerSizes,
-            Activation = Activation,
-            SharedTrunk = SharedTrunk,
-            Optimizer = Optimizer,
-        };
-    }
 }

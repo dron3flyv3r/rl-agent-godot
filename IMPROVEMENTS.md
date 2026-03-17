@@ -568,14 +568,14 @@ Suggested implementation order for the first five items:
 | Yes | 1 (blocking) | Make inference algorithm-aware instead of hardwiring `PolicyValueNetwork` |
 | Yes | 1 (blocking) | Store full checkpoint metadata so inference and validation can trust the file |
 | Yes | 2 (high) | Replace string `PolicyGroup` with `RLPolicyGroupConfig` |
-| Partial | 2 (high) | Add typed `ObservationBuffer`, sensors, and observation-size validation |
+| Yes | 2 (high) | Add typed `ObservationBuffer`, sensors, and observation-size validation |
 | Yes | 2 (high) | Disable invalid training launches and keep validation live while editing |
 | Yes | 2 (high) | Fix checkpoint bookkeeping so run id / update count are always correct |
-| Partial | 3 (medium) | Finish true batched forward passes on top of the existing multi-scene `BatchSize` support |
-| Partial | 3 (medium) | PPO correctness fixes: shuffle, minibatches, gradient clip, value clip, clip fraction |
-| No | 3 (medium) | Replace array-only network configs with a neural-network graph builder |
+| Yes | 3 (medium) | Finish true batched forward passes on top of the existing multi-scene `BatchSize` support |
+| Yes | 3 (medium) | PPO correctness fixes: shuffle, minibatches, gradient clip, value clip, clip fraction |
+| Yes | 3 (medium) | Replace array-only network configs with a neural-network graph builder |
 | Yes | 3 (medium) | Named reward components with metrics breakdown |
-| No | 3 (medium) | Observation/reward spy overlay |
+| Yes | 3 (medium) | Observation/reward spy overlay |
 | Partial | 3 (medium) | Built-in self-play and historical opponent sampling |
 | No | 3 (medium) | Surface checkpoint history in the dashboard on top of the existing registry/export work |
 | No | 4 (nice to have) | Hyperparameter schedules |

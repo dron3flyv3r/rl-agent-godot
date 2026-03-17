@@ -7,14 +7,14 @@ public sealed class SacInferencePolicy : IInferencePolicy
     private readonly SacNetwork _network;
     private readonly bool _isContinuous;
 
-    public SacInferencePolicy(int observationSize, int actionDimensions, bool isContinuous, RLNetworkConfig config)
+    public SacInferencePolicy(int observationSize, int actionDimensions, bool isContinuous, RLNetworkGraph graph)
     {
         if (actionDimensions <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(actionDimensions), "SAC inference requires at least one action dimension.");
         }
 
-        _network = new SacNetwork(observationSize, actionDimensions, isContinuous, config, 0f);
+        _network = new SacNetwork(observationSize, actionDimensions, isContinuous, graph, 0f);
         _isContinuous = isContinuous;
     }
 

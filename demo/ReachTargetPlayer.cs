@@ -142,7 +142,7 @@ public partial class ReachTargetPlayer : CharacterBody2D
         {
             _footerLabel.Text = IsTrainingRun()
                 ? "Training run active. Metrics are still being written to the run folder."
-                : "Controls: Left/Right move, Enter resets. Use Start Training in the plugin to switch to learning.";
+                : "Controls: Left/Right move, Enter resets. Spy overlay is shown in the top-left.";
         }
     }
 

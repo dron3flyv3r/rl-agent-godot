@@ -42,6 +42,7 @@ public sealed class TrainerUpdateStats
     public float PolicyLoss { get; init; }
     public float ValueLoss { get; init; }
     public float Entropy { get; init; }
+    public float ClipFraction { get; init; }
     public RLCheckpoint Checkpoint { get; init; } = new();
 }
 
@@ -52,23 +53,22 @@ public sealed class PolicyGroupConfig
     public RLAlgorithmKind Algorithm { get; init; } = RLAlgorithmKind.PPO;
     public RLPolicyGroupConfig? SharedPolicy { get; init; }
     public RLTrainerConfig TrainerConfig { get; init; } = new();
-    public RLNetworkConfig NetworkConfig { get; init; } = new();
+    public RLNetworkGraph NetworkGraph { get; init; } = new();
     public RLActionDefinition[] ActionDefinitions { get; init; } = Array.Empty<RLActionDefinition>();
     public int ObservationSize { get; init; }
     public int DiscreteActionCount { get; init; }
     public int ContinuousActionDimensions { get; init; }
     public string CheckpointPath { get; init; } = string.Empty;
     public string MetricsPath { get; init; } = string.Empty;
-    public bool SelfPlay { get; init; }
-    public float HistoricalOpponentRate { get; init; }
-    public int FrozenCheckpointInterval { get; init; } = 10;
 }
 
 public interface ITrainer
 {
     PolicyDecision SampleAction(float[] observation);
+    PolicyDecision[] SampleActions(VectorBatch observations);
     /// <summary>Returns a value estimate (PPO: value head; SAC: returns 0).</summary>
     float EstimateValue(float[] observation);
+    float[] EstimateValues(VectorBatch observations);
     void RecordTransition(Transition transition);
     TrainerUpdateStats? TryUpdate(string groupId, long totalSteps, long episodeCount);
     RLCheckpoint CreateCheckpoint(string groupId, long totalSteps, long episodeCount, long updateCount);

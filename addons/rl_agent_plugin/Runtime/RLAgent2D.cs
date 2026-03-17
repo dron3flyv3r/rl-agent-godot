@@ -11,55 +11,45 @@ public partial class RLAgent2D : Node2D
     private bool _explicitActionSpaceResolved;
 
     private readonly ObservationBuffer _observationBuffer = new();
+    private float[] _lastObservation = Array.Empty<float>();
+    private ObservationSegment[] _lastObservationSegments = Array.Empty<ObservationSegment>();
     private int? _validatedObservationSize;
     private float _pendingReward;
     private readonly Dictionary<string, float> _pendingRewardComponents = new(StringComparer.Ordinal);
     private readonly Dictionary<string, float> _episodeRewardComponents = new(StringComparer.Ordinal);
+    private Dictionary<string, float> _lastStepRewardBreakdown = new(StringComparer.Ordinal);
     private bool _donePending;
-    private string _agentId = "Agent";
-    private RLAgentControlMode _inlineControlMode = RLAgentControlMode.Train;
-    private string _inlinePolicyGroup = string.Empty;
-    private string _inlineInferenceCheckpointPath = string.Empty;
-    private RLAgentConfig? _agentConfig;
-
-    [Export] public string AgentId { get => string.IsNullOrEmpty(_agentId) ? "Agent" : _agentId; set => _agentId = value; }
-    /// <summary>Maximum steps per episode. Set to 0 to disable the built-in limit (e.g. when a game controller manages episode length).</summary>
-    [Export] public int MaxEpisodeSteps { get; set; } = 0;
+    private RLAgentControlMode _controlMode = RLAgentControlMode.Train;
 
     [ExportGroup("Control")]
     [Export]
     public RLAgentControlMode ControlMode
     {
-        get => _agentConfig?.ControlMode ?? _inlineControlMode;
-        set { _inlineControlMode = value; UpdateConfigurationWarnings(); }
+        get => _controlMode;
+        set { _controlMode = value; UpdateConfigurationWarnings(); }
     }
 
-    [Export]
-    public string PolicyGroup
-    {
-        get => _agentConfig?.PolicyGroup ?? _inlinePolicyGroup;
-        set => _inlinePolicyGroup = value;
-    }
-
-    [Export(PropertyHint.File, "*.json,*.rlmodel")]
-    public string InferenceCheckpointPath
-    {
-        get => _agentConfig?.InferenceCheckpointPath ?? _inlineInferenceCheckpointPath;
-        set { _inlineInferenceCheckpointPath = value; UpdateConfigurationWarnings(); }
-    }
-
-    [ExportGroup("Advanced")]
-    [Export]
-    public RLAgentConfig? AgentConfig
-    {
-        get => _agentConfig;
-        set { _agentConfig = value; UpdateConfigurationWarnings(); }
-    }
+    [Export(PropertyHint.Range, "-1,100000,1,or_greater")] public int MaxEpisodeSteps { get; set; } = -1;
+    [Export] public RLPolicyGroupConfig PolicyGroupConfig { get; set; } = new RLPolicyGroupConfig();
 
     public int EpisodeSteps { get; private set; }
     public float EpisodeReward { get; private set; }
     public int CurrentActionIndex { get; private set; }
     public float[] CurrentContinuousActions { get; private set; } = Array.Empty<float>();
+    public IReadOnlyList<ObservationSegment> LastObservationSegments => _lastObservationSegments;
+
+    /// <summary>Reward accumulated since the last ConsumePendingReward call. Useful for human-mode agents where the training loop never consumes rewards.</summary>
+    public float PendingReward => _pendingReward;
+
+    /// <summary>Reward amount consumed in the most recent ConsumePendingReward call (i.e. the last completed step's reward).</summary>
+    public float LastStepReward { get; private set; }
+
+    /// <summary>Returns a snapshot of pending reward components without consuming them.</summary>
+    public IReadOnlyDictionary<string, float> GetPendingRewardBreakdown() =>
+        new Dictionary<string, float>(_pendingRewardComponents, StringComparer.Ordinal);
+
+    /// <summary>Returns the reward component breakdown from the most recently consumed step.</summary>
+    public IReadOnlyDictionary<string, float> GetLastStepRewardBreakdown() => _lastStepRewardBreakdown;
 
     public override void _Ready()
     {
@@ -179,6 +169,8 @@ public partial class RLAgent2D : Node2D
         CurrentContinuousActions = Array.Empty<float>();
         _pendingReward = 0f;
         _pendingRewardComponents.Clear();
+        LastStepReward = 0f;
+        _lastStepRewardBreakdown = new Dictionary<string, float>(StringComparer.Ordinal);
         _donePending = false;
         OnEpisodeBegin();
         if (GetDiscreteActionCount() > 0)
@@ -205,22 +197,55 @@ public partial class RLAgent2D : Node2D
 
     public bool HasReachedEpisodeLimit()
     {
-        return MaxEpisodeSteps > 0 && EpisodeSteps >= MaxEpisodeSteps;
+        var maxEpisodeSteps = GetEffectiveMaxEpisodeSteps();
+        return maxEpisodeSteps > 0 && EpisodeSteps >= maxEpisodeSteps;
     }
 
-    public string GetInferenceCheckpointPath() => InferenceCheckpointPath;
+    public string GetInferenceModelPath()
+    {
+        return NormalizeResourcePath(PolicyGroupConfig.InferenceModelPath);
+    }
+
+    public string GetPolicyAgentId()
+    {
+        return string.IsNullOrWhiteSpace(PolicyGroupConfig.AgentId)
+            ? Name
+            : PolicyGroupConfig.AgentId.Trim();
+    }
 
     public int GetExpectedObservationSize()
     {
         return CollectObservationArray().Length;
     }
 
+    public float[] GetLastObservation()
+    {
+        return (float[])_lastObservation.Clone();
+    }
+
     public override string[] _GetConfigurationWarnings()
     {
         var warnings = new List<string>();
-        if (ControlMode == RLAgentControlMode.Inference && string.IsNullOrEmpty(GetInferenceCheckpointPath()))
-            warnings.Add("ControlMode is Inference but no checkpoint path is set.");
+        if (ControlMode == RLAgentControlMode.Inference && string.IsNullOrWhiteSpace(GetInferenceModelPath()))
+        {
+            warnings.Add("ControlMode is Inference but no inference model path is set on PolicyGroupConfig.");
+        }
         return warnings.ToArray();
+    }
+
+    public int GetEffectiveMaxEpisodeSteps()
+    {
+        if (MaxEpisodeSteps > 0)
+        {
+            return MaxEpisodeSteps;
+        }
+
+        if (PolicyGroupConfig.MaxEpisodeSteps > 0)
+        {
+            return PolicyGroupConfig.MaxEpisodeSteps;
+        }
+
+        return ResolveAcademy()?.MaxEpisodeSteps ?? 0;
     }
 
     // ── Framework-internal ────────────────────────────────────────────────────
@@ -228,10 +253,11 @@ public partial class RLAgent2D : Node2D
     /// <summary>Called by the training/inference loop each physics step.</summary>
     internal void TickStep() => OnStep();
 
-    /// <summary>Returns accumulated reward and clears the pending buffer.</summary>
+    /// <summary>Returns accumulated reward and clears the pending buffer. Also updates LastStepReward.</summary>
     internal float ConsumePendingReward()
     {
         var reward = _pendingReward;
+        LastStepReward = reward;
         _pendingReward = 0f;
         return reward;
     }
@@ -239,6 +265,7 @@ public partial class RLAgent2D : Node2D
     internal Dictionary<string, float> ConsumePendingRewardBreakdown()
     {
         var breakdown = new Dictionary<string, float>(_pendingRewardComponents, StringComparer.Ordinal);
+        _lastStepRewardBreakdown = breakdown;
         _pendingRewardComponents.Clear();
         return breakdown;
     }
@@ -257,6 +284,8 @@ public partial class RLAgent2D : Node2D
         CollectObservations(_observationBuffer);
 
         var observation = _observationBuffer.ToArray();
+        _lastObservation = observation;
+        _lastObservationSegments = _observationBuffer.GetSegmentsSnapshot();
         if (_validatedObservationSize is null)
         {
             _validatedObservationSize = observation.Length;
@@ -301,5 +330,40 @@ public partial class RLAgent2D : Node2D
 
         target.TryGetValue(tag, out var current);
         target[tag] = current + amount;
+    }
+
+    private static string NormalizeResourcePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        if (path.StartsWith("uid://", StringComparison.Ordinal))
+        {
+            var resolvedPath = ResourceUid.EnsurePath(path);
+            if (!string.IsNullOrWhiteSpace(resolvedPath))
+            {
+                return resolvedPath;
+            }
+        }
+
+        return path;
+    }
+
+    private RLAcademy? ResolveAcademy()
+    {
+        Node? current = this;
+        while (current is not null)
+        {
+            if (current is RLAcademy academy)
+            {
+                return academy;
+            }
+
+            current = current.GetParent();
+        }
+
+        return null;
     }
 }

@@ -30,17 +30,15 @@ internal sealed class SacNetwork
     private readonly DenseLayer[] _q2TargetTrunk;
     private readonly DenseLayer _q2TargetHead;
 
-    public SacNetwork(int obsSize, int actionDim, bool isContinuous, RLNetworkConfig networkConfig, float learningRate)
+    public SacNetwork(int obsSize, int actionDim, bool isContinuous, RLNetworkGraph graph, float learningRate)
     {
         _obsSize = obsSize;
         _actionDim = actionDim;
         _learningRate = learningRate;
-        var useAdam = networkConfig.Optimizer == RLOptimizerKind.Adam;
+        var useAdam = graph.Optimizer == RLOptimizerKind.Adam;
 
-        var hiddenSizes = networkConfig.HiddenLayerSizes.Where(s => s > 0).ToArray();
-
-        _actorTrunk = BuildTrunk(obsSize, hiddenSizes, useAdam, networkConfig.Activation);
-        var actorTrunkOut = hiddenSizes.Length > 0 ? hiddenSizes[^1] : obsSize;
+        _actorTrunk = graph.BuildTrunkLayers(obsSize);
+        var actorTrunkOut = graph.OutputSize(obsSize);
         // Discrete: logits over actions; Continuous: [mean_0..mean_D, log_std_0..log_std_D]
         var actorOutSize = isContinuous ? actionDim * 2 : actionDim;
         _actorHead = new DenseLayer(actorTrunkOut, actorOutSize, null, useAdam);
@@ -48,21 +46,20 @@ internal sealed class SacNetwork
         // Q-networks
         var qInputSize = isContinuous ? obsSize + actionDim : obsSize;
         var qOutSize = isContinuous ? 1 : actionDim;
+        var qTrunkOut = graph.OutputSize(qInputSize);
 
-        _q1Trunk = BuildTrunk(qInputSize, hiddenSizes, useAdam, networkConfig.Activation);
-        var q1TrunkOut = hiddenSizes.Length > 0 ? hiddenSizes[^1] : qInputSize;
-        _q1Head = new DenseLayer(q1TrunkOut, qOutSize, null, useAdam);
+        _q1Trunk = graph.BuildTrunkLayers(qInputSize);
+        _q1Head = new DenseLayer(qTrunkOut, qOutSize, null, useAdam);
 
-        _q2Trunk = BuildTrunk(qInputSize, hiddenSizes, useAdam, networkConfig.Activation);
-        _q2Head = new DenseLayer(q1TrunkOut, qOutSize, null, useAdam);
+        _q2Trunk = graph.BuildTrunkLayers(qInputSize);
+        _q2Head = new DenseLayer(qTrunkOut, qOutSize, null, useAdam);
 
-        // Target Q-networks (SGD, weights will be hard-copied from online networks)
-        _q1TargetTrunk = BuildTrunk(qInputSize, hiddenSizes, false, networkConfig.Activation);
-        var q1TargetTrunkOut = hiddenSizes.Length > 0 ? hiddenSizes[^1] : qInputSize;
-        _q1TargetHead = new DenseLayer(q1TargetTrunkOut, qOutSize, null, false);
+        // Target Q-networks (no optimizer — weights are maintained via soft/hard copy)
+        _q1TargetTrunk = graph.BuildTrunkLayers(qInputSize, forceUseAdam: false);
+        _q1TargetHead = new DenseLayer(qTrunkOut, qOutSize, null, false);
 
-        _q2TargetTrunk = BuildTrunk(qInputSize, hiddenSizes, false, networkConfig.Activation);
-        _q2TargetHead = new DenseLayer(q1TargetTrunkOut, qOutSize, null, false);
+        _q2TargetTrunk = graph.BuildTrunkLayers(qInputSize, forceUseAdam: false);
+        _q2TargetHead = new DenseLayer(qTrunkOut, qOutSize, null, false);
 
         // Initialize targets as hard copies of online networks
         HardCopyToTargets();
@@ -73,6 +70,33 @@ internal sealed class SacNetwork
     public (int action, float logProb, float entropy) SampleDiscreteAction(float[] obs, Random rng)
     {
         var logits = ForwardActor(obs);
+        return SampleDiscreteActionFromLogits(logits, rng);
+    }
+
+    public DiscreteActionBatch SampleDiscreteActions(VectorBatch observations, Random rng)
+    {
+        var logitsBatch = ForwardActorBatch(observations);
+        var actions = new int[observations.BatchSize];
+        var logProbabilities = new float[observations.BatchSize];
+        var entropies = new float[observations.BatchSize];
+        for (var batchIndex = 0; batchIndex < observations.BatchSize; batchIndex++)
+        {
+            var (action, logProb, entropy) = SampleDiscreteActionFromLogits(logitsBatch.CopyRow(batchIndex), rng);
+            actions[batchIndex] = action;
+            logProbabilities[batchIndex] = logProb;
+            entropies[batchIndex] = entropy;
+        }
+
+        return new DiscreteActionBatch
+        {
+            Actions = actions,
+            LogProbabilities = logProbabilities,
+            Entropies = entropies,
+        };
+    }
+
+    private static (int action, float logProb, float entropy) SampleDiscreteActionFromLogits(float[] logits, Random rng)
+    {
         var probs = Softmax(logits);
         var action = SampleFromProbs(probs, rng);
         var logProb = MathF.Log(Math.Max(probs[action], 1e-8f));
@@ -138,6 +162,36 @@ internal sealed class SacNetwork
     public (float[] action, float logProb, float[] eps, float[] u) SampleContinuousAction(float[] obs, Random rng)
     {
         var actorOut = ForwardActor(obs);
+        return SampleContinuousActionFromActorOutput(actorOut, rng);
+    }
+
+    public ContinuousActionBatch SampleContinuousActions(VectorBatch observations, Random rng)
+    {
+        var actorBatch = ForwardActorBatch(observations);
+        var actions = new float[observations.BatchSize][];
+        var logProbabilities = new float[observations.BatchSize];
+        var epsilons = new float[observations.BatchSize][];
+        var preSquashActions = new float[observations.BatchSize][];
+        for (var batchIndex = 0; batchIndex < observations.BatchSize; batchIndex++)
+        {
+            var (action, logProb, eps, u) = SampleContinuousActionFromActorOutput(actorBatch.CopyRow(batchIndex), rng);
+            actions[batchIndex] = action;
+            logProbabilities[batchIndex] = logProb;
+            epsilons[batchIndex] = eps;
+            preSquashActions[batchIndex] = u;
+        }
+
+        return new ContinuousActionBatch
+        {
+            Actions = actions,
+            LogProbabilities = logProbabilities,
+            Epsilons = epsilons,
+            PreSquashActions = preSquashActions,
+        };
+    }
+
+    private (float[] action, float logProb, float[] eps, float[] u) SampleContinuousActionFromActorOutput(float[] actorOut, Random rng)
+    {
         var mean = actorOut[.._actionDim];
         var logStd = new float[_actionDim];
         for (var i = 0; i < _actionDim; i++)
@@ -407,6 +461,17 @@ internal sealed class SacNetwork
         return _actorHead.Forward(x).Activated;
     }
 
+    private VectorBatch ForwardActorBatch(VectorBatch observations)
+    {
+        var x = observations;
+        foreach (var layer in _actorTrunk)
+        {
+            x = layer.ForwardBatch(x);
+        }
+
+        return _actorHead.ForwardBatch(x);
+    }
+
     private float[] ForwardActorFull(float[] obs, out (LayerCache[] trunk, LayerCache head, float[] trunkOut) caches)
     {
         var trunkCaches = new LayerCache[_actorTrunk.Length];
@@ -500,21 +565,6 @@ internal sealed class SacNetwork
         _q2TargetHead.CopyFrom(_q2Head);
     }
 
-    private static DenseLayer[] BuildTrunk(int inputSize, int[] hiddenSizes, bool useAdam, RLActivationKind activation)
-    {
-        if (hiddenSizes.Length == 0) return Array.Empty<DenseLayer>();
-
-        var layers = new DenseLayer[hiddenSizes.Length];
-        var prev = inputSize;
-        for (var i = 0; i < hiddenSizes.Length; i++)
-        {
-            layers[i] = new DenseLayer(prev, hiddenSizes[i], activation, useAdam);
-            prev = hiddenSizes[i];
-        }
-
-        return layers;
-    }
-
     private static float[] Softmax(float[] logits)
     {
         var max = logits.Max();
@@ -557,5 +607,20 @@ internal sealed class SacNetwork
         Array.Copy(a, 0, result, 0, a.Length);
         Array.Copy(b, 0, result, a.Length, b.Length);
         return result;
+    }
+
+    public sealed class DiscreteActionBatch
+    {
+        public int[] Actions { get; init; } = Array.Empty<int>();
+        public float[] LogProbabilities { get; init; } = Array.Empty<float>();
+        public float[] Entropies { get; init; } = Array.Empty<float>();
+    }
+
+    public sealed class ContinuousActionBatch
+    {
+        public float[][] Actions { get; init; } = Array.Empty<float[]>();
+        public float[] LogProbabilities { get; init; } = Array.Empty<float>();
+        public float[][] Epsilons { get; init; } = Array.Empty<float[]>();
+        public float[][] PreSquashActions { get; init; } = Array.Empty<float[]>();
     }
 }

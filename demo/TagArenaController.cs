@@ -299,7 +299,7 @@ public partial class TagArenaController : Node2D
             }
         }
 
-        _resolutionMessage = $"{chaser.AgentId} tagged {runner.AgentId} on step {_episodeStep}.";
+        _resolutionMessage = $"{chaser.PlayerId} tagged {runner.PlayerId} on step {_episodeStep}.";
     }
 
     private void ResolveTimeout(IReadOnlyDictionary<TagPlayer, Vector2> positions)
@@ -386,7 +386,7 @@ public partial class TagArenaController : Node2D
                 continue;
             }
 
-            if (!string.IsNullOrEmpty(controlledAgentId) && agent.AgentId == controlledAgentId)
+            if (!string.IsNullOrEmpty(controlledAgentId) && player.PlayerId == controlledAgentId)
             {
                 agent.ControlMode = RLAgentControlMode.Human;
             }
@@ -400,7 +400,7 @@ public partial class TagArenaController : Node2D
     private Dictionary<TagPlayer, Vector2> CreateSpawnPositions()
     {
         var spawnPositions = new Dictionary<TagPlayer, Vector2>();
-        foreach (var player in _players.OrderBy(player => player.Role).ThenBy(player => player.AgentId))
+        foreach (var player in _players.OrderBy(player => player.Role).ThenBy(player => player.PlayerId))
         {
             var attempts = 0;
             var spawn = Vector2.Zero;
@@ -550,8 +550,8 @@ public partial class TagArenaController : Node2D
             _footerLabel.Text = IsTrainingRun()
                 ? "Training uses four train-mode agents with separate policies and shared arena resets."
                 : ControlledAgent == StandaloneControlledAgent.None
-                    ? "Controls: Enter resets the arena. Set ControlledAgent to a player to enable manual control."
-                    : "Controls: arrows move the selected human agent, Enter resets the arena.";
+                    ? "Controls: Enter resets the arena. Spy overlay stays visible; set ControlledAgent to a player to enable manual control."
+                    : "Controls: arrows move the selected human agent, Enter resets the arena, Tab cycles the spy overlay.";
         }
     }
 }

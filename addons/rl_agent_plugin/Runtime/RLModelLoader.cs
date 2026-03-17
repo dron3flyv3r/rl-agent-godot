@@ -97,6 +97,16 @@ public static class RLModelLoader
                 var metadataLength = reader.ReadInt32();
                 var metadataBytes = reader.ReadBytes(metadataLength);
                 checkpoint.ApplyMetadataJson(Encoding.UTF8.GetString(metadataBytes));
+
+                if (checkpoint.ObservationSize <= 0)
+                {
+                    checkpoint.ObservationSize = headerObsSize;
+                }
+
+                if (checkpoint.DiscreteActionCount <= 0 && checkpoint.ContinuousActionDimensions <= 0)
+                {
+                    checkpoint.DiscreteActionCount = headerActionDims;
+                }
             }
             else
             {

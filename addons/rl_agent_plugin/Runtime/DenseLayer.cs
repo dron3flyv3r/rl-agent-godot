@@ -19,6 +19,34 @@ internal sealed class LayerCache
     public float[] Activated { get; init; } = Array.Empty<float>();
 }
 
+internal sealed class GradientBuffer
+{
+    public GradientBuffer(int weightCount, int biasCount)
+    {
+        WeightGradients = new float[weightCount];
+        BiasGradients = new float[biasCount];
+    }
+
+    public float[] WeightGradients { get; }
+    public float[] BiasGradients { get; }
+
+    public float SumSquares()
+    {
+        var sum = 0f;
+        foreach (var gradient in WeightGradients)
+        {
+            sum += gradient * gradient;
+        }
+
+        foreach (var gradient in BiasGradients)
+        {
+            sum += gradient * gradient;
+        }
+
+        return sum;
+    }
+}
+
 internal sealed class DenseLayer
 {
     private const float AdamBeta1 = 0.9f;
@@ -103,6 +131,38 @@ internal sealed class DenseLayer
         };
     }
 
+    public VectorBatch ForwardBatch(VectorBatch input)
+    {
+        if (input.VectorSize != _inputSize)
+        {
+            throw new ArgumentException(
+                $"Expected input vector size {_inputSize}, got {input.VectorSize}.",
+                nameof(input));
+        }
+
+        var output = new VectorBatch(input.BatchSize, _outputSize);
+        for (var batchIndex = 0; batchIndex < input.BatchSize; batchIndex++)
+        {
+            var inputOffset = batchIndex * _inputSize;
+            var outputOffset = batchIndex * _outputSize;
+            for (var outputIndex = 0; outputIndex < _outputSize; outputIndex++)
+            {
+                var sum = _biases[outputIndex];
+                var weightOffset = outputIndex * _inputSize;
+                for (var inputIndex = 0; inputIndex < _inputSize; inputIndex++)
+                {
+                    sum += input.Data[inputOffset + inputIndex] * _weights[weightOffset + inputIndex];
+                }
+
+                output.Data[outputOffset + outputIndex] = _activation.HasValue
+                    ? Activate(sum, _activation.Value)
+                    : sum;
+            }
+        }
+
+        return output;
+    }
+
     public float[] Backward(float[] input, float[] outputGradient, float learningRate, float[]? preActivation = null)
     {
         var localGradient = outputGradient.ToArray();
@@ -168,6 +228,83 @@ internal sealed class DenseLayer
         }
 
         return inputGradient;
+    }
+
+    public GradientBuffer CreateGradientBuffer()
+    {
+        return new GradientBuffer(_weights.Length, _biases.Length);
+    }
+
+    public float[] AccumulateGradients(float[] input, float[] outputGradient, GradientBuffer gradients, float[]? preActivation = null)
+    {
+        var localGradient = outputGradient.ToArray();
+        if (_activation.HasValue && preActivation is not null)
+        {
+            for (var index = 0; index < localGradient.Length; index++)
+            {
+                localGradient[index] *= ActivateDerivative(preActivation[index], _activation.Value);
+            }
+        }
+
+        var inputGradient = new float[_inputSize];
+        for (var outputIndex = 0; outputIndex < _outputSize; outputIndex++)
+        {
+            for (var inputIndex = 0; inputIndex < _inputSize; inputIndex++)
+            {
+                var weightIndex = (outputIndex * _inputSize) + inputIndex;
+                inputGradient[inputIndex] += _weights[weightIndex] * localGradient[outputIndex];
+                gradients.WeightGradients[weightIndex] += localGradient[outputIndex] * input[inputIndex];
+            }
+
+            gradients.BiasGradients[outputIndex] += localGradient[outputIndex];
+        }
+
+        return inputGradient;
+    }
+
+    public void ApplyGradients(GradientBuffer gradients, float learningRate, float scale = 1f)
+    {
+        if (_useAdam)
+        {
+            _adamB1Pow *= AdamBeta1;
+            _adamB2Pow *= AdamBeta2;
+            var b1Corr = 1f - _adamB1Pow;
+            var b2Corr = 1f - _adamB2Pow;
+
+            for (var outputIndex = 0; outputIndex < _outputSize; outputIndex++)
+            {
+                for (var inputIndex = 0; inputIndex < _inputSize; inputIndex++)
+                {
+                    var weightIndex = (outputIndex * _inputSize) + inputIndex;
+                    var gradient = gradients.WeightGradients[weightIndex] * scale;
+                    _wm![weightIndex] = AdamBeta1 * _wm[weightIndex] + (1f - AdamBeta1) * gradient;
+                    _wv![weightIndex] = AdamBeta2 * _wv[weightIndex] + (1f - AdamBeta2) * gradient * gradient;
+                    var mHat = _wm[weightIndex] / b1Corr;
+                    var vHat = _wv[weightIndex] / b2Corr;
+                    _weights[weightIndex] -= learningRate * mHat / (Mathf.Sqrt(vHat) + AdamEpsilon);
+                }
+
+                var biasGradient = gradients.BiasGradients[outputIndex] * scale;
+                _bm![outputIndex] = AdamBeta1 * _bm[outputIndex] + (1f - AdamBeta1) * biasGradient;
+                _bv![outputIndex] = AdamBeta2 * _bv[outputIndex] + (1f - AdamBeta2) * biasGradient * biasGradient;
+                var bmHat = _bm[outputIndex] / b1Corr;
+                var bvHat = _bv[outputIndex] / b2Corr;
+                _biases[outputIndex] -= learningRate * bmHat / (Mathf.Sqrt(bvHat) + AdamEpsilon);
+            }
+
+            return;
+        }
+
+        for (var outputIndex = 0; outputIndex < _outputSize; outputIndex++)
+        {
+            for (var inputIndex = 0; inputIndex < _inputSize; inputIndex++)
+            {
+                var weightIndex = (outputIndex * _inputSize) + inputIndex;
+                _weights[weightIndex] -= learningRate * gradients.WeightGradients[weightIndex] * scale;
+            }
+
+            _biases[outputIndex] -= learningRate * gradients.BiasGradients[outputIndex] * scale;
+        }
     }
 
     /// <summary>

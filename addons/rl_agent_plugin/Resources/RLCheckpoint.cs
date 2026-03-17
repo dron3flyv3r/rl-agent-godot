@@ -21,7 +21,9 @@ public partial class RLCheckpoint : Resource
     [Export] public int ObservationSize { get; set; }
     [Export] public int DiscreteActionCount { get; set; }
     [Export] public int ContinuousActionDimensions { get; set; }
-    [Export] public int[] HiddenLayerSizes { get; set; } = Array.Empty<int>();
+    [Export] public int[] GraphLayerSizes { get; set; } = Array.Empty<int>();
+    [Export] public int[] GraphLayerActivations { get; set; } = Array.Empty<int>();
+    [Export] public int GraphOptimizer { get; set; }
     [Export] public float[] WeightBuffer { get; set; } = Array.Empty<float>();
     [Export] public int[] LayerShapeBuffer { get; set; } = Array.Empty<int>();
     public Dictionary<string, string[]> DiscreteActionLabels { get; set; } = new(StringComparer.Ordinal);
@@ -152,28 +154,12 @@ public partial class RLCheckpoint : Resource
         ObservationSize = LayerShapeBuffer.Length >= 3 ? LayerShapeBuffer[0] : 0;
         DiscreteActionCount = DeriveLegacyDiscreteActionCount(LayerShapeBuffer);
         ContinuousActionDimensions = 0;
-        HiddenLayerSizes = DeriveLegacyHiddenLayerSizes(LayerShapeBuffer);
+        GraphLayerSizes = DeriveLegacyHiddenLayerSizes(LayerShapeBuffer);
+        GraphLayerActivations = Array.Empty<int>();
+        GraphOptimizer = 0;
         DiscreteActionLabels = new Dictionary<string, string[]>(StringComparer.Ordinal);
         ContinuousActionRanges = new Dictionary<string, RLContinuousActionRange>(StringComparer.Ordinal);
         Hyperparams = new Dictionary<string, float>(StringComparer.Ordinal);
-    }
-
-    public RLActivationKind InferHiddenActivation(RLActivationKind fallback)
-    {
-        for (var index = 2; index < LayerShapeBuffer.Length; index += 3)
-        {
-            var activation = LayerShapeBuffer[index];
-            if (activation == 0)
-            {
-                continue;
-            }
-
-            return activation == (int)RLActivationKind.Relu + 1
-                ? RLActivationKind.Relu
-                : RLActivationKind.Tanh;
-        }
-
-        return fallback;
     }
 
     internal string CreateMetadataJson()
@@ -194,11 +180,11 @@ public partial class RLCheckpoint : Resource
 
     internal Godot.Collections.Dictionary CreateMetadataDictionary()
     {
-        var hiddenSizes = new Godot.Collections.Array();
-        foreach (var size in HiddenLayerSizes)
-        {
-            hiddenSizes.Add(size);
-        }
+        var graphLayerSizes = new Godot.Collections.Array();
+        foreach (var size in GraphLayerSizes) graphLayerSizes.Add(size);
+
+        var graphLayerActivations = new Godot.Collections.Array();
+        foreach (var activation in GraphLayerActivations) graphLayerActivations.Add(activation);
 
         var hyperparams = new Godot.Collections.Dictionary();
         foreach (var (key, value) in Hyperparams)
@@ -235,7 +221,9 @@ public partial class RLCheckpoint : Resource
             { "obs_size", ObservationSize },
             { "discrete_action_count", DiscreteActionCount },
             { "continuous_action_dims", ContinuousActionDimensions },
-            { "hidden_layer_sizes", hiddenSizes },
+            { "graph_layer_sizes", graphLayerSizes },
+            { "graph_layer_activations", graphLayerActivations },
+            { "graph_optimizer", GraphOptimizer },
             { "hyperparams", hyperparams },
             { "discrete_action_labels", discreteActionLabels },
             { "continuous_action_ranges", continuousActionRanges },
@@ -249,9 +237,28 @@ public partial class RLCheckpoint : Resource
         ObservationSize = metadata.ContainsKey("obs_size") ? (int)metadata["obs_size"].AsInt64() : 0;
         DiscreteActionCount = metadata.ContainsKey("discrete_action_count") ? (int)metadata["discrete_action_count"].AsInt64() : 0;
         ContinuousActionDimensions = metadata.ContainsKey("continuous_action_dims") ? (int)metadata["continuous_action_dims"].AsInt64() : 0;
-        HiddenLayerSizes = metadata.ContainsKey("hidden_layer_sizes")
-            ? ReadIntArray(metadata["hidden_layer_sizes"].AsGodotArray())
-            : Array.Empty<int>();
+
+        if (metadata.ContainsKey("graph_layer_sizes"))
+        {
+            GraphLayerSizes = ReadIntArray(metadata["graph_layer_sizes"].AsGodotArray());
+            GraphLayerActivations = metadata.ContainsKey("graph_layer_activations")
+                ? ReadIntArray(metadata["graph_layer_activations"].AsGodotArray())
+                : Array.Empty<int>();
+            GraphOptimizer = metadata.ContainsKey("graph_optimizer") ? (int)metadata["graph_optimizer"].AsInt64() : 0;
+        }
+        else if (metadata.ContainsKey("hidden_layer_sizes"))
+        {
+            // Legacy checkpoint: sizes only, activations default to Tanh, optimizer defaults to Adam.
+            GraphLayerSizes = ReadIntArray(metadata["hidden_layer_sizes"].AsGodotArray());
+            GraphLayerActivations = Array.Empty<int>();
+            GraphOptimizer = 0;
+        }
+        else
+        {
+            GraphLayerSizes = Array.Empty<int>();
+            GraphLayerActivations = Array.Empty<int>();
+            GraphOptimizer = 0;
+        }
 
         Hyperparams = new Dictionary<string, float>(StringComparer.Ordinal);
         if (metadata.ContainsKey("hyperparams") && metadata["hyperparams"].VariantType == Variant.Type.Dictionary)

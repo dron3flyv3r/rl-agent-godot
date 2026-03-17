@@ -4,46 +4,26 @@ namespace RlAgentPlugin.Runtime;
 
 public static class RLPolicyGroupBindingResolver
 {
-    public static ResolvedPolicyGroupBinding Resolve(Node sceneRoot, Node agentNode)
+    public static ResolvedPolicyGroupBinding? Resolve(Node sceneRoot, Node agentNode)
     {
         var agentRelativePath = sceneRoot.GetPathTo(agentNode).ToString();
         var groupConfig = ResolvePolicyGroupConfig(agentNode);
 
-        if (groupConfig is not null)
+        if (groupConfig is null)
         {
-            var key = ResolveExplicitGroupKey(groupConfig, agentRelativePath);
-            var displayName = ResolveExplicitDisplayName(groupConfig, key);
-            return new ResolvedPolicyGroupBinding
-            {
-                BindingKey = key,
-                DisplayName = displayName,
-                SafeGroupId = MakeSafeGroupId(key),
-                AgentRelativePath = agentRelativePath,
-                Config = groupConfig,
-                ConfigPath = groupConfig.ResourcePath,
-            };
+            return null;
         }
 
-        var legacyGroup = ResolveLegacyPolicyGroup(agentNode);
-        if (!string.IsNullOrWhiteSpace(legacyGroup))
-        {
-            var trimmedGroup = legacyGroup.Trim();
-            return new ResolvedPolicyGroupBinding
-            {
-                BindingKey = trimmedGroup,
-                DisplayName = trimmedGroup,
-                SafeGroupId = MakeSafeGroupId(trimmedGroup),
-                AgentRelativePath = agentRelativePath,
-            };
-        }
-
-        var fallbackKey = $"__agent__{agentRelativePath}";
+        var key = ResolveExplicitGroupKey(groupConfig, agentRelativePath);
+        var displayName = ResolveExplicitDisplayName(groupConfig, key);
         return new ResolvedPolicyGroupBinding
         {
-            BindingKey = fallbackKey,
-            DisplayName = agentNode.Name.ToString(),
-            SafeGroupId = MakeSafeGroupId(fallbackKey),
+            BindingKey = key,
+            DisplayName = displayName,
+            SafeGroupId = MakeSafeGroupId(key),
             AgentRelativePath = agentRelativePath,
+            Config = groupConfig,
+            ConfigPath = groupConfig.ResourcePath,
         };
     }
 
@@ -71,33 +51,27 @@ public static class RLPolicyGroupBindingResolver
 
     private static RLPolicyGroupConfig? ResolvePolicyGroupConfig(Node agentNode)
     {
-        var variant = agentNode.Get("AgentConfig");
-        if (variant.VariantType != Variant.Type.Object)
+        if (agentNode is RLAgent2D agent)
         {
-            return null;
+            return agent.PolicyGroupConfig;
         }
 
-        return variant.AsGodotObject() is RLAgentConfig agentConfig
-            ? agentConfig.PolicyGroupConfig
+        var variant = agentNode.Get("PolicyGroupConfig");
+        return variant.VariantType == Variant.Type.Object
+            ? variant.AsGodotObject() as RLPolicyGroupConfig
             : null;
-    }
-
-    private static string ResolveLegacyPolicyGroup(Node agentNode)
-    {
-        var variant = agentNode.Get("PolicyGroup");
-        return variant.VariantType == Variant.Type.String ? variant.AsString() : string.Empty;
     }
 
     private static string ResolveExplicitGroupKey(RLPolicyGroupConfig groupConfig, string agentRelativePath)
     {
-        if (!string.IsNullOrWhiteSpace(groupConfig.GroupId))
-        {
-            return groupConfig.GroupId.Trim();
-        }
-
         if (!string.IsNullOrWhiteSpace(groupConfig.ResourcePath))
         {
             return groupConfig.ResourcePath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(groupConfig.ResourceName))
+        {
+            return groupConfig.ResourceName.Trim();
         }
 
         return $"__policycfg__{agentRelativePath}";
@@ -105,14 +79,9 @@ public static class RLPolicyGroupBindingResolver
 
     private static string ResolveExplicitDisplayName(RLPolicyGroupConfig groupConfig, string fallbackKey)
     {
-        if (!string.IsNullOrWhiteSpace(groupConfig.GroupId))
-        {
-            return groupConfig.GroupId.Trim();
-        }
-
         if (!string.IsNullOrWhiteSpace(groupConfig.ResourceName))
         {
-            return groupConfig.ResourceName;
+            return groupConfig.ResourceName.Trim();
         }
 
         if (!string.IsNullOrWhiteSpace(groupConfig.ResourcePath))

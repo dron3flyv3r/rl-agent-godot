@@ -23,6 +23,11 @@ public partial class RLDashboard : Control
         public float Entropy;
         public long  TotalSteps;
         public long  EpisodeCount;
+        public string PolicyGroup = "";
+        public string OpponentGroup = "";
+        public string OpponentSource = "";
+        public string OpponentCheckpointPath = "";
+        public long? OpponentUpdateCount;
     }
 
     private sealed class RunStatus
@@ -568,6 +573,13 @@ public partial class RLDashboard : Control
                 Entropy       = GetFloat(d, "entropy"),
                 TotalSteps    = GetLong(d, "total_steps"),
                 EpisodeCount  = GetLong(d, "episode_count"),
+                PolicyGroup   = GetString(d, "policy_group", ""),
+                OpponentGroup = GetString(d, "opponent_group", ""),
+                OpponentSource = GetString(d, "opponent_source", ""),
+                OpponentCheckpointPath = GetString(d, "opponent_checkpoint_path", ""),
+                OpponentUpdateCount = d.ContainsKey("opponent_update_count")
+                    ? GetLong(d, "opponent_update_count")
+                    : null,
             };
         }
         catch
@@ -797,6 +809,13 @@ public partial class RLDashboard : Control
         if (_statBestReward is not null) _statBestReward.Text = best.ToString("F3");
         if (_statTotalSteps is not null) _statTotalSteps.Text = FormatSteps(steps);
         if (_statEpisodes   is not null) _statEpisodes.Text   = eps.ToString("N0");
+
+        if (!string.IsNullOrWhiteSpace(last.OpponentGroup))
+        {
+            var updateSuffix = last.OpponentUpdateCount.HasValue ? $" u{last.OpponentUpdateCount.Value}" : string.Empty;
+            SetHeaderStatus(
+                $"Latest matchup: {last.PolicyGroup} vs {last.OpponentGroup} ({last.OpponentSource}{updateSuffix})");
+        }
     }
 
     private void SetHeaderStatus(string message)

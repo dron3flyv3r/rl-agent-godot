@@ -1,17 +1,23 @@
 [gd_scene format=3 uid="uid://b7b6n8vwv7x5w"]
 
 [ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/RLAcademy.cs" id="1_cgdt7"]
-[ext_resource type="Script" path="res://addons/rl_agent_plugin/Resources/RLTrainingConfig.cs" id="2_cfg"]
+[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl_agent_plugin/Resources/RLTrainingConfig.cs" id="2_cfg"]
 [ext_resource type="Script" uid="uid://erru8n4gpbsv" path="res://demo/ReachTargetAgent.cs" id="4_h11wi"]
 [ext_resource type="Script" uid="uid://c4u7ptb63mnta" path="res://demo/ReachTargetPlayer.cs" id="5_6k30s"]
+[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl_agent_plugin/Resources/RLPolicyGroupConfig.cs" id="5_cuwb5"]
 
 [sub_resource type="Resource" id="TrainingConfig"]
 script = ExtResource("2_cfg")
-HiddenLayerSizes = PackedInt32Array(32, 32)
 RolloutLength = 128
 LearningRate = 0.001
-MaxEpisodeSteps = 48
 StatusWriteIntervalSteps = 16
+
+[sub_resource type="Resource" id="Resource_dj21h"]
+script = ExtResource("5_cuwb5")
+metadata/_custom_type_script = "uid://bniwqapplki00"
+resource_name = "reach_target"
+AgentId = "reach_target"
+MaxEpisodeSteps = 48
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_cuwb5"]
 
@@ -42,6 +48,7 @@ default_color = Color(0.352941, 0.537255, 0.682353, 1)
 script = ExtResource("1_cgdt7")
 TrainingConfig = SubResource("TrainingConfig")
 RunPrefix = "ReachTargetDemo"
+EnableSpyOverlay = true
 
 [node name="TrackGlow" type="Line2D" parent="." unique_id=102336968]
 points = PackedVector2Array(126, 338, 674, 338)
@@ -50,7 +57,6 @@ default_color = Color(0.376471, 0.643137, 0.866667, 0.1)
 
 [node name="Track" type="Line2D" parent="." unique_id=2091839360]
 points = PackedVector2Array(126, 338, 674, 338)
-width = 10.0
 default_color = Color(0.584314, 0.694118, 0.784314, 1)
 
 [node name="StartCap" type="Line2D" parent="." unique_id=1606955190]
@@ -77,9 +83,6 @@ polygon = PackedVector2Array(0, -14, 14, 0, 0, 14, -14, 0)
 [node name="Player" type="CharacterBody2D" parent="." unique_id=473174080]
 position = Vector2(400, 338)
 script = ExtResource("5_6k30s")
-LaneMinX = 126.0
-LaneMaxX = 674.0
-LaneY = 338.0
 
 [node name="BodyVisual" type="Polygon2D" parent="Player" unique_id=1201743833]
 color = Color(0.34902, 0.854902, 0.980392, 1)
@@ -87,13 +90,13 @@ polygon = PackedVector2Array(-16, -16, 16, -16, 16, 16, -16, 16)
 
 [node name="Agent" type="Node2D" parent="Player" unique_id=527052923]
 script = ExtResource("4_h11wi")
-MaxEpisodeSteps = 48
+ControlMode = 2
+PolicyGroupConfig = SubResource("Resource_dj21h")
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Player" unique_id=1316757117]
 shape = SubResource("CircleShape2D_cuwb5")
 
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1188714571]
-visible = true
 
 [node name="Panel" type="PanelContainer" parent="CanvasLayer" unique_id=1555430802]
 offset_left = 24.0
@@ -133,6 +136,6 @@ label_settings = SubResource("LabelSettings_kep4b")
 
 [node name="FooterLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=512919374]
 layout_mode = 2
-text = "Controls: Left/Right move, Enter resets. Use Start Training in the plugin to begin learning."
+text = "Controls: Left/Right move, Enter resets. Spy overlay is shown in the top-left."
 label_settings = SubResource("LabelSettings_kep4b")
 autowrap_mode = 3

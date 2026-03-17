@@ -17,7 +17,7 @@ public sealed class PpoTrainer : ITrainer
     {
         _config = config;
         _trainerConfig = config.TrainerConfig;
-        _network = new PolicyValueNetwork(config.ObservationSize, config.DiscreteActionCount, config.NetworkConfig);
+        _network = new PolicyValueNetwork(config.ObservationSize, config.DiscreteActionCount, config.NetworkGraph);
         _rng.Randomize();
     }
 
@@ -39,9 +39,35 @@ public sealed class PpoTrainer : ITrainer
         };
     }
 
+    public PolicyDecision[] SampleActions(VectorBatch observations)
+    {
+        var inference = _network.InferBatch(observations);
+        var decisions = new PolicyDecision[observations.BatchSize];
+        for (var batchIndex = 0; batchIndex < observations.BatchSize; batchIndex++)
+        {
+            var probabilities = Softmax(inference.Logits.CopyRow(batchIndex));
+            var sampledAction = SampleFromProbabilities(probabilities);
+            var logProbability = Mathf.Log(Math.Max(1e-6f, probabilities[sampledAction]));
+            decisions[batchIndex] = new PolicyDecision
+            {
+                DiscreteAction = sampledAction,
+                Value = inference.Values[batchIndex],
+                LogProbability = logProbability,
+                Entropy = CalculateEntropy(probabilities),
+            };
+        }
+
+        return decisions;
+    }
+
     public float EstimateValue(float[] observation)
     {
         return _network.Infer(observation).Value;
+    }
+
+    public float[] EstimateValues(VectorBatch observations)
+    {
+        return _network.InferBatch(observations).Values;
     }
 
     public void RecordTransition(Transition t)
@@ -66,32 +92,44 @@ public sealed class PpoTrainer : ITrainer
         }
 
         var samples = BuildTrainingSamples();
+        NormalizeAdvantages(samples);
+        var miniBatchSize = Math.Clamp(_trainerConfig.PpoMiniBatchSize, 1, samples.Count);
         var policyLoss = 0.0f;
         var valueLoss = 0.0f;
         var entropy = 0.0f;
-        foreach (var sample in samples)
-        {
-            policyLoss += -sample.Advantage;
-            valueLoss += Mathf.Abs(sample.Return - sample.ValueEstimate);
-        }
-
-        NormalizeAdvantages(samples);
+        var clipFraction = 0.0f;
+        var processedSamples = 0;
 
         for (var epoch = 0; epoch < _trainerConfig.EpochsPerUpdate; epoch++)
         {
-            foreach (var sample in samples)
+            Shuffle(samples);
+            for (var start = 0; start < samples.Count; start += miniBatchSize)
             {
-                _network.ApplyGradients(sample, _trainerConfig);
+                var count = Math.Min(miniBatchSize, samples.Count - start);
+                var batchSamples = new TrainingSample[count];
+                for (var index = 0; index < count; index++)
+                {
+                    batchSamples[index] = samples[start + index];
+                }
+
+                var updateStats = _network.ApplyGradients(batchSamples, _trainerConfig);
+                policyLoss += updateStats.PolicyLoss * count;
+                valueLoss += updateStats.ValueLoss * count;
+                entropy += updateStats.Entropy * count;
+                clipFraction += updateStats.ClipFraction * count;
+                processedSamples += count;
             }
         }
 
         _transitions.Clear();
+        var normalizer = Math.Max(1, processedSamples);
 
         return new TrainerUpdateStats
         {
-            PolicyLoss = policyLoss / samples.Count,
-            ValueLoss = valueLoss / samples.Count,
-            Entropy = entropy / samples.Count,
+            PolicyLoss = policyLoss / normalizer,
+            ValueLoss = valueLoss / normalizer,
+            Entropy = entropy / normalizer,
+            ClipFraction = clipFraction / normalizer,
             Checkpoint = CreateCheckpoint(groupId, totalSteps, episodeCount, 0),
         };
     }
@@ -167,6 +205,15 @@ public sealed class PpoTrainer : ITrainer
         }
 
         return probabilities.Length - 1;
+    }
+
+    private void Shuffle(IList<TrainingSample> samples)
+    {
+        for (var index = samples.Count - 1; index > 0; index--)
+        {
+            var swapIndex = _rng.RandiRange(0, index);
+            (samples[index], samples[swapIndex]) = (samples[swapIndex], samples[index]);
+        }
     }
 
     private static float[] Softmax(IReadOnlyList<float> logits)

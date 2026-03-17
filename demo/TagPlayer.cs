@@ -16,7 +16,7 @@ public partial class TagPlayer : CharacterBody2D
     [Export] public bool ManualControlWhenStandalone { get; set; } = true;
 
     public TagAgent? Agent { get; private set; }
-    public string AgentId => Agent?.AgentId ?? Name;
+    public string PlayerId => Name;
 
     public override void _Ready()
     {

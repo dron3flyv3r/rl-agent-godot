@@ -17,6 +17,11 @@ public partial class RLSetupDock : VBoxContainer
         CustomMinimumSize = new Vector2(220f, 0f);
         SizeFlagsHorizontal = SizeFlags.ExpandFill;
 
+        // Tool scripts can be reconstructed after an editor domain reload while the
+        // native dock node still has its previous children. Clear any stale UI first
+        // so we do not accumulate duplicate scroll containers.
+        ClearExistingChildren();
+
         var scroll = new ScrollContainer
         {
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
@@ -193,6 +198,16 @@ public partial class RLSetupDock : VBoxContainer
         container.AddThemeConstantOverride("margin_right", margin);
         container.AddThemeConstantOverride("margin_top", margin);
         container.AddThemeConstantOverride("margin_bottom", margin);
+    }
+
+    private void ClearExistingChildren()
+    {
+        for (var childIndex = GetChildCount() - 1; childIndex >= 0; childIndex--)
+        {
+            var child = GetChild(childIndex);
+            RemoveChild(child);
+            child.Free();
+        }
     }
 
     private static string FileName(string path, string fallback)

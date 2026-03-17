@@ -26,7 +26,7 @@ public sealed class SacTrainer : ITrainer
             config.ObservationSize,
             _isContinuous ? config.ContinuousActionDimensions : config.DiscreteActionCount,
             _isContinuous,
-            config.NetworkConfig,
+            config.NetworkGraph,
             config.TrainerConfig.LearningRate);
 
         _buffer = new SacReplayBuffer(config.TrainerConfig.ReplayBufferCapacity);
@@ -67,7 +67,46 @@ public sealed class SacTrainer : ITrainer
         }
     }
 
+    public PolicyDecision[] SampleActions(VectorBatch observations)
+    {
+        var decisions = new PolicyDecision[observations.BatchSize];
+        if (_isContinuous)
+        {
+            var batch = _network.SampleContinuousActions(observations, _rng);
+            for (var batchIndex = 0; batchIndex < observations.BatchSize; batchIndex++)
+            {
+                decisions[batchIndex] = new PolicyDecision
+                {
+                    DiscreteAction = -1,
+                    ContinuousActions = batch.Actions[batchIndex],
+                    LogProbability = batch.LogProbabilities[batchIndex],
+                    Value = 0f,
+                    Entropy = -batch.LogProbabilities[batchIndex],
+                };
+            }
+
+            return decisions;
+        }
+
+        var discreteBatch = _network.SampleDiscreteActions(observations, _rng);
+        for (var batchIndex = 0; batchIndex < observations.BatchSize; batchIndex++)
+        {
+            decisions[batchIndex] = new PolicyDecision
+            {
+                DiscreteAction = discreteBatch.Actions[batchIndex],
+                ContinuousActions = Array.Empty<float>(),
+                LogProbability = discreteBatch.LogProbabilities[batchIndex],
+                Value = 0f,
+                Entropy = discreteBatch.Entropies[batchIndex],
+            };
+        }
+
+        return decisions;
+    }
+
     public float EstimateValue(float[] observation) => 0f;
+
+    public float[] EstimateValues(VectorBatch observations) => new float[observations.BatchSize];
 
     public void RecordTransition(Transition transition)
     {
@@ -114,6 +153,7 @@ public sealed class SacTrainer : ITrainer
             PolicyLoss = policyLoss / n,
             ValueLoss = valueLoss / n,
             Entropy = entropySum / n,
+            ClipFraction = 0f,
             Checkpoint = CreateCheckpoint(groupId, totalSteps, episodeCount, 0),
         };
     }

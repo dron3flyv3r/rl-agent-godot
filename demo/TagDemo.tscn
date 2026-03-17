@@ -3,12 +3,20 @@
 [ext_resource type="Script" uid="uid://6k7h4e3y50oa" path="res://demo/TagArenaController.cs" id="1"]
 [ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/RLAcademy.cs" id="2"]
 [ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl_agent_plugin/Resources/RLTrainingConfig.cs" id="3"]
+[ext_resource type="Resource" uid="uid://borlltwsvuyg7" path="res://demo/chasers.tres" id="4_l0srx"]
+[ext_resource type="Script" uid="uid://bl3qlpw5eopg4" path="res://addons/rl_agent_plugin/Resources/RLPolicyPairingConfig.cs" id="4_pair"]
 [ext_resource type="Script" uid="uid://cyyxb04k8uacu" path="res://demo/TagAgent.cs" id="5"]
+[ext_resource type="Resource" uid="uid://b3ipgpbt331i1" path="res://demo/runners.tres" id="5_j73ki"]
 [ext_resource type="Script" uid="uid://bdrwoeuh2mcbl" path="res://demo/TagPlayer.cs" id="6"]
 
 [sub_resource type="Resource" id="TrainingConfig"]
 script = ExtResource("3")
-MaxEpisodeSteps = 0
+
+[sub_resource type="Resource" id="Resource_pairing"]
+script = ExtResource("4_pair")
+PairingId = "chasers_vs_runners"
+GroupA = ExtResource("4_l0srx")
+GroupB = ExtResource("5_j73ki")
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_q38m4"]
 radius = 14.0
@@ -28,7 +36,6 @@ ArenaMax = Vector2(708, 516)
 TagRadius = 32.0
 SpawnMargin = 60.0
 MinimumSpawnSeparation = 96.0
-ControlledAgent = 0
 
 [node name="Background" type="Polygon2D" parent="." unique_id=1192768225]
 color = Color(0.0431373, 0.0901961, 0.0745098, 1)
@@ -62,7 +69,10 @@ script = ExtResource("2")
 TrainingConfig = SubResource("TrainingConfig")
 RunPrefix = "TagDemo"
 ActionRepeat = 2
-BatchSize = 64
+MaxEpisodeSteps = 600
+BatchSize = 16
+SelfPlayPairings = Array[ExtResource("4_pair")]([SubResource("Resource_pairing")])
+EnableSpyOverlay = true
 
 [node name="ChaserA" type="CharacterBody2D" parent="." unique_id=1432916565]
 position = Vector2(238, 244)
@@ -71,8 +81,8 @@ Role = 0
 
 [node name="Agent" type="Node2D" parent="ChaserA" unique_id=1690261792]
 script = ExtResource("5")
-AgentId = "ChaserA"
-InferenceCheckpointPath = "res://Demo2AgentExports/ChaserA.rlmodel"
+ControlMode = 1
+PolicyGroupConfig = ExtResource("4_l0srx")
 
 [node name="Visual" type="Polygon2D" parent="ChaserA" unique_id=693159168]
 color = Color(0.937255, 0.4, 0.364706, 1)
@@ -88,8 +98,8 @@ Role = 0
 
 [node name="Agent" type="Node2D" parent="ChaserB" unique_id=1464470303]
 script = ExtResource("5")
-AgentId = "ChaserB"
-InferenceCheckpointPath = "res://Demo2AgentExports/ChaserB.rlmodel"
+ControlMode = 1
+PolicyGroupConfig = ExtResource("4_l0srx")
 
 [node name="Visual" type="Polygon2D" parent="ChaserB" unique_id=1562436759]
 color = Color(0.890196, 0.301961, 0.27451, 1)
@@ -104,8 +114,8 @@ script = ExtResource("6")
 
 [node name="Agent" type="Node2D" parent="RunnerA" unique_id=1105293076]
 script = ExtResource("5")
-AgentId = "RunnerA"
-InferenceCheckpointPath = "res://Demo2AgentExports/RunnerA.rlmodel"
+ControlMode = 1
+PolicyGroupConfig = ExtResource("5_j73ki")
 
 [node name="Visual" type="Polygon2D" parent="RunnerA" unique_id=657237264]
 color = Color(0.298039, 0.741176, 0.941176, 1)
@@ -120,8 +130,8 @@ script = ExtResource("6")
 
 [node name="Agent" type="Node2D" parent="RunnerB" unique_id=1113519001]
 script = ExtResource("5")
-AgentId = "RunnerB"
-InferenceCheckpointPath = "res://Demo2AgentExports/RunnerB.rlmodel"
+ControlMode = 1
+PolicyGroupConfig = ExtResource("5_j73ki")
 
 [node name="Visual" type="Polygon2D" parent="RunnerB" unique_id=1444018664]
 color = Color(0.207843, 0.596078, 0.901961, 1)

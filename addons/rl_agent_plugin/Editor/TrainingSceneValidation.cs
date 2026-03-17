@@ -14,6 +14,9 @@ public sealed class PolicyGroupSummary
     public bool UsesExplicitConfig { get; set; }
     public string PolicyConfigPath { get; set; } = string.Empty;
     public bool SelfPlay { get; set; }
+    public string OpponentGroupId { get; set; } = string.Empty;
+    public float HistoricalOpponentRate { get; set; }
+    public int FrozenCheckpointInterval { get; set; } = 10;
     public List<string> AgentPaths { get; } = new();
 }
 
@@ -36,6 +39,8 @@ public sealed class TrainingSceneValidation
     public List<string> AgentNames  { get; } = new();
     /// <summary>Safe group ID for each entry in AgentNames (same index). Used to locate per-agent checkpoint files.</summary>
     public List<string> AgentGroups { get; } = new();
+    public List<string> ExportNames { get; } = new();
+    public List<string> ExportGroups { get; } = new();
     public List<string> Errors { get; } = new();
     public List<PolicyGroupSummary> PolicyGroups { get; } = new();
 
@@ -62,8 +67,10 @@ public sealed class TrainingSceneValidation
                     : $"{group.ActionCount} discrete";
                 var sourceInfo = group.UsesExplicitConfig
                     ? $"explicit config ({group.PolicyConfigPath})"
-                    : "legacy/fallback binding";
-                var selfPlayInfo = group.SelfPlay ? ", self-play" : string.Empty;
+                    : "inline policy-group config";
+                var selfPlayInfo = group.SelfPlay
+                    ? $", self-play vs '{group.OpponentGroupId}' (historical={group.HistoricalOpponentRate:0.00}, freeze={group.FrozenCheckpointInterval})"
+                    : string.Empty;
                 builder.AppendLine($"  '{group.GroupId}': {group.AgentCount} agent(s), obs={group.ObservationSize}, {actionInfo}, {sourceInfo}{selfPlayInfo}");
                 foreach (var agentPath in group.AgentPaths)
                 {
