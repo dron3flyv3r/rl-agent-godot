@@ -6,4 +6,3 @@
 resource_name = "runners"
 script = ExtResource("1_v6o3x")
 AgentId = "runners"
-InferenceModelPath = "res://Demo2AgentExports/runners.rlmodel"

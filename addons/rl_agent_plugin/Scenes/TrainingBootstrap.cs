@@ -32,6 +32,11 @@ public partial class TrainingBootstrap : Node
     private readonly Dictionary<string, OpponentBankRuntime> _opponentBanksByGroup = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IInferencePolicy> _frozenPoliciesBySnapshotKey = new(StringComparer.Ordinal);
     private readonly HashSet<string> _selfPlayParticipantGroups = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, EloTracker> _eloTrackersByGroup  = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, float>      _winThresholdByGroup = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, bool>       _pfspEnabledByGroup  = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, float>      _pfspAlphaByGroup    = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int>        _maxPoolSizeByGroup  = new(StringComparer.Ordinal);
 
     // Per-agent state
     private readonly Dictionary<RLAgent2D, AgentRuntimeState> _agentStates = new();
@@ -42,6 +47,8 @@ public partial class TrainingBootstrap : Node
     private int _checkpointInterval = 10;
     private int _actionRepeat = 1;
     private int _batchSize = 1;
+    private bool _showBatchGrid;
+    private readonly List<SubViewport> _viewports = new();
 
     public override void _Ready()
     {
@@ -76,6 +83,7 @@ public partial class TrainingBootstrap : Node
         _batchSize = Math.Max(1, firstAcademy.BatchSize);
         _checkpointInterval = Math.Max(1, firstAcademy.CheckpointInterval);
         _actionRepeat = Math.Max(1, firstAcademy.ActionRepeat);
+        _showBatchGrid = firstAcademy.ShowBatchGrid;
 
         _previousTimeScale = Engine.TimeScale;
         _previousMaxPhysicsStepsPerFrame = Engine.MaxPhysicsStepsPerFrame;
@@ -100,12 +108,12 @@ public partial class TrainingBootstrap : Node
         for (var batchIdx = 0; batchIdx < _batchSize; batchIdx++)
         {
             var sceneInstance = batchIdx == 0 ? firstSceneInstance : packedScene.Instantiate();
-            if (sceneInstance is Node2D node2D && _batchSize > 1)
-            {
-                node2D.Position = new Vector2(batchIdx * 1200, 0);
-            }
 
-            AddChild(sceneInstance);
+            var viewport = new SubViewport();
+            viewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
+            viewport.HandleInputLocally = false;
+            viewport.AddChild(sceneInstance);
+            _viewports.Add(viewport);
 
             var academy = batchIdx == 0
                 ? firstAcademy
@@ -169,6 +177,8 @@ public partial class TrainingBootstrap : Node
 
             _environments.Add(environment);
         }
+
+        SetupBatchDisplay();
 
         if (_academies.Count == 0)
         {
@@ -458,6 +468,11 @@ public partial class TrainingBootstrap : Node
         _frozenCheckpointIntervalByGroup.Clear();
         _selfPlayPairsByKey.Clear();
         _selfPlayParticipantGroups.Clear();
+        _winThresholdByGroup.Clear();
+        _pfspEnabledByGroup.Clear();
+        _pfspAlphaByGroup.Clear();
+        _maxPoolSizeByGroup.Clear();
+        _eloTrackersByGroup.Clear();
 
         var configuredPairings = GetConfiguredSelfPlayPairings();
         return configuredPairings.Count == 0
@@ -514,16 +529,25 @@ public partial class TrainingBootstrap : Node
             _frozenCheckpointIntervalByGroup[groupAId] = Math.Max(1, pairing.FrozenCheckpointInterval);
             _frozenCheckpointIntervalByGroup[groupBId] = Math.Max(1, pairing.FrozenCheckpointInterval);
 
+            _maxPoolSizeByGroup[groupAId]  = pairing.MaxPoolSize;
+            _maxPoolSizeByGroup[groupBId]  = pairing.MaxPoolSize;
+            _pfspEnabledByGroup[groupAId]  = pairing.PfspEnabled;
+            _pfspEnabledByGroup[groupBId]  = pairing.PfspEnabled;
+            _pfspAlphaByGroup[groupAId]    = pairing.PfspAlpha;
+            _pfspAlphaByGroup[groupBId]    = pairing.PfspAlpha;
+
             if (pairing.TrainGroupA)
             {
                 _selfPlayOpponentByGroup[groupAId] = groupBId;
                 _historicalOpponentRateByLearnerGroup[groupAId] = Mathf.Clamp(pairing.HistoricalOpponentRate, 0f, 1f);
+                _winThresholdByGroup[groupAId] = pairing.WinThreshold;
             }
 
             if (pairing.TrainGroupB)
             {
                 _selfPlayOpponentByGroup[groupBId] = groupAId;
                 _historicalOpponentRateByLearnerGroup[groupBId] = Mathf.Clamp(pairing.HistoricalOpponentRate, 0f, 1f);
+                _winThresholdByGroup[groupBId] = pairing.WinThreshold;
             }
         }
 
@@ -587,39 +611,66 @@ public partial class TrainingBootstrap : Node
     {
         foreach (var groupId in _selfPlayParticipantGroups)
         {
-            var bank = new OpponentBankRuntime
+            var maxPool     = _maxPoolSizeByGroup.GetValueOrDefault(groupId, 20);
+            var pfspEnabled = _pfspEnabledByGroup.GetValueOrDefault(groupId, true);
+            var pfspAlpha   = _pfspAlphaByGroup.GetValueOrDefault(groupId, 4.0f);
+            var pool        = new PolicyPool(maxPool, pfspEnabled, pfspAlpha, _selfPlayRng)
             {
-                GroupId = groupId,
                 LatestCheckpointPath = GetGroupCheckpointPath(groupId) ?? string.Empty,
             };
 
+            // Re-hydrate historical snapshots from disk (win/loss state starts fresh at Laplace prior).
             var directory = GetSelfPlayBankDirectory(groupId);
-            var dir = DirAccess.Open(directory);
+            var dir       = DirAccess.Open(directory);
             if (dir is not null)
             {
+                var entries = new List<string>();
                 dir.ListDirBegin();
                 while (true)
                 {
                     var entry = dir.GetNext();
-                    if (string.IsNullOrEmpty(entry))
-                    {
-                        break;
-                    }
-
+                    if (string.IsNullOrEmpty(entry)) break;
                     if (dir.CurrentIsDir() || entry.StartsWith(".") || !entry.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
-                    {
                         continue;
-                    }
-
-                    bank.HistoricalCheckpointPaths.Add($"{directory}/{entry}");
+                    entries.Add(entry);
                 }
-
                 dir.ListDirEnd();
-                bank.HistoricalCheckpointPaths.Sort(StringComparer.Ordinal);
+                entries.Sort(StringComparer.Ordinal);
+
+                foreach (var entry in entries)
+                {
+                    var filePath    = $"{directory}/{entry}";
+                    var snapshotKey = ExtractSnapshotKeyFromFileName(entry, filePath);
+                    pool.AddSnapshot(filePath, snapshotKey, EloTracker.InitialRating);
+                }
             }
 
-            _opponentBanksByGroup[groupId] = bank;
+            _opponentBanksByGroup[groupId] = new OpponentBankRuntime
+            {
+                GroupId = groupId,
+                Pool    = pool,
+            };
+            _eloTrackersByGroup[groupId] = new EloTracker();
         }
+    }
+
+    /// <summary>
+    /// Derives a snapshot key from a historical checkpoint filename.
+    /// Expected format: <c>opponent__u{updateCount:D6}.json</c>
+    /// </summary>
+    private static string ExtractSnapshotKeyFromFileName(string fileName, string filePath)
+    {
+        const string prefix = "opponent__u";
+        const string suffix = ".json";
+        if (fileName.StartsWith(prefix, StringComparison.Ordinal)
+            && fileName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+        {
+            var countStr = fileName[prefix.Length..^suffix.Length];
+            if (long.TryParse(countStr, out var updateCount))
+                return $"{filePath}::{updateCount}";
+        }
+
+        return $"{filePath}::0";
     }
 
     private void SaveInitialCheckpoints()
@@ -766,6 +817,20 @@ public partial class TrainingBootstrap : Node
             {
                 _episodeCountByGroup[groupId] += 1;
                 var episodeCount = _episodeCountByGroup[groupId];
+
+                if (role.IsSelfPlayLearner)
+                {
+                    var won   = pending.Agent.EpisodeReward > _winThresholdByGroup.GetValueOrDefault(groupId, 0f);
+                    var score = won ? 1.0f : 0.0f;
+                    if (_opponentBanksByGroup.TryGetValue(role.OpponentGroupId, out var ob))
+                        ob.Pool.RecordOutcome(role.ActiveSnapshotKey, won);
+                    if (_eloTrackersByGroup.TryGetValue(groupId, out var elo))
+                    {
+                        var rec = ob?.Pool.Records.FirstOrDefault(r => r.SnapshotKey == role.ActiveSnapshotKey);
+                        elo.Update(rec?.SnapshotElo ?? EloTracker.InitialRating, score);
+                    }
+                }
+
                 _metricsWritersByGroup[groupId].AppendMetric(
                     pending.Agent.EpisodeReward,
                     pending.Agent.EpisodeSteps,
@@ -780,7 +845,11 @@ public partial class TrainingBootstrap : Node
                     opponentGroup: role.IsSelfPlayLearner ? GetGroupDisplayName(role.OpponentGroupId) : string.Empty,
                     opponentSource: role.IsSelfPlayLearner ? role.ActiveOpponentSource : string.Empty,
                     opponentCheckpointPath: role.IsSelfPlayLearner ? role.ActiveOpponentCheckpointPath : string.Empty,
-                    opponentUpdateCount: role.IsSelfPlayLearner ? role.ActiveOpponentUpdateCount : null);
+                    opponentUpdateCount: role.IsSelfPlayLearner ? role.ActiveOpponentUpdateCount : null,
+                    learnerElo:  role.IsSelfPlayLearner && _eloTrackersByGroup.TryGetValue(groupId, out var ep)
+                        ? ep.Rating : null,
+                    poolWinRate: role.IsSelfPlayLearner && _opponentBanksByGroup.TryGetValue(role.OpponentGroupId, out var opb)
+                        ? opb.Pool.AverageWinRate : null);
 
                 PrepareEnvironmentForNextEpisode(state.EnvironmentIndex);
                 if (!EnsureEnvironmentMatchupsReady(state.EnvironmentIndex))
@@ -879,7 +948,7 @@ public partial class TrainingBootstrap : Node
             return;
         }
 
-        bank.LatestCheckpointPath = checkpointPath;
+        bank.Pool.LatestCheckpointPath = checkpointPath;
 
         if (!allowFrozenSnapshot)
         {
@@ -892,13 +961,13 @@ public partial class TrainingBootstrap : Node
             return;
         }
 
-        var frozenPath = $"{GetSelfPlayBankDirectory(groupId)}/opponent__u{updateCount:D6}.json";
+        var frozenPath   = $"{GetSelfPlayBankDirectory(groupId)}/opponent__u{updateCount:D6}.json";
+        var snapshotKey  = $"{frozenPath}::{updateCount}";
+        var currentElo   = _eloTrackersByGroup.TryGetValue(groupId, out var eloTracker)
+            ? eloTracker.Rating
+            : EloTracker.InitialRating;
         RLCheckpoint.SaveToFile(checkpoint, frozenPath);
-        if (!bank.HistoricalCheckpointPaths.Contains(frozenPath))
-        {
-            bank.HistoricalCheckpointPaths.Add(frozenPath);
-            bank.HistoricalCheckpointPaths.Sort(StringComparer.Ordinal);
-        }
+        bank.Pool.AddSnapshot(frozenPath, snapshotKey, currentElo);
     }
 
     private void PrepareEnvironmentForNextEpisode(int environmentIndex)
@@ -952,10 +1021,12 @@ public partial class TrainingBootstrap : Node
             frozenRole.ActiveOpponentCheckpointPath = snapshot.CheckpointPath;
             frozenRole.ActiveOpponentSource = snapshot.Source;
             frozenRole.ActiveOpponentUpdateCount = snapshot.UpdateCount;
+            frozenRole.ActiveSnapshotKey = snapshot.SnapshotKey;
 
             learnerRole.ActiveOpponentCheckpointPath = snapshot.CheckpointPath;
             learnerRole.ActiveOpponentSource = snapshot.Source;
             learnerRole.ActiveOpponentUpdateCount = snapshot.UpdateCount;
+            learnerRole.ActiveSnapshotKey = snapshot.SnapshotKey;
         }
 
         environment.NeedsMatchupRefresh = false;
@@ -978,11 +1049,20 @@ public partial class TrainingBootstrap : Node
             return false;
         }
 
-        var useHistorical = bank.HistoricalCheckpointPaths.Count > 0
+        var useHistorical = bank.Pool.Records.Count > 0
             && _selfPlayRng.Randf() < Mathf.Clamp(historicalOpponentRate, 0f, 1f);
-        var selectedPath = useHistorical
-            ? bank.HistoricalCheckpointPaths[_selfPlayRng.RandiRange(0, bank.HistoricalCheckpointPaths.Count - 1)]
-            : bank.LatestCheckpointPath;
+
+        OpponentRecord? historicalRecord = null;
+        string selectedPath;
+        if (useHistorical)
+        {
+            historicalRecord = bank.Pool.SampleHistorical();
+            selectedPath     = historicalRecord?.CheckpointPath ?? bank.Pool.LatestCheckpointPath;
+        }
+        else
+        {
+            selectedPath = bank.Pool.LatestCheckpointPath;
+        }
 
         if (string.IsNullOrWhiteSpace(selectedPath))
         {
@@ -995,13 +1075,13 @@ public partial class TrainingBootstrap : Node
             return true;
         }
 
-        if (!useHistorical || string.Equals(selectedPath, bank.LatestCheckpointPath, StringComparison.Ordinal))
+        if (!useHistorical || string.Equals(selectedPath, bank.Pool.LatestCheckpointPath, StringComparison.Ordinal))
         {
             error = $"Could not load opponent snapshot for learner '{GetGroupDisplayName(learnerGroupId)}': {error}";
             return false;
         }
 
-        return TryLoadInferenceSnapshot(bank.LatestCheckpointPath, opponentGroupId, "latest", out snapshot, out error);
+        return TryLoadInferenceSnapshot(bank.Pool.LatestCheckpointPath, opponentGroupId, "latest", out snapshot, out error);
     }
 
     private bool TryLoadInferenceSnapshot(
@@ -1039,9 +1119,10 @@ public partial class TrainingBootstrap : Node
         snapshot = new LoadedInferenceSnapshot
         {
             CheckpointPath = checkpointPath,
-            Source = source,
-            UpdateCount = checkpoint.UpdateCount,
-            Policy = policy,
+            SnapshotKey    = cacheKey,
+            Source         = source,
+            UpdateCount    = checkpoint.UpdateCount,
+            Policy         = policy,
         };
         return true;
     }
@@ -1169,6 +1250,62 @@ public partial class TrainingBootstrap : Node
             : $"{right}|{left}";
     }
 
+    private void SetupBatchDisplay()
+    {
+        var canvasLayer = new CanvasLayer();
+        AddChild(canvasLayer);
+
+        if (!_showBatchGrid || _viewports.Count == 1)
+        {
+            // Single view: only env 0 renders, fullscreen. All others are update-disabled orphans.
+            var container = new SubViewportContainer();
+            container.Stretch = true;
+            container.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+            _viewports[0].RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
+            container.AddChild(_viewports[0]);
+            canvasLayer.AddChild(container);
+
+            for (var i = 1; i < _viewports.Count; i++)
+            {
+                AddChild(_viewports[i]);
+            }
+        }
+        else
+        {
+            // Grid view: all envs rendered at full resolution, displayed scaled-to-fit with padding.
+            var cols = (int)Math.Ceiling(Math.Sqrt(_viewports.Count));
+            var rows = (int)Math.Ceiling((float)_viewports.Count / cols);
+            var windowSize = DisplayServer.WindowGetSize();
+            const int padding = 8;
+            var cellW = (windowSize.X - padding * (cols + 1)) / cols;
+            var cellH = (windowSize.Y - padding * (rows + 1)) / rows;
+
+            var root = new Control();
+            root.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+            canvasLayer.AddChild(root);
+
+            for (var i = 0; i < _viewports.Count; i++)
+            {
+                var col = i % cols;
+                var row = i / cols;
+
+                // Render at full window resolution so the camera sees the whole scene.
+                _viewports[i].Size = windowSize;
+                _viewports[i].RenderTargetUpdateMode = SubViewport.UpdateMode.Always;
+                AddChild(_viewports[i]);
+
+                // Display the viewport texture scaled to fit the cell, keeping aspect ratio.
+                var rect = new TextureRect();
+                rect.Texture = _viewports[i].GetTexture();
+                rect.ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize;
+                rect.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
+                rect.Position = new Vector2(padding + col * (cellW + padding), padding + row * (cellH + padding));
+                rect.Size = new Vector2(cellW, cellH);
+                root.AddChild(rect);
+            }
+        }
+    }
+
     private static Node? FindNodeByPath(Node root, string nodePath)
     {
         if (string.IsNullOrWhiteSpace(nodePath))
@@ -1223,6 +1360,7 @@ public partial class TrainingBootstrap : Node
         public string ActiveOpponentCheckpointPath { get; set; } = string.Empty;
         public string ActiveOpponentSource { get; set; } = string.Empty;
         public long? ActiveOpponentUpdateCount { get; set; }
+        public string ActiveSnapshotKey { get; set; } = string.Empty;
     }
 
     private enum EnvironmentGroupControl
@@ -1234,8 +1372,7 @@ public partial class TrainingBootstrap : Node
     private sealed class OpponentBankRuntime
     {
         public string GroupId { get; init; } = string.Empty;
-        public string LatestCheckpointPath { get; set; } = string.Empty;
-        public List<string> HistoricalCheckpointPaths { get; } = new();
+        public PolicyPool Pool { get; init; } = null!;
     }
 
     private sealed class SelfPlayPairRuntime
@@ -1269,6 +1406,7 @@ public partial class TrainingBootstrap : Node
     private readonly struct LoadedInferenceSnapshot
     {
         public string CheckpointPath { get; init; }
+        public string SnapshotKey { get; init; }
         public string Source { get; init; }
         public long UpdateCount { get; init; }
         public IInferencePolicy Policy { get; init; }

@@ -26,14 +26,16 @@ public partial class TagArenaController : Node2D
 
     [ExportGroup("Episode")]
     [Export] public int EpisodeStepLimit { get; set; } = 600;
-    [Export] public float ChaserDistanceRewardScale { get; set; } = 0.02f;
-    [Export] public float RunnerDistanceRewardScale { get; set; } = 0.02f;
-    [Export] public float ChaserStepPenalty { get; set; } = 0.005f;
-    [Export] public float RunnerSurvivalReward { get; set; } = 0.003f;
-    [Export] public float ChaserTagReward { get; set; } = 1.25f;
-    [Export] public float RunnerTaggedPenalty { get; set; } = -1.25f;
-    [Export] public float RunnerTimeoutReward { get; set; } = 0.6f;
-    [Export] public float ChaserTimeoutPenalty { get; set; } = -0.6f;
+    // Scale kept small so shaping never dominates the terminal reward.
+    // At 25px/step closure for 200 steps: 25 * 200 * 0.002 = 1.0 — still below tag reward.
+    [Export] public float ChaserDistanceRewardScale { get; set; } = 0.002f;
+    [Export] public float RunnerDistanceRewardScale { get; set; } = 0.002f;
+    [Export] public float ChaserStepPenalty { get; set; } = 0.001f;
+    [Export] public float RunnerSurvivalReward { get; set; } = 0.001f;
+    [Export] public float ChaserTagReward { get; set; } = 1.0f;
+    [Export] public float RunnerTaggedPenalty { get; set; } = -1.0f;
+    [Export] public float RunnerTimeoutReward { get; set; } = 1.0f;
+    [Export] public float ChaserTimeoutPenalty { get; set; } = -1.0f;
 
     [ExportGroup("Standalone")]
     [Export] public StandaloneControlledAgent ControlledAgent { get; set; } = StandaloneControlledAgent.RunnerA;
@@ -287,15 +289,25 @@ public partial class TagArenaController : Node2D
         _episodeResolved = true;
         CaptureTerminalPositions(positions);
 
+        // Only the chaser that made the tag and the runner that was tagged receive the terminal reward.
+        // Other agents receive a smaller shared outcome signal so they're aware the episode ended.
         foreach (var player in _players)
         {
-            if (player.Role == TagAgentRole.Chaser)
+            if (player == chaser)
             {
                 AddStepReward(player, ChaserTagReward, "tag_reward");
             }
-            else
+            else if (player.Role == TagAgentRole.Chaser)
+            {
+                AddStepReward(player, ChaserTagReward * 0.25f, "teammate_tag_reward");
+            }
+            else if (player == runner)
             {
                 AddStepReward(player, RunnerTaggedPenalty, "tagged_penalty");
+            }
+            else
+            {
+                AddStepReward(player, RunnerTaggedPenalty * 0.25f, "teammate_tagged_penalty");
             }
         }
 

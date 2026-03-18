@@ -38,6 +38,8 @@ public partial class RLAcademy : Node
     [ExportGroup("Debug")]
     /// <summary>Show the observation/reward/action spy overlay when running outside of training. Press Tab to cycle agents.</summary>
     [Export] public bool EnableSpyOverlay { get; set; } = false;
+    /// <summary>Render all batch environments in a grid during training. Off by default (only env 0 is rendered).</summary>
+    [Export] public bool ShowBatchGrid { get; set; } = false;
 
     public bool InferenceActive { get; private set; }
 
@@ -210,7 +212,7 @@ public partial class RLAcademy : Node
     private Node ResolveSceneRoot()
     {
         var current = this as Node;
-        while (current.GetParent() is Node parent && parent is not TrainingBootstrap)
+        while (current.GetParent() is Node parent && parent is not TrainingBootstrap && parent is not SubViewport)
         {
             current = parent;
         }

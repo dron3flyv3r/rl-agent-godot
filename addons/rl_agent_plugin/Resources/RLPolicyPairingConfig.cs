@@ -31,6 +31,12 @@ public partial class RLPolicyPairingConfig : Resource
     [Export(PropertyHint.Range, "0,1,0.01")] public float HistoricalOpponentRate { get; set; } = 0.5f;
     [Export(PropertyHint.Range, "1,100000,1,or_greater")] public int FrozenCheckpointInterval { get; set; } = 10;
 
+    [ExportGroup("PFSP")]
+    [Export] public int   MaxPoolSize  { get; set; } = 20;
+    [Export] public bool  PfspEnabled  { get; set; } = true;
+    [Export] public float PfspAlpha    { get; set; } = 4.0f;
+    [Export] public float WinThreshold { get; set; } = 0.0f;
+
     public RLPolicyGroupConfig? ResolvedGroupA => _groupA as RLPolicyGroupConfig;
     public RLPolicyGroupConfig? ResolvedGroupB => _groupB as RLPolicyGroupConfig;
 }

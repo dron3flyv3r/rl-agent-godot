@@ -6,4 +6,4 @@
 resource_name = "chasers"
 script = ExtResource("1_cyhjx")
 AgentId = "chasers"
-InferenceModelPath = "res://Demo2AgentExports/chasers.rlmodel"
+MaxEpisodeSteps = 76

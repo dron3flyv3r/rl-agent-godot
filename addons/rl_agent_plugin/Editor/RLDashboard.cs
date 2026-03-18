@@ -27,7 +27,9 @@ public partial class RLDashboard : Control
         public string OpponentGroup = "";
         public string OpponentSource = "";
         public string OpponentCheckpointPath = "";
-        public long? OpponentUpdateCount;
+        public long?  OpponentUpdateCount;
+        public float? LearnerElo;
+        public float? PoolWinRate;
     }
 
     private sealed class RunStatus
@@ -57,6 +59,7 @@ public partial class RLDashboard : Control
     private LineChartPanel? _lossChart;
     private LineChartPanel? _entropyChart;
     private LineChartPanel? _lengthChart;
+    private LineChartPanel? _eloChart;
     private FileDialog?     _exportDialog;
 
     // ── State ────────────────────────────────────────────────────────────────
@@ -81,6 +84,7 @@ public partial class RLDashboard : Control
     private static readonly Color CValueLoss  = new(0.35f, 0.62f, 0.92f);
     private static readonly Color CEntropy    = new(0.88f, 0.68f, 0.22f);
     private static readonly Color CLength     = new(0.72f, 0.42f, 0.92f);
+    private static readonly Color CElo        = new(0.92f, 0.42f, 0.78f);
 
     // ── Godot lifecycle ──────────────────────────────────────────────────────
     public override void _Ready()
@@ -345,11 +349,14 @@ public partial class RLDashboard : Control
         _lossChart    = MakeChart("Policy Loss  /  Value Loss");
         _entropyChart = MakeChart("Entropy");
         _lengthChart  = MakeChart("Episode Length");
+        _eloChart     = MakeChart("Learner Elo");
+        _eloChart.Visible = false;  // shown only during self-play
 
         grid.AddChild(_rewardChart);
         grid.AddChild(_lossChart);
         grid.AddChild(_entropyChart);
         grid.AddChild(_lengthChart);
+        grid.AddChild(_eloChart);
 
         return grid;
     }
@@ -451,6 +458,8 @@ public partial class RLDashboard : Control
         _lossChart?.ClearSeries();
         _entropyChart?.ClearSeries();
         _lengthChart?.ClearSeries();
+        _eloChart?.ClearSeries();
+        if (_eloChart is not null) _eloChart.Visible = false;
 
         if (_renameEdit is not null) _renameEdit.Editable = true;
         if (_renameBtn  is not null) _renameBtn.Visible   = true;
@@ -580,6 +589,8 @@ public partial class RLDashboard : Control
                 OpponentUpdateCount = d.ContainsKey("opponent_update_count")
                     ? GetLong(d, "opponent_update_count")
                     : null,
+                LearnerElo  = d.ContainsKey("learner_elo")       ? GetFloat(d, "learner_elo")       : null,
+                PoolWinRate = d.ContainsKey("pool_avg_win_rate")  ? GetFloat(d, "pool_avg_win_rate")  : null,
             };
         }
         catch
@@ -792,6 +803,14 @@ public partial class RLDashboard : Control
 
         _lengthChart?.UpdateSeries("Length", CLength,
             _metrics.Select(m => (float)m.EpisodeLength));
+
+        var eloMetrics = _metrics.Where(m => m.LearnerElo.HasValue).ToList();
+        if (_eloChart is not null)
+        {
+            _eloChart.Visible = eloMetrics.Count > 0;
+            if (eloMetrics.Count > 0)
+                _eloChart.UpdateSeries("Elo", CElo, eloMetrics.Select(m => m.LearnerElo!.Value));
+        }
     }
 
     private void RefreshStats(RunStatus status)
