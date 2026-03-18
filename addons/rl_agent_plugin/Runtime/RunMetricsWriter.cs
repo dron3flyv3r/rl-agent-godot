@@ -52,7 +52,9 @@ public sealed class RunMetricsWriter
         string opponentGroup = "",
         string opponentSource = "",
         string opponentCheckpointPath = "",
-        long? opponentUpdateCount = null)
+        long? opponentUpdateCount = null,
+        float? learnerElo   = null,
+        float? poolWinRate  = null)
     {
         EnsureFileDirectory(_metricsPath);
         var mode = FileAccess.FileExists(_metricsPath)
@@ -120,6 +122,16 @@ public sealed class RunMetricsWriter
         if (opponentUpdateCount.HasValue)
         {
             payload["opponent_update_count"] = opponentUpdateCount.Value;
+        }
+
+        if (learnerElo.HasValue)
+        {
+            payload["learner_elo"] = learnerElo.Value;
+        }
+
+        if (poolWinRate.HasValue)
+        {
+            payload["pool_avg_win_rate"] = poolWinRate.Value;
         }
 
         file.StoreLine(Json.Stringify(payload));

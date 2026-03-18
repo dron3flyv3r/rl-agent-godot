@@ -68,11 +68,11 @@ default_color = Color(0.34902, 0.596078, 0.423529, 1)
 script = ExtResource("2")
 TrainingConfig = SubResource("TrainingConfig")
 RunPrefix = "TagDemo"
+SimulationSpeed = 12.0
 ActionRepeat = 2
 MaxEpisodeSteps = 600
-BatchSize = 16
+BatchSize = 8
 SelfPlayPairings = Array[ExtResource("4_pair")]([SubResource("Resource_pairing")])
-EnableSpyOverlay = true
 
 [node name="ChaserA" type="CharacterBody2D" parent="." unique_id=1432916565]
 position = Vector2(238, 244)
@@ -81,7 +81,6 @@ Role = 0
 
 [node name="Agent" type="Node2D" parent="ChaserA" unique_id=1690261792]
 script = ExtResource("5")
-ControlMode = 1
 PolicyGroupConfig = ExtResource("4_l0srx")
 
 [node name="Visual" type="Polygon2D" parent="ChaserA" unique_id=693159168]
@@ -98,7 +97,6 @@ Role = 0
 
 [node name="Agent" type="Node2D" parent="ChaserB" unique_id=1464470303]
 script = ExtResource("5")
-ControlMode = 1
 PolicyGroupConfig = ExtResource("4_l0srx")
 
 [node name="Visual" type="Polygon2D" parent="ChaserB" unique_id=1562436759]
@@ -114,7 +112,6 @@ script = ExtResource("6")
 
 [node name="Agent" type="Node2D" parent="RunnerA" unique_id=1105293076]
 script = ExtResource("5")
-ControlMode = 1
 PolicyGroupConfig = ExtResource("5_j73ki")
 
 [node name="Visual" type="Polygon2D" parent="RunnerA" unique_id=657237264]
@@ -130,7 +127,6 @@ script = ExtResource("6")
 
 [node name="Agent" type="Node2D" parent="RunnerB" unique_id=1113519001]
 script = ExtResource("5")
-ControlMode = 1
 PolicyGroupConfig = ExtResource("5_j73ki")
 
 [node name="Visual" type="Polygon2D" parent="RunnerB" unique_id=1444018664]
@@ -178,3 +174,6 @@ layout_mode = 2
 text = "Controls:"
 label_settings = SubResource("BodySettings")
 autowrap_mode = 3
+
+[node name="Camera2D" type="Camera2D" parent="." unique_id=766561175]
+offset = Vector2(400, 300)
