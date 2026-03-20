@@ -6,14 +6,14 @@ namespace RlAgentPlugin.Runtime;
 
 public static class ObservationSizeInference
 {
-    public static ObservationSizeInferenceResult Infer(Node sceneRoot, IEnumerable<RLAgent2D> agents, bool resetEpisodes = true)
+    public static ObservationSizeInferenceResult Infer(Node sceneRoot, IEnumerable<IRLAgent> agents, bool resetEpisodes = true)
     {
         var result = new ObservationSizeInferenceResult();
         var firstSizeByGroup = new Dictionary<string, int>(StringComparer.Ordinal);
 
         foreach (var agent in agents)
         {
-            var binding = RLPolicyGroupBindingResolver.Resolve(sceneRoot, agent);
+            var binding = RLPolicyGroupBindingResolver.Resolve(sceneRoot, agent.AsNode());
             result.AgentBindings[agent] = binding;
 
             if (!TryInferAgentObservationSize(agent, out var observationSize, out var error, resetEpisodes))
@@ -26,7 +26,7 @@ public static class ObservationSizeInference
             if (observationSize <= 0)
             {
                 result.Errors.Add(
-                    $"Group '{binding.DisplayName}': agent '{sceneRoot.GetPathTo(agent)}' did not emit a non-zero observation vector.");
+                    $"Group '{binding.DisplayName}': agent '{sceneRoot.GetPathTo(agent.AsNode())}' did not emit a non-zero observation vector.");
                 continue;
             }
 
@@ -35,7 +35,7 @@ public static class ObservationSizeInference
                 if (firstSize != observationSize)
                 {
                     result.Errors.Add(
-                        $"Group '{binding.DisplayName}': agent '{sceneRoot.GetPathTo(agent)}' emitted {observationSize} observations, " +
+                        $"Group '{binding.DisplayName}': agent '{sceneRoot.GetPathTo(agent.AsNode())}' emitted {observationSize} observations, " +
                         $"expected {firstSize}.");
                 }
 
@@ -50,7 +50,7 @@ public static class ObservationSizeInference
     }
 
     public static bool TryInferAgentObservationSize(
-        RLAgent2D agent,
+        IRLAgent agent,
         out int observationSize,
         out string error,
         bool resetEpisode = true)
@@ -74,9 +74,9 @@ public static class ObservationSizeInference
         }
     }
 
-    private static string BuildAgentError(Node sceneRoot, RLAgent2D agent, string error)
+    private static string BuildAgentError(Node sceneRoot, IRLAgent agent, string error)
     {
-        var agentPath = sceneRoot.GetPathTo(agent);
+        var agentPath = sceneRoot.GetPathTo(agent.AsNode());
         return $"Agent '{agentPath}': observation inference failed: {error}";
     }
 }

@@ -52,9 +52,9 @@ public partial class RLAcademy : Node
     }
 
     private RLAgentSpyOverlay? _spyOverlay;
-    private readonly Dictionary<RLAgent2D, IInferencePolicy> _agentInferencePolicies = new();
-    private readonly Dictionary<RLAgent2D, string> _agentObservationGroups = new();
-    private readonly Dictionary<RLAgent2D, int> _inferenceStepCounters = new();
+    private readonly Dictionary<IRLAgent, IInferencePolicy> _agentInferencePolicies = new();
+    private readonly Dictionary<IRLAgent, string> _agentObservationGroups = new();
+    private readonly Dictionary<IRLAgent, int> _inferenceStepCounters = new();
     private readonly Dictionary<string, string> _observationGroupDisplayNames = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _validatedObservationSizesByGroup = new(StringComparer.Ordinal);
     private double _previousTimeScale = 1.0;
@@ -65,7 +65,7 @@ public partial class RLAcademy : Node
         TryInitializeInference();
 
         // Apply simulation speed when running outside of TrainingBootstrap (which manages it on its own).
-        if (ResolveSceneRoot().GetParent() is not TrainingBootstrap)
+        if (!IsInsideTrainingBootstrap())
         {
             _previousTimeScale = Engine.TimeScale;
             _previousMaxPhysicsStepsPerFrame = Engine.MaxPhysicsStepsPerFrame;
@@ -83,7 +83,7 @@ public partial class RLAcademy : Node
 
     public override void _ExitTree()
     {
-        if (ResolveSceneRoot().GetParent() is not TrainingBootstrap)
+        if (!IsInsideTrainingBootstrap())
         {
             Engine.TimeScale = _previousTimeScale;
             Engine.MaxPhysicsStepsPerFrame = _previousMaxPhysicsStepsPerFrame;
@@ -152,20 +152,26 @@ public partial class RLAcademy : Node
         }
     }
 
-    public IReadOnlyList<RLAgent2D> GetAgents()
+    public IReadOnlyList<IRLAgent> GetAgents()
     {
-        var agents = new List<RLAgent2D>();
+        var agents = new List<IRLAgent>();
         var sceneRoot = ResolveSceneRoot();
         CollectAgents(sceneRoot, agents);
         return agents;
     }
 
-    public IReadOnlyList<RLAgent2D> GetAgents(RLAgentControlMode controlMode)
+    public IReadOnlyList<IRLAgent> GetAgents(RLAgentControlMode controlMode)
     {
-        var agents = new List<RLAgent2D>();
+        var agents = new List<IRLAgent>();
         foreach (var agent in GetAgents())
         {
             if (agent.ControlMode == controlMode)
+            {
+                agents.Add(agent);
+            }
+            // Auto agents join Train groups during training and Inference groups during normal play.
+            else if (agent.ControlMode == RLAgentControlMode.Auto
+                     && (controlMode == RLAgentControlMode.Train || controlMode == RLAgentControlMode.Inference))
             {
                 agents.Add(agent);
             }
@@ -193,9 +199,9 @@ public partial class RLAcademy : Node
         return ObservationSizeInference.Infer(ResolveSceneRoot(), agents, resetEpisodes);
     }
 
-    private static void CollectAgents(Node node, ICollection<RLAgent2D> agents)
+    private static void CollectAgents(Node node, ICollection<IRLAgent> agents)
     {
-        if (node is RLAgent2D agent)
+        if (node is IRLAgent agent)
         {
             agents.Add(agent);
         }
@@ -209,10 +215,24 @@ public partial class RLAcademy : Node
         }
     }
 
+    private bool IsInsideTrainingBootstrap()
+    {
+        var current = GetParent();
+        while (current is not null)
+        {
+            if (current is TrainingBootstrap) return true;
+            current = current.GetParent();
+        }
+        return false;
+    }
+
     private Node ResolveSceneRoot()
     {
         var current = this as Node;
-        while (current.GetParent() is Node parent && parent is not TrainingBootstrap && parent is not SubViewport)
+        while (current.GetParent() is Node parent
+               && parent is not TrainingBootstrap
+               && parent is not InferenceBootstrap
+               && parent is not SubViewport)
         {
             current = parent;
         }
@@ -222,7 +242,7 @@ public partial class RLAcademy : Node
 
     private void TryInitializeInference()
     {
-        if (ResolveSceneRoot().GetParent() is TrainingBootstrap)
+        if (IsInsideTrainingBootstrap())
         {
             return;
         }
@@ -235,18 +255,20 @@ public partial class RLAcademy : Node
         }
 
         // Warn about any agents left in Train mode when running outside of the training bootstrap.
+        // Auto mode is intentionally excluded — it's designed to work in both contexts.
         foreach (var agent in agents)
         {
             if (agent.ControlMode == RLAgentControlMode.Train)
             {
                 GD.PushWarning(
-                    $"[RLAcademy] Agent '{agent.Name}' is set to Train mode, but the game was " +
+                    $"[RLAcademy] Agent '{agent.AsNode().Name}' is set to Train mode, but the game was " +
                     "started normally. Training will not run. Use the 'Start Training' button in " +
-                    "the RL Agent Plugin dock, or switch the agent to Inference mode.");
+                    "the RL Agent Plugin dock, or switch the agent to Inference or Auto mode.");
             }
         }
 
         RLCheckpoint? firstLoadedCheckpoint = null;
+        // GetAgents(Inference) includes Auto-mode agents so their observation sizes are inferred too.
         var observationInference = InferObservationSizes(RLAgentControlMode.Inference);
         foreach (var error in observationInference.Errors)
         {
@@ -255,7 +277,8 @@ public partial class RLAcademy : Node
 
         foreach (var agent in agents)
         {
-            if (agent.ControlMode != RLAgentControlMode.Inference)
+            if (agent.ControlMode != RLAgentControlMode.Inference
+                && agent.ControlMode != RLAgentControlMode.Auto)
             {
                 continue;
             }
@@ -268,7 +291,7 @@ public partial class RLAcademy : Node
             {
                 if (!FileAccess.FileExists(checkpointPath))
                 {
-                    GD.PushWarning($"[RLAcademy] .rlmodel not found for agent '{agent.Name}': {checkpointPath}");
+                    GD.PushWarning($"[RLAcademy] .rlmodel not found for agent '{agent.AsNode().Name}': {checkpointPath}");
                     continue;
                 }
 
@@ -287,7 +310,7 @@ public partial class RLAcademy : Node
 
             if (checkpoint is null)
             {
-                GD.PushWarning($"[RLAcademy] Could not load checkpoint for agent '{agent.Name}'.");
+                GD.PushWarning($"[RLAcademy] Could not load checkpoint for agent '{agent.AsNode().Name}'.");
                 continue;
             }
 
@@ -314,14 +337,14 @@ public partial class RLAcademy : Node
 
             if (agentObsSize <= 0)
             {
-                GD.PushError($"[RLAcademy] Could not infer observations for agent '{agent.Name}'.");
+                GD.PushError($"[RLAcademy] Could not infer observations for agent '{agent.AsNode().Name}'.");
                 continue;
             }
 
             if (obsSize != agentObsSize)
             {
                 GD.PushError(
-                    $"[RLAcademy] Checkpoint observation size {obsSize} does not match agent '{agent.Name}' " +
+                    $"[RLAcademy] Checkpoint observation size {obsSize} does not match agent '{agent.AsNode().Name}' " +
                     $"observation size {agentObsSize}.");
                 continue;
             }
@@ -329,14 +352,14 @@ public partial class RLAcademy : Node
             if (string.Equals(checkpoint.Algorithm, RLCheckpoint.PpoAlgorithm, StringComparison.OrdinalIgnoreCase)
                 && agentContinuousDims > 0)
             {
-                GD.PushError($"[RLAcademy] Checkpoint for '{agent.Name}' is PPO, but the agent expects continuous actions.");
+                GD.PushError($"[RLAcademy] Checkpoint for '{agent.AsNode().Name}' is PPO, but the agent expects continuous actions.");
                 continue;
             }
 
             if (checkpoint.ContinuousActionDimensions > 0 && checkpoint.ContinuousActionDimensions != agentContinuousDims)
             {
                 GD.PushError(
-                    $"[RLAcademy] Continuous action mismatch for '{agent.Name}': " +
+                    $"[RLAcademy] Continuous action mismatch for '{agent.AsNode().Name}': " +
                     $"checkpoint={checkpoint.ContinuousActionDimensions}, agent={agentContinuousDims}.");
                 continue;
             }
@@ -344,14 +367,14 @@ public partial class RLAcademy : Node
             if (checkpoint.DiscreteActionCount > 0 && checkpoint.DiscreteActionCount != agentDiscreteCount)
             {
                 GD.PushError(
-                    $"[RLAcademy] Discrete action mismatch for '{agent.Name}': " +
+                    $"[RLAcademy] Discrete action mismatch for '{agent.AsNode().Name}': " +
                     $"checkpoint={checkpoint.DiscreteActionCount}, agent={agentDiscreteCount}.");
                 continue;
             }
 
             if (obsSize <= 0 || actionCount <= 0)
             {
-                GD.PushWarning($"[RLAcademy] Checkpoint for agent '{agent.Name}' has invalid dimensions (obs={obsSize}, actions={actionCount}).");
+                GD.PushWarning($"[RLAcademy] Checkpoint for agent '{agent.AsNode().Name}' has invalid dimensions (obs={obsSize}, actions={actionCount}).");
                 continue;
             }
 
@@ -363,12 +386,12 @@ public partial class RLAcademy : Node
                 _inferenceStepCounters[agent] = 0;
                 firstLoadedCheckpoint ??= checkpoint;
                 GD.Print(
-                    $"[RLAcademy] Loaded {checkpoint.Algorithm} inference model for '{agent.Name}' " +
+                    $"[RLAcademy] Loaded {checkpoint.Algorithm} inference model for '{agent.AsNode().Name}' " +
                     $"(obs={obsSize}, actions={actionCount}).");
             }
             catch (Exception ex)
             {
-                GD.PushError($"[RLAcademy] Failed to load checkpoint for agent '{agent.Name}': {ex.Message} — " +
+                GD.PushError($"[RLAcademy] Failed to load checkpoint for agent '{agent.AsNode().Name}': {ex.Message} — " +
                              "Verify that the checkpoint metadata matches the active agent.");
             }
         }
@@ -385,14 +408,14 @@ public partial class RLAcademy : Node
         return TrainingConfig?.ToTrainerConfig();
     }
 
-    private float[] CollectValidatedObservation(RLAgent2D agent)
+    private float[] CollectValidatedObservation(IRLAgent agent)
     {
         var observation = agent.CollectObservationArray();
         ValidateGroupObservationSize(agent, observation.Length);
         return observation;
     }
 
-    private void ValidateGroupObservationSize(RLAgent2D agent, int observationSize)
+    private void ValidateGroupObservationSize(IRLAgent agent, int observationSize)
     {
         if (!_agentObservationGroups.TryGetValue(agent, out var groupKey))
         {
@@ -414,7 +437,7 @@ public partial class RLAcademy : Node
             ? name
             : groupKey;
         GD.PushError(
-            $"[RLAcademy] Agent '{agent.Name}' in policy group '{displayName}' emitted {observationSize} observations, " +
+            $"[RLAcademy] Agent '{agent.AsNode().Name}' in policy group '{displayName}' emitted {observationSize} observations, " +
             $"expected {expectedSize}. Observation size must remain stable for the whole group.");
     }
 }

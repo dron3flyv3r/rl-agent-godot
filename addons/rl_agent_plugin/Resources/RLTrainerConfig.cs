@@ -8,6 +8,11 @@ public partial class RLTrainerConfig : Resource
 {
     // ── Algorithm selection ─────────────────────────────────────────────────
     [Export] public RLAlgorithmKind Algorithm { get; set; } = RLAlgorithmKind.PPO;
+    /// <summary>
+    /// Used only when <see cref="Algorithm"/> is <see cref="RLAlgorithmKind.Custom"/>.
+    /// Must match the key passed to <see cref="TrainerFactory.Register"/>.
+    /// </summary>
+    [Export] public string CustomTrainerId { get; set; } = string.Empty;
 
     // ── PPO hyperparameters ─────────────────────────────────────────────────
     [Export] public int RolloutLength { get; set; } = 256;

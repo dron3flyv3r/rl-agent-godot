@@ -5,7 +5,7 @@ using Godot;
 namespace RlAgentPlugin.Runtime;
 
 [GlobalClass]
-public partial class RLAgent2D : Node2D
+public partial class RLAgent2D : Node2D, IRLAgent
 {
     private ActionSpaceBuilder? _explicitActionSpace;
     private bool _explicitActionSpaceResolved;
@@ -29,7 +29,6 @@ public partial class RLAgent2D : Node2D
         set { _controlMode = value; UpdateConfigurationWarnings(); }
     }
 
-    [Export(PropertyHint.Range, "-1,100000,1,or_greater")] public int MaxEpisodeSteps { get; set; } = -1;
     [Export] public RLPolicyGroupConfig PolicyGroupConfig { get; set; } = new RLPolicyGroupConfig();
 
     public int EpisodeSteps { get; private set; }
@@ -215,7 +214,7 @@ public partial class RLAgent2D : Node2D
 
     public int GetExpectedObservationSize()
     {
-        return CollectObservationArray().Length;
+        return ((IRLAgent)this).CollectObservationArray().Length;
     }
 
     public float[] GetLastObservation()
@@ -230,31 +229,32 @@ public partial class RLAgent2D : Node2D
         {
             warnings.Add("ControlMode is Inference but no inference model path is set on PolicyGroupConfig.");
         }
+        else if (ControlMode == RLAgentControlMode.Auto && string.IsNullOrWhiteSpace(GetInferenceModelPath()))
+        {
+            warnings.Add("ControlMode is Auto with no inference model path set. " +
+                         "The agent will train normally, but will be skipped during normal play (Run Project / Run Inference) " +
+                         "unless a checkpoint already exists in the default run directory.");
+        }
         return warnings.ToArray();
     }
 
     public int GetEffectiveMaxEpisodeSteps()
     {
-        if (MaxEpisodeSteps > 0)
-        {
-            return MaxEpisodeSteps;
-        }
-
         if (PolicyGroupConfig.MaxEpisodeSteps > 0)
-        {
             return PolicyGroupConfig.MaxEpisodeSteps;
-        }
 
         return ResolveAcademy()?.MaxEpisodeSteps ?? 0;
     }
 
     // ── Framework-internal ────────────────────────────────────────────────────
 
+    public Node AsNode() => this;
+
     /// <summary>Called by the training/inference loop each physics step.</summary>
-    internal void TickStep() => OnStep();
+    void IRLAgent.TickStep() => OnStep();
 
     /// <summary>Returns accumulated reward and clears the pending buffer. Also updates LastStepReward.</summary>
-    internal float ConsumePendingReward()
+    float IRLAgent.ConsumePendingReward()
     {
         var reward = _pendingReward;
         LastStepReward = reward;
@@ -262,7 +262,7 @@ public partial class RLAgent2D : Node2D
         return reward;
     }
 
-    internal Dictionary<string, float> ConsumePendingRewardBreakdown()
+    Dictionary<string, float> IRLAgent.ConsumePendingRewardBreakdown()
     {
         var breakdown = new Dictionary<string, float>(_pendingRewardComponents, StringComparer.Ordinal);
         _lastStepRewardBreakdown = breakdown;
@@ -271,14 +271,14 @@ public partial class RLAgent2D : Node2D
     }
 
     /// <summary>Returns the done flag and clears it.</summary>
-    internal bool ConsumeDonePending()
+    bool IRLAgent.ConsumeDonePending()
     {
         var done = _donePending;
         _donePending = false;
         return done;
     }
 
-    internal float[] CollectObservationArray()
+    float[] IRLAgent.CollectObservationArray()
     {
         _observationBuffer.Clear();
         CollectObservations(_observationBuffer);

@@ -6,6 +6,11 @@ public enum RLAlgorithmKind
 {
     PPO = 0,
     SAC = 1,
+    /// <summary>
+    /// Use a custom trainer registered via <see cref="TrainerFactory.Register"/>.
+    /// Set <see cref="PolicyGroupConfig.CustomTrainerId"/> to the registered key.
+    /// </summary>
+    Custom = 99,
 }
 
 public sealed class PolicyDecision
@@ -51,6 +56,8 @@ public sealed class PolicyGroupConfig
     public string GroupId { get; init; } = string.Empty;
     public string RunId { get; init; } = string.Empty;
     public RLAlgorithmKind Algorithm { get; init; } = RLAlgorithmKind.PPO;
+    /// <summary>Key passed to <see cref="TrainerFactory.Register"/> when Algorithm is Custom.</summary>
+    public string CustomTrainerId { get; init; } = string.Empty;
     public RLPolicyGroupConfig? SharedPolicy { get; init; }
     public RLTrainerConfig TrainerConfig { get; init; } = new();
     public RLNetworkGraph NetworkGraph { get; init; } = new();

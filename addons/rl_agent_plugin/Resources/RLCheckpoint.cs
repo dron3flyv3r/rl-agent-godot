@@ -8,7 +8,7 @@ namespace RlAgentPlugin.Runtime;
 [Tool]
 public partial class RLCheckpoint : Resource
 {
-    public const int CurrentFormatVersion = 2;
+    public const int CurrentFormatVersion = 3;
     public const string PpoAlgorithm = "PPO";
     public const string SacAlgorithm = "SAC";
 
@@ -17,6 +17,7 @@ public partial class RLCheckpoint : Resource
     [Export] public long TotalSteps { get; set; }
     [Export] public long EpisodeCount { get; set; }
     [Export] public long UpdateCount { get; set; }
+    [Export] public float RewardSnapshot { get; set; }
     [Export] public string Algorithm { get; set; } = PpoAlgorithm;
     [Export] public int ObservationSize { get; set; }
     [Export] public int DiscreteActionCount { get; set; }
@@ -133,7 +134,8 @@ public partial class RLCheckpoint : Resource
             LayerShapeBuffer = shapes,
         };
 
-        if (checkpoint.FormatVersion >= CurrentFormatVersion
+        // Meta was introduced in format v2; v1 checkpoints use the legacy derivation path.
+        if (checkpoint.FormatVersion >= 2
             && data.ContainsKey("meta")
             && data["meta"].VariantType == Variant.Type.Dictionary)
         {
@@ -145,6 +147,56 @@ public partial class RLCheckpoint : Resource
         }
 
         return checkpoint;
+    }
+
+    /// <summary>
+    /// Loads only the header and metadata fields from a checkpoint JSON file.
+    /// WeightBuffer and LayerShapeBuffer will be empty — suitable for fast
+    /// dashboard display without allocating large weight arrays.
+    /// Returns null if the file cannot be read or parsed.
+    /// </summary>
+    public static RLCheckpoint? LoadMetadataOnly(string path)
+    {
+        var resolvedPath = ResolvePath(path);
+        if (!FileAccess.FileExists(resolvedPath)) return null;
+
+        try
+        {
+            using var file = FileAccess.Open(resolvedPath, FileAccess.ModeFlags.Read);
+            if (file is null) return null;
+
+            var parsed = Json.ParseString(file.GetAsText());
+            if (parsed.VariantType != Variant.Type.Dictionary) return null;
+
+            var data = parsed.AsGodotDictionary();
+            var checkpoint = new RLCheckpoint
+            {
+                FormatVersion    = data.ContainsKey("format_version") ? (int)data["format_version"].AsInt64() : 1,
+                RunId            = data.ContainsKey("run_id")         ? data["run_id"].AsString()             : string.Empty,
+                TotalSteps       = data.ContainsKey("total_steps")    ? data["total_steps"].AsInt64()         : 0,
+                EpisodeCount     = data.ContainsKey("episode_count")  ? data["episode_count"].AsInt64()       : 0,
+                UpdateCount      = data.ContainsKey("update_count")   ? data["update_count"].AsInt64()        : 0,
+                WeightBuffer     = Array.Empty<float>(),
+                LayerShapeBuffer = Array.Empty<int>(),
+            };
+
+            if (checkpoint.FormatVersion >= 2
+                && data.ContainsKey("meta")
+                && data["meta"].VariantType == Variant.Type.Dictionary)
+            {
+                checkpoint.ApplyMetadataDictionary(data["meta"].AsGodotDictionary());
+            }
+            else
+            {
+                checkpoint.PopulateLegacyMetadata();
+            }
+
+            return checkpoint;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     public void PopulateLegacyMetadata()
@@ -218,6 +270,7 @@ public partial class RLCheckpoint : Resource
         return new Godot.Collections.Dictionary
         {
             { "algorithm", Algorithm },
+            { "reward_snapshot", RewardSnapshot },
             { "obs_size", ObservationSize },
             { "discrete_action_count", DiscreteActionCount },
             { "continuous_action_dims", ContinuousActionDimensions },
@@ -234,6 +287,7 @@ public partial class RLCheckpoint : Resource
     {
         FormatVersion = CurrentFormatVersion;
         Algorithm = metadata.ContainsKey("algorithm") ? metadata["algorithm"].AsString() : PpoAlgorithm;
+        RewardSnapshot = metadata.ContainsKey("reward_snapshot") ? metadata["reward_snapshot"].AsSingle() : 0f;
         ObservationSize = metadata.ContainsKey("obs_size") ? (int)metadata["obs_size"].AsInt64() : 0;
         DiscreteActionCount = metadata.ContainsKey("discrete_action_count") ? (int)metadata["discrete_action_count"].AsInt64() : 0;
         ContinuousActionDimensions = metadata.ContainsKey("continuous_action_dims") ? (int)metadata["continuous_action_dims"].AsInt64() : 0;

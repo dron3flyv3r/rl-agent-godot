@@ -27,5 +27,6 @@
         "**/.DS_Store": true,
         "**/Thumbs.db": true,
         "**/*.uid": true
-    }
+    },
+    "peacock.remoteColor": "#0e65a7"
 }

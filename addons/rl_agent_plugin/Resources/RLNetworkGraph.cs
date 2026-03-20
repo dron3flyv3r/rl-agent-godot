@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using Godot;
 using Godot.Collections;
@@ -8,59 +7,62 @@ namespace RlAgentPlugin.Runtime;
 [GlobalClass]
 public partial class RLNetworkGraph : Resource
 {
-    [Export] public Array<RLNetworkLayerDef> TrunkLayers { get; set; } = new();
+    private const string LayerResourceTypes =
+        $"{nameof(RLDenseLayerDef)},{nameof(RLDropoutLayerDef)},{nameof(RLFlattenLayerDef)},{nameof(RLLayerNormDef)}";
+
+    [Export(PropertyHint.ResourceType, LayerResourceTypes)]
+    public Array<Resource> TrunkLayers { get; set; } = new();
+
     [Export] public RLOptimizerKind Optimizer { get; set; } = RLOptimizerKind.Adam;
 
-    /// <summary>Output size of the trunk; equals the last layer's Size, or inputSize if the trunk is empty.</summary>
+    /// <summary>Output size of the trunk; chains GetOutputSize through each layer def.</summary>
     public int OutputSize(int inputSize)
     {
-        for (var i = TrunkLayers.Count - 1; i >= 0; i--)
+        var prev = inputSize;
+        foreach (var def in EnumerateTrunkLayerDefs())
         {
-            if (TrunkLayers[i] is not null)
-            {
-                return TrunkLayers[i].Size;
-            }
+            prev = def.GetOutputSize(prev);
         }
 
-        return inputSize;
+        return prev;
     }
 
-    /// <summary>Constructs trunk DenseLayer instances wired in order from inputSize.</summary>
-    internal DenseLayer[] BuildTrunkLayers(int inputSize, bool? forceUseAdam = null)
+    /// <summary>
+    /// Constructs runtime layer instances wired in order from <paramref name="inputSize"/>.
+    /// Pass <paramref name="overrideOptimizer"/> to force a specific optimizer (e.g.
+    /// <see cref="RLOptimizerKind.None"/> for frozen SAC target networks).
+    /// </summary>
+    internal NetworkLayer[] BuildTrunkLayers(int inputSize, RLOptimizerKind? overrideOptimizer = null)
     {
-        if (TrunkLayers.Count == 0) return System.Array.Empty<DenseLayer>();
+        if (TrunkLayers.Count == 0) return System.Array.Empty<NetworkLayer>();
 
-        var useAdam = forceUseAdam ?? Optimizer == RLOptimizerKind.Adam;
-        var layers = new List<DenseLayer>(TrunkLayers.Count);
+        var optimizer = overrideOptimizer ?? Optimizer;
+        var layers = new List<NetworkLayer>(TrunkLayers.Count);
         var prev = inputSize;
-        for (var i = 0; i < TrunkLayers.Count; i++)
+        foreach (var def in EnumerateTrunkLayerDefs())
         {
-            var layerDef = TrunkLayers[i];
-            if (layerDef is null)
-            {
-                continue;
-            }
-
-            layers.Add(new DenseLayer(prev, layerDef.Size, layerDef.Activation, useAdam));
-            prev = layerDef.Size;
+            layers.Add(def.CreateLayer(prev, optimizer));
+            prev = def.GetOutputSize(prev);
         }
 
         return layers.ToArray();
     }
 
-    /// <summary>Returns the layer sizes as a plain int array (used for checkpoint metadata).</summary>
+    /// <summary>Returns the Dense layer sizes (used for checkpoint metadata display).</summary>
     public int[] GetLayerSizes()
     {
         var sizes = new int[TrunkLayers.Count];
-        for (var i = 0; i < TrunkLayers.Count; i++) sizes[i] = TrunkLayers[i]?.Size ?? 0;
+        for (var i = 0; i < TrunkLayers.Count; i++)
+            sizes[i] = TrunkLayers[i] is RLDenseLayerDef d ? d.Size : 0;
         return sizes;
     }
 
-    /// <summary>Returns the layer activations as a plain int array (used for checkpoint metadata).</summary>
+    /// <summary>Returns the Dense layer activations (used for checkpoint metadata display).</summary>
     public int[] GetLayerActivations()
     {
         var activations = new int[TrunkLayers.Count];
-        for (var i = 0; i < TrunkLayers.Count; i++) activations[i] = (int)(TrunkLayers[i]?.Activation ?? RLActivationKind.Tanh);
+        for (var i = 0; i < TrunkLayers.Count; i++)
+            activations[i] = TrunkLayers[i] is RLDenseLayerDef d ? (int)d.Activation : -1;
         return activations;
     }
 
@@ -69,12 +71,23 @@ public partial class RLNetworkGraph : Resource
     {
         return new RLNetworkGraph
         {
-            TrunkLayers = new Array<RLNetworkLayerDef>
+            TrunkLayers = new Array<Resource>
             {
-                new RLNetworkLayerDef { Size = 64, Activation = RLActivationKind.Tanh },
-                new RLNetworkLayerDef { Size = 64, Activation = RLActivationKind.Tanh },
+                new RLDenseLayerDef { Size = 64, Activation = RLActivationKind.Tanh },
+                new RLDenseLayerDef { Size = 64, Activation = RLActivationKind.Tanh },
             },
             Optimizer = RLOptimizerKind.Adam,
         };
+    }
+
+    private IEnumerable<RLLayerDef> EnumerateTrunkLayerDefs()
+    {
+        foreach (var resource in TrunkLayers)
+        {
+            if (resource is RLLayerDef layerDef)
+            {
+                yield return layerDef;
+            }
+        }
     }
 }

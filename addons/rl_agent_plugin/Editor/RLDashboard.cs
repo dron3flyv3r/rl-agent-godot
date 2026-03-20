@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Godot;
+using RlAgentPlugin.Runtime;
 
 namespace RlAgentPlugin.Editor;
 
@@ -61,6 +62,15 @@ public partial class RLDashboard : Control
     private LineChartPanel? _lengthChart;
     private LineChartPanel? _eloChart;
     private FileDialog?     _exportDialog;
+
+    // Checkpoint history panel
+    private Button?          _checkpointToggleBtn;
+    private Control?         _checkpointHistoryPanel;
+    private VBoxContainer?   _checkpointRowContainer;
+    private Label?           _checkpointStatusLabel;
+    private List<CheckpointHistoryEntry> _checkpointEntries = new();
+    private FileDialog?      _checkpointExportDialog;
+    private string           _pendingExportCheckpointPath = "";
 
     // ── State ────────────────────────────────────────────────────────────────
     private readonly List<Metric>              _metrics            = new();
@@ -162,6 +172,8 @@ public partial class RLDashboard : Control
         vbox.AddChild(new HSeparator());
         vbox.AddChild(BuildStatsBar());
         vbox.AddChild(BuildChartGrid());
+        vbox.AddChild(new HSeparator());
+        vbox.AddChild(BuildCheckpointHistorySection());
     }
 
     private Control BuildHeader()
@@ -464,6 +476,10 @@ public partial class RLDashboard : Control
         if (_renameEdit is not null) _renameEdit.Editable = true;
         if (_renameBtn  is not null) _renameBtn.Visible   = true;
 
+        _checkpointEntries.Clear();
+        RebuildCheckpointRows();
+        if (_checkpointStatusLabel is not null) _checkpointStatusLabel.Text = "";
+
         SetStatusUi(new RunStatus { Status = "loading" });
         PollUpdate();
     }
@@ -504,6 +520,9 @@ public partial class RLDashboard : Control
             _isLive = false;
             HideLiveBadge();
         }
+
+        if (_checkpointHistoryPanel?.Visible ?? false)
+            RefreshCheckpointHistory();
     }
 
     private void ReadNewMetrics(string path, bool absolute = false)
@@ -938,4 +957,243 @@ public partial class RLDashboard : Control
         n >= 1_000_000 ? $"{n / 1_000_000.0:F2}M"
         : n >= 1_000   ? $"{n / 1_000.0:F1}K"
         : n.ToString();
+
+    // ── Checkpoint history panel ──────────────────────────────────────────────
+
+    private Control BuildCheckpointHistorySection()
+    {
+        var outer = new VBoxContainer();
+        outer.AddThemeConstantOverride("separation", 4);
+
+        var headerRow = new HBoxContainer();
+        headerRow.AddThemeConstantOverride("separation", 6);
+
+        _checkpointToggleBtn = new Button
+        {
+            Text          = "▶  Checkpoint History",
+            Flat          = true,
+            ToggleMode    = true,
+            ButtonPressed = false,
+        };
+        _checkpointToggleBtn.AddThemeFontSizeOverride("font_size", 13);
+        _checkpointToggleBtn.Toggled += OnCheckpointPanelToggled;
+        headerRow.AddChild(_checkpointToggleBtn);
+
+        _checkpointStatusLabel = new Label { VerticalAlignment = VerticalAlignment.Center };
+        _checkpointStatusLabel.AddThemeFontSizeOverride("font_size", 11);
+        _checkpointStatusLabel.Modulate = new Color(0.6f, 0.6f, 0.6f);
+        headerRow.AddChild(_checkpointStatusLabel);
+
+        outer.AddChild(headerRow);
+
+        _checkpointHistoryPanel = new VBoxContainer();
+        _checkpointHistoryPanel.Visible = false;
+        _checkpointHistoryPanel.AddThemeConstantOverride("separation", 2);
+
+        var scroll = new ScrollContainer();
+        scroll.CustomMinimumSize    = new Vector2(0, 180);
+        scroll.SizeFlagsVertical    = SizeFlags.ExpandFill;
+        scroll.FollowFocus          = false;
+
+        _checkpointRowContainer = new VBoxContainer();
+        _checkpointRowContainer.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _checkpointRowContainer.AddThemeConstantOverride("separation", 1);
+        scroll.AddChild(_checkpointRowContainer);
+
+        _checkpointHistoryPanel.AddChild(scroll);
+        outer.AddChild(_checkpointHistoryPanel);
+
+        return outer;
+    }
+
+    private void OnCheckpointPanelToggled(bool pressed)
+    {
+        if (_checkpointToggleBtn is not null)
+            _checkpointToggleBtn.Text = (pressed ? "▼" : "▶") + "  Checkpoint History";
+
+        if (_checkpointHistoryPanel is not null)
+            _checkpointHistoryPanel.Visible = pressed;
+
+        if (pressed)
+            RefreshCheckpointHistory();
+    }
+
+    private void RefreshCheckpointHistory()
+    {
+        if (_checkpointRowContainer is null || !(_checkpointHistoryPanel?.Visible ?? false))
+            return;
+
+        if (string.IsNullOrEmpty(_selectedRunId))
+        {
+            if (_checkpointStatusLabel is not null)
+                _checkpointStatusLabel.Text = "(no run selected)";
+            return;
+        }
+
+        var runDirAbs = ProjectSettings.GlobalizePath($"res://RL-Agent-Training/runs/{_selectedRunId}");
+        _checkpointEntries = CheckpointRegistry.ListHistoryEntries(runDirAbs);
+
+        RebuildCheckpointRows();
+
+        if (_checkpointStatusLabel is not null)
+        {
+            _checkpointStatusLabel.Text = _checkpointEntries.Count == 0
+                ? "(no history yet — snapshots appear after the first checkpoint interval)"
+                : $"{_checkpointEntries.Count} snapshot(s)";
+        }
+    }
+
+    private void RebuildCheckpointRows()
+    {
+        if (_checkpointRowContainer is null) return;
+
+        foreach (var child in _checkpointRowContainer.GetChildren())
+            child.QueueFree();
+
+        if (_checkpointEntries.Count == 0) return;
+
+        var byGroup   = _checkpointEntries.GroupBy(e => e.PolicyGroupId).OrderBy(g => g.Key).ToList();
+        var multiGroup = byGroup.Count > 1;
+
+        foreach (var group in byGroup)
+        {
+            if (multiGroup)
+            {
+                var groupLabel = new Label { Text = $"  Policy group: {group.Key}" };
+                groupLabel.AddThemeFontSizeOverride("font_size", 11);
+                groupLabel.Modulate = new Color(0.75f, 0.85f, 1.0f);
+                _checkpointRowContainer.AddChild(groupLabel);
+            }
+
+            _checkpointRowContainer.AddChild(BuildCheckpointColumnHeader());
+
+            foreach (var entry in group.OrderByDescending(e => e.UpdateCount))
+                _checkpointRowContainer.AddChild(BuildCheckpointRow(entry));
+
+            _checkpointRowContainer.AddChild(new HSeparator());
+        }
+    }
+
+    private static Control BuildCheckpointColumnHeader()
+    {
+        var row = new HBoxContainer();
+        row.AddThemeConstantOverride("separation", 4);
+
+        void AddCol(string text, int minW)
+        {
+            var lbl = new Label { Text = text, CustomMinimumSize = new Vector2(minW, 0) };
+            lbl.AddThemeFontSizeOverride("font_size", 10);
+            lbl.Modulate = new Color(0.5f, 0.5f, 0.5f);
+            row.AddChild(lbl);
+        }
+
+        AddCol("Update",   64);
+        AddCol("Steps",    72);
+        AddCol("Episodes", 72);
+        AddCol("Algo",     48);
+        AddCol("Reward",   70);
+        AddCol("Type",     70);
+        row.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
+        return row;
+    }
+
+    private Control BuildCheckpointRow(CheckpointHistoryEntry entry)
+    {
+        var row = new HBoxContainer();
+        row.AddThemeConstantOverride("separation", 4);
+
+        void AddCol(string text, int minW)
+        {
+            var lbl = new Label { Text = text, CustomMinimumSize = new Vector2(minW, 0) };
+            lbl.AddThemeFontSizeOverride("font_size", 11);
+            lbl.VerticalAlignment = VerticalAlignment.Center;
+            row.AddChild(lbl);
+        }
+
+        AddCol($"u{entry.UpdateCount:D6}", 64);
+        AddCol(FormatSteps(entry.TotalSteps), 72);
+        AddCol(entry.EpisodeCount.ToString("N0"), 72);
+        AddCol(entry.Algorithm, 48);
+        AddCol(entry.RewardSnapshot == 0f ? "—" : entry.RewardSnapshot.ToString("F3"), 70);
+
+        var typeLabel = new Label
+        {
+            Text              = entry.IsSelfPlayFrozen ? "self-play" : "history",
+            CustomMinimumSize = new Vector2(70, 0),
+        };
+        typeLabel.AddThemeFontSizeOverride("font_size", 10);
+        typeLabel.Modulate            = entry.IsSelfPlayFrozen ? new Color(0.85f, 0.65f, 0.25f) : new Color(0.55f, 0.85f, 0.55f);
+        typeLabel.VerticalAlignment   = VerticalAlignment.Center;
+        row.AddChild(typeLabel);
+
+        row.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
+
+        var capturedPath = entry.AbsolutePath;
+
+        var exportBtn = new Button
+        {
+            Text        = "Export",
+            TooltipText = $"Export as .rlmodel: {System.IO.Path.GetFileName(capturedPath)}",
+            CustomMinimumSize = new Vector2(64, 0),
+        };
+        exportBtn.Pressed += () => OnExportCheckpointPressed(capturedPath);
+        row.AddChild(exportBtn);
+
+        var inferBtn = new Button
+        {
+            Text        = "Set Inference",
+            TooltipText = "Copy res:// path to clipboard for use in InferenceCheckpointPath",
+            CustomMinimumSize = new Vector2(98, 0),
+        };
+        inferBtn.Pressed += () => OnSetInferencePressed(capturedPath);
+        row.AddChild(inferBtn);
+
+        return row;
+    }
+
+    private void OnExportCheckpointPressed(string checkpointAbsPath)
+    {
+        if (!System.IO.File.Exists(checkpointAbsPath))
+        {
+            SetHeaderStatus($"Checkpoint not found: {checkpointAbsPath}");
+            return;
+        }
+
+        _pendingExportCheckpointPath = checkpointAbsPath;
+        EnsureCheckpointExportDialog();
+        _checkpointExportDialog!.PopupCentered(new Vector2I(700, 450));
+    }
+
+    private void EnsureCheckpointExportDialog()
+    {
+        if (_checkpointExportDialog is not null && IsInstanceValid(_checkpointExportDialog)) return;
+
+        _checkpointExportDialog = new FileDialog
+        {
+            FileMode = FileDialog.FileModeEnum.SaveFile,
+            Access = FileDialog.AccessEnum.Filesystem,
+            Title = "Export Checkpoint as .rlmodel",
+            Filters = ["*.rlmodel ; RL Model"]
+        };
+        _checkpointExportDialog.FileSelected += OnCheckpointExportFileSelected;
+        AddChild(_checkpointExportDialog);
+    }
+
+    private void OnCheckpointExportFileSelected(string destPath)
+    {
+        if (string.IsNullOrEmpty(_pendingExportCheckpointPath)) return;
+
+        var result = RLModelExporter.Export(_pendingExportCheckpointPath, destPath);
+        SetHeaderStatus(result == Error.Ok
+            ? $"Exported → {destPath}"
+            : $"Export failed for {System.IO.Path.GetFileName(_pendingExportCheckpointPath)}");
+        _pendingExportCheckpointPath = "";
+    }
+
+    private void OnSetInferencePressed(string checkpointAbsPath)
+    {
+        var resPath = ProjectSettings.LocalizePath(checkpointAbsPath);
+        DisplayServer.ClipboardSet(resPath);
+        SetHeaderStatus($"Copied to clipboard: {resPath}");
+    }
 }

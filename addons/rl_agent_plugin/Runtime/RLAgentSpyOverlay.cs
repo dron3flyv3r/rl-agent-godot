@@ -13,7 +13,7 @@ namespace RlAgentPlugin.Runtime;
 public partial class RLAgentSpyOverlay : CanvasLayer
 {
     private RLAcademy _academy = null!;
-    private readonly List<RLAgent2D> _agents = new();
+    private readonly List<IRLAgent> _agents = new();
     private int _pinnedIndex;
     private SpyDrawPanel _panel = null!;
 
@@ -90,7 +90,7 @@ internal sealed partial class SpyDrawPanel : Control
     private readonly List<(string text, Color color)> _lines = new();
     private bool _hasSnapshot;
 
-    internal void UpdateSnapshot(RLAgent2D agent, int index, int total)
+    internal void UpdateSnapshot(IRLAgent agent, int index, int total)
     {
         _lines.Clear();
         _hasSnapshot = true;
@@ -98,7 +98,7 @@ internal sealed partial class SpyDrawPanel : Control
         // ── Header
         var modeStr = agent.ControlMode == RLAgentControlMode.Human ? "Human" : "Inference";
         var agentSuffix = total > 1 ? $"  [{index + 1}/{total}]" : "";
-        _lines.Add(($"[RLSpy]  {agent.Name}  ({modeStr}){agentSuffix}", HeaderColor));
+        _lines.Add(($"[RLSpy]  {agent.AsNode().Name}  ({modeStr}){agentSuffix}", HeaderColor));
         _lines.Add(($"Steps: {agent.EpisodeSteps}   Episode Reward: {agent.EpisodeReward:F3}", WhiteColor));
 
         // ── Observations
@@ -152,7 +152,7 @@ internal sealed partial class SpyDrawPanel : Control
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
-    private void AppendObservations(RLAgent2D agent)
+    private void AppendObservations(IRLAgent agent)
     {
         var obs = agent.GetLastObservation();
         var segments = agent.LastObservationSegments;
@@ -215,7 +215,7 @@ internal sealed partial class SpyDrawPanel : Control
             _lines.Add(("  (no observations collected yet)", GrayColor));
     }
 
-    private void AppendAction(RLAgent2D agent)
+    private void AppendAction(IRLAgent agent)
     {
         if (agent.CurrentActionIndex >= 0)
         {
@@ -239,7 +239,7 @@ internal sealed partial class SpyDrawPanel : Control
         }
     }
 
-    private void AppendReward(RLAgent2D agent)
+    private void AppendReward(IRLAgent agent)
     {
         // Inference agents: reward is consumed each step, so LastStepReward reflects the previous step.
         // Human agents: nobody consumes pending reward, so show the live pending total instead.

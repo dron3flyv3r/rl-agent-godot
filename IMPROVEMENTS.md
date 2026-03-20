@@ -576,14 +576,14 @@ Suggested implementation order for the first five items:
 | Yes | 3 (medium) | Replace array-only network configs with a neural-network graph builder |
 | Yes | 3 (medium) | Named reward components with metrics breakdown |
 | Yes | 3 (medium) | Observation/reward spy overlay |
-| Partial | 3 (medium) | Built-in self-play and historical opponent sampling |
-| No | 3 (medium) | Surface checkpoint history in the dashboard on top of the existing registry/export work |
-| No | 4 (nice to have) | Hyperparameter schedules |
-| No | 4 (nice to have) | `RLInferenceRunner` helper |
-| No | 4 (nice to have) | In-editor quick inference mode |
+| Yes | 3 (medium) | Built-in self-play and historical opponent sampling (+ PFSP, Elo tracking, PolicyPool) |
+| Yes | 3 (medium) | Surface checkpoint history in the dashboard on top of the existing registry/export work |
+| Yes | 4 (nice to have) | Hyperparameter schedules |
+| Yes | 4 (nice to have) | `RLInferenceRunner` helper |
+| Yes | 4 (nice to have) | In-editor quick inference mode |
 | No | 4 (nice to have) | Quick Test mode |
-| No | 4 (nice to have) | Remove duplicated inline agent config vs `RLAgentConfig` resource state |
+| Yes | 4 (nice to have) | Remove duplicated inline agent config vs `RLAgentConfig` resource state |
 | No | 5 (advanced) | Curriculum learning hook |
-| No | 5 (advanced) | `IPolicyNetwork` interface for custom architectures |
+| Yes | 5 (advanced) | `IPolicyNetwork` interface for custom architectures |
 | No | 5 (advanced) | Multi-observation / heterogeneous input support |
 | No | 5 (advanced) | Evaluation rollouts |

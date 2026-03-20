@@ -5,93 +5,81 @@ using Godot;
 
 namespace RlAgentPlugin.Runtime;
 
-internal sealed class LayerCache
-{
-    public static LayerCache Empty { get; } = new()
-    {
-        Input = Array.Empty<float>(),
-        PreActivation = Array.Empty<float>(),
-        Activated = Array.Empty<float>(),
-    };
-
-    public float[] Input { get; init; } = Array.Empty<float>();
-    public float[] PreActivation { get; init; } = Array.Empty<float>();
-    public float[] Activated { get; init; } = Array.Empty<float>();
-}
-
+/// <summary>
+/// Gradient accumulation buffer — weight gradients + bias gradients for one layer.
+/// Used in batch update mode: accumulate across samples, then call ApplyGradients once.
+/// </summary>
 internal sealed class GradientBuffer
 {
     public GradientBuffer(int weightCount, int biasCount)
     {
         WeightGradients = new float[weightCount];
-        BiasGradients = new float[biasCount];
+        BiasGradients   = new float[biasCount];
     }
 
     public float[] WeightGradients { get; }
-    public float[] BiasGradients { get; }
+    public float[] BiasGradients   { get; }
 
     public float SumSquares()
     {
         var sum = 0f;
-        foreach (var gradient in WeightGradients)
-        {
-            sum += gradient * gradient;
-        }
-
-        foreach (var gradient in BiasGradients)
-        {
-            sum += gradient * gradient;
-        }
-
+        foreach (var g in WeightGradients) sum += g * g;
+        foreach (var g in BiasGradients)   sum += g * g;
         return sum;
     }
 }
 
-internal sealed class DenseLayer
+/// <summary>
+/// Fully-connected (dense / linear) layer with optional activation.
+/// Supports Adam, SGD, and None (frozen — no weight updates, used for SAC target networks).
+/// </summary>
+internal sealed class DenseLayer : NetworkLayer
 {
-    private const float AdamBeta1 = 0.9f;
-    private const float AdamBeta2 = 0.999f;
+    private const float AdamBeta1   = 0.9f;
+    private const float AdamBeta2   = 0.999f;
     private const float AdamEpsilon = 1e-8f;
 
-    private readonly int _inputSize;
-    private readonly int _outputSize;
+    private readonly int              _inputSize;
+    private readonly int              _outputSize;
     private readonly RLActivationKind? _activation;
-    private readonly float[] _weights;
-    private readonly float[] _biases;
-    private readonly bool _useAdam;
+    private readonly RLOptimizerKind  _optimizer;
+    private readonly float[]          _weights;
+    private readonly float[]          _biases;
 
-    // Adam moment vectors (null when using SGD)
-    private readonly float[]? _wm;  // weight first moment
-    private readonly float[]? _wv;  // weight second moment
-    private readonly float[]? _bm;  // bias first moment
-    private readonly float[]? _bv;  // bias second moment
+    // Adam moment vectors (null for SGD / None)
+    private readonly float[]? _wm;
+    private readonly float[]? _wv;
+    private readonly float[]? _bm;
+    private readonly float[]? _bv;
 
-    // Iterative bias-correction accumulators: tracks beta^t
+    // Iterative bias-correction accumulators: beta^t
     private float _adamB1Pow = 1f;
     private float _adamB2Pow = 1f;
 
+    // Forward-pass cache (set by Forward; used by Backward / AccumulateGradients / ComputeInputGrad)
+    private float[]? _lastInput;
+    private float[]? _lastPreActivation;
+
     private readonly RandomNumberGenerator _rng = new();
 
-    public int InputSize => _inputSize;
-    public int OutputSize => _outputSize;
+    public override int InputSize  => _inputSize;
+    public override int OutputSize => _outputSize;
 
-    public DenseLayer(int inputSize, int outputSize, RLActivationKind? activation, bool useAdam)
+    public DenseLayer(int inputSize, int outputSize, RLActivationKind? activation, RLOptimizerKind optimizer)
     {
-        _inputSize = inputSize;
+        _inputSize  = inputSize;
         _outputSize = outputSize;
         _activation = activation;
-        _useAdam = useAdam;
-        _weights = new float[inputSize * outputSize];
-        _biases = new float[outputSize];
+        _optimizer  = optimizer;
+        _weights    = new float[inputSize * outputSize];
+        _biases     = new float[outputSize];
+
         _rng.Randomize();
-
         var scale = Mathf.Sqrt(2.0f / Mathf.Max(1, inputSize));
-        for (var index = 0; index < _weights.Length; index++)
-        {
-            _weights[index] = _rng.Randfn(0.0f, scale);
-        }
+        for (var i = 0; i < _weights.Length; i++)
+            _weights[i] = _rng.Randfn(0.0f, scale);
 
-        if (useAdam)
+        if (optimizer == RLOptimizerKind.Adam)
         {
             _wm = new float[_weights.Length];
             _wv = new float[_weights.Length];
@@ -100,305 +88,209 @@ internal sealed class DenseLayer
         }
     }
 
-    public LayerCache Forward(float[] input)
-    {
-        var preActivation = new float[_outputSize];
-        for (var outputIndex = 0; outputIndex < _outputSize; outputIndex++)
-        {
-            var sum = _biases[outputIndex];
-            for (var inputIndex = 0; inputIndex < _inputSize; inputIndex++)
-            {
-                sum += input[inputIndex] * _weights[(outputIndex * _inputSize) + inputIndex];
-            }
+    // ── Forward ─────────────────────────────────────────────────────────────
 
-            preActivation[outputIndex] = sum;
+    public override float[] Forward(float[] input, bool isTraining = false)
+    {
+        _lastInput = input;
+
+        var preActivation = new float[_outputSize];
+        for (var oi = 0; oi < _outputSize; oi++)
+        {
+            var sum = _biases[oi];
+            var wBase = oi * _inputSize;
+            for (var ii = 0; ii < _inputSize; ii++)
+                sum += input[ii] * _weights[wBase + ii];
+            preActivation[oi] = sum;
         }
+
+        _lastPreActivation = preActivation;
 
         var activated = preActivation.ToArray();
         if (_activation.HasValue)
-        {
-            for (var index = 0; index < activated.Length; index++)
-            {
-                activated[index] = Activate(activated[index], _activation.Value);
-            }
-        }
+            for (var i = 0; i < activated.Length; i++)
+                activated[i] = Activate(activated[i], _activation.Value);
 
-        return new LayerCache
-        {
-            Input = input.ToArray(),
-            PreActivation = preActivation,
-            Activated = activated,
-        };
+        return activated;
     }
 
-    public VectorBatch ForwardBatch(VectorBatch input)
+    public override VectorBatch ForwardBatch(VectorBatch input)
     {
         if (input.VectorSize != _inputSize)
-        {
-            throw new ArgumentException(
-                $"Expected input vector size {_inputSize}, got {input.VectorSize}.",
-                nameof(input));
-        }
+            throw new ArgumentException($"Expected vector size {_inputSize}, got {input.VectorSize}.");
 
         var output = new VectorBatch(input.BatchSize, _outputSize);
-        for (var batchIndex = 0; batchIndex < input.BatchSize; batchIndex++)
+        for (var b = 0; b < input.BatchSize; b++)
         {
-            var inputOffset = batchIndex * _inputSize;
-            var outputOffset = batchIndex * _outputSize;
-            for (var outputIndex = 0; outputIndex < _outputSize; outputIndex++)
+            var inOff  = b * _inputSize;
+            var outOff = b * _outputSize;
+            for (var oi = 0; oi < _outputSize; oi++)
             {
-                var sum = _biases[outputIndex];
-                var weightOffset = outputIndex * _inputSize;
-                for (var inputIndex = 0; inputIndex < _inputSize; inputIndex++)
-                {
-                    sum += input.Data[inputOffset + inputIndex] * _weights[weightOffset + inputIndex];
-                }
+                var sum   = _biases[oi];
+                var wBase = oi * _inputSize;
+                for (var ii = 0; ii < _inputSize; ii++)
+                    sum += input.Data[inOff + ii] * _weights[wBase + ii];
 
-                output.Data[outputOffset + outputIndex] = _activation.HasValue
-                    ? Activate(sum, _activation.Value)
-                    : sum;
+                output.Data[outOff + oi] = _activation.HasValue ? Activate(sum, _activation.Value) : sum;
             }
         }
 
         return output;
     }
 
-    public float[] Backward(float[] input, float[] outputGradient, float learningRate, float[]? preActivation = null)
+    // ── Backward (single-sample, immediate weight update) ────────────────────
+
+    public override float[] Backward(float[] outputGrad, float learningRate, float gradScale = 1f)
     {
-        var localGradient = outputGradient.ToArray();
-        if (_activation.HasValue && preActivation is not null)
+        var input        = _lastInput        ?? throw new InvalidOperationException("Backward called before Forward.");
+        var preActivation = _lastPreActivation;
+
+        var localGrad = ComputeLocalGradient(outputGrad, preActivation);
+        var inputGrad = ComputeInputGradient(localGrad);
+        ApplyWeightUpdate(input, localGrad, learningRate, gradScale);
+        return inputGrad;
+    }
+
+    // ── Batch accumulate + apply ─────────────────────────────────────────────
+
+    public override GradientBuffer CreateGradientBuffer() =>
+        new(_weights.Length, _biases.Length);
+
+    public override float[] AccumulateGradients(float[] outputGrad, GradientBuffer buffer)
+    {
+        var input         = _lastInput        ?? throw new InvalidOperationException("AccumulateGradients called before Forward.");
+        var preActivation = _lastPreActivation;
+
+        var localGrad = ComputeLocalGradient(outputGrad, preActivation);
+        var inputGrad = new float[_inputSize];
+
+        for (var oi = 0; oi < _outputSize; oi++)
         {
-            for (var index = 0; index < localGradient.Length; index++)
+            for (var ii = 0; ii < _inputSize; ii++)
             {
-                localGradient[index] *= ActivateDerivative(preActivation[index], _activation.Value);
+                var wi = oi * _inputSize + ii;
+                inputGrad[ii]                  += _weights[wi] * localGrad[oi];
+                buffer.WeightGradients[wi]     += localGrad[oi] * input[ii];
             }
+
+            buffer.BiasGradients[oi] += localGrad[oi];
         }
 
-        // Compute input gradient using original weights (before update)
-        var inputGradient = new float[_inputSize];
-        for (var outputIndex = 0; outputIndex < _outputSize; outputIndex++)
-        {
-            for (var inputIndex = 0; inputIndex < _inputSize; inputIndex++)
-            {
-                inputGradient[inputIndex] += _weights[(outputIndex * _inputSize) + inputIndex] * localGradient[outputIndex];
-            }
-        }
+        return inputGrad;
+    }
 
-        if (_useAdam)
+    public override void ApplyGradients(GradientBuffer buffer, float learningRate, float gradScale)
+    {
+        if (_optimizer == RLOptimizerKind.None) return;
+
+        if (_optimizer == RLOptimizerKind.Adam)
         {
-            // Advance bias-correction accumulators
             _adamB1Pow *= AdamBeta1;
             _adamB2Pow *= AdamBeta2;
             var b1Corr = 1f - _adamB1Pow;
             var b2Corr = 1f - _adamB2Pow;
 
-            for (var outputIndex = 0; outputIndex < _outputSize; outputIndex++)
+            for (var oi = 0; oi < _outputSize; oi++)
             {
-                for (var inputIndex = 0; inputIndex < _inputSize; inputIndex++)
+                for (var ii = 0; ii < _inputSize; ii++)
                 {
-                    var wi = (outputIndex * _inputSize) + inputIndex;
-                    var g = localGradient[outputIndex] * input[inputIndex];
+                    var wi = oi * _inputSize + ii;
+                    var g  = buffer.WeightGradients[wi] * gradScale;
                     _wm![wi] = AdamBeta1 * _wm[wi] + (1f - AdamBeta1) * g;
                     _wv![wi] = AdamBeta2 * _wv[wi] + (1f - AdamBeta2) * g * g;
-                    var mHat = _wm[wi] / b1Corr;
-                    var vHat = _wv![wi] / b2Corr;
-                    _weights[wi] -= learningRate * mHat / (Mathf.Sqrt(vHat) + AdamEpsilon);
+                    _weights[wi] -= learningRate * (_wm[wi] / b1Corr) / (Mathf.Sqrt(_wv![wi] / b2Corr) + AdamEpsilon);
                 }
 
-                var bg = localGradient[outputIndex];
-                _bm![outputIndex] = AdamBeta1 * _bm[outputIndex] + (1f - AdamBeta1) * bg;
-                _bv![outputIndex] = AdamBeta2 * _bv[outputIndex] + (1f - AdamBeta2) * bg * bg;
-                var bmHat = _bm[outputIndex] / b1Corr;
-                var bvHat = _bv[outputIndex] / b2Corr;
-                _biases[outputIndex] -= learningRate * bmHat / (Mathf.Sqrt(bvHat) + AdamEpsilon);
+                var bg = buffer.BiasGradients[oi] * gradScale;
+                _bm![oi] = AdamBeta1 * _bm[oi] + (1f - AdamBeta1) * bg;
+                _bv![oi] = AdamBeta2 * _bv[oi] + (1f - AdamBeta2) * bg * bg;
+                _biases[oi] -= learningRate * (_bm[oi] / b1Corr) / (Mathf.Sqrt(_bv![oi] / b2Corr) + AdamEpsilon);
             }
         }
-        else
+        else // SGD
         {
-            for (var outputIndex = 0; outputIndex < _outputSize; outputIndex++)
+            for (var oi = 0; oi < _outputSize; oi++)
             {
-                for (var inputIndex = 0; inputIndex < _inputSize; inputIndex++)
+                for (var ii = 0; ii < _inputSize; ii++)
                 {
-                    var weightIndex = (outputIndex * _inputSize) + inputIndex;
-                    _weights[weightIndex] -= learningRate * localGradient[outputIndex] * input[inputIndex];
+                    var wi = oi * _inputSize + ii;
+                    _weights[wi] -= learningRate * buffer.WeightGradients[wi] * gradScale;
                 }
 
-                _biases[outputIndex] -= learningRate * localGradient[outputIndex];
+                _biases[oi] -= learningRate * buffer.BiasGradients[oi] * gradScale;
             }
-        }
-
-        return inputGradient;
-    }
-
-    public GradientBuffer CreateGradientBuffer()
-    {
-        return new GradientBuffer(_weights.Length, _biases.Length);
-    }
-
-    public float[] AccumulateGradients(float[] input, float[] outputGradient, GradientBuffer gradients, float[]? preActivation = null)
-    {
-        var localGradient = outputGradient.ToArray();
-        if (_activation.HasValue && preActivation is not null)
-        {
-            for (var index = 0; index < localGradient.Length; index++)
-            {
-                localGradient[index] *= ActivateDerivative(preActivation[index], _activation.Value);
-            }
-        }
-
-        var inputGradient = new float[_inputSize];
-        for (var outputIndex = 0; outputIndex < _outputSize; outputIndex++)
-        {
-            for (var inputIndex = 0; inputIndex < _inputSize; inputIndex++)
-            {
-                var weightIndex = (outputIndex * _inputSize) + inputIndex;
-                inputGradient[inputIndex] += _weights[weightIndex] * localGradient[outputIndex];
-                gradients.WeightGradients[weightIndex] += localGradient[outputIndex] * input[inputIndex];
-            }
-
-            gradients.BiasGradients[outputIndex] += localGradient[outputIndex];
-        }
-
-        return inputGradient;
-    }
-
-    public void ApplyGradients(GradientBuffer gradients, float learningRate, float scale = 1f)
-    {
-        if (_useAdam)
-        {
-            _adamB1Pow *= AdamBeta1;
-            _adamB2Pow *= AdamBeta2;
-            var b1Corr = 1f - _adamB1Pow;
-            var b2Corr = 1f - _adamB2Pow;
-
-            for (var outputIndex = 0; outputIndex < _outputSize; outputIndex++)
-            {
-                for (var inputIndex = 0; inputIndex < _inputSize; inputIndex++)
-                {
-                    var weightIndex = (outputIndex * _inputSize) + inputIndex;
-                    var gradient = gradients.WeightGradients[weightIndex] * scale;
-                    _wm![weightIndex] = AdamBeta1 * _wm[weightIndex] + (1f - AdamBeta1) * gradient;
-                    _wv![weightIndex] = AdamBeta2 * _wv[weightIndex] + (1f - AdamBeta2) * gradient * gradient;
-                    var mHat = _wm[weightIndex] / b1Corr;
-                    var vHat = _wv[weightIndex] / b2Corr;
-                    _weights[weightIndex] -= learningRate * mHat / (Mathf.Sqrt(vHat) + AdamEpsilon);
-                }
-
-                var biasGradient = gradients.BiasGradients[outputIndex] * scale;
-                _bm![outputIndex] = AdamBeta1 * _bm[outputIndex] + (1f - AdamBeta1) * biasGradient;
-                _bv![outputIndex] = AdamBeta2 * _bv[outputIndex] + (1f - AdamBeta2) * biasGradient * biasGradient;
-                var bmHat = _bm[outputIndex] / b1Corr;
-                var bvHat = _bv[outputIndex] / b2Corr;
-                _biases[outputIndex] -= learningRate * bmHat / (Mathf.Sqrt(bvHat) + AdamEpsilon);
-            }
-
-            return;
-        }
-
-        for (var outputIndex = 0; outputIndex < _outputSize; outputIndex++)
-        {
-            for (var inputIndex = 0; inputIndex < _inputSize; inputIndex++)
-            {
-                var weightIndex = (outputIndex * _inputSize) + inputIndex;
-                _weights[weightIndex] -= learningRate * gradients.WeightGradients[weightIndex] * scale;
-            }
-
-            _biases[outputIndex] -= learningRate * gradients.BiasGradients[outputIndex] * scale;
         }
     }
 
-    /// <summary>
-    /// Computes input gradient only — does NOT update weights or biases.
-    /// Used when you need dL/dinput through a frozen network (e.g. SAC actor update through Q).
-    /// </summary>
-    public float[] ComputeInputGrad(float[] input, float[] outputGradient, float[]? preActivation = null)
+    // ── Frozen gradient (SAC dQ/da) ──────────────────────────────────────────
+
+    public override float[] ComputeInputGrad(float[] outputGrad)
     {
-        var localGradient = outputGradient.ToArray();
-        if (_activation.HasValue && preActivation is not null)
-        {
-            for (var index = 0; index < localGradient.Length; index++)
-            {
-                localGradient[index] *= ActivateDerivative(preActivation[index], _activation.Value);
-            }
-        }
-
-        var inputGradient = new float[_inputSize];
-        for (var outputIndex = 0; outputIndex < _outputSize; outputIndex++)
-        {
-            for (var inputIndex = 0; inputIndex < _inputSize; inputIndex++)
-            {
-                inputGradient[inputIndex] += _weights[(outputIndex * _inputSize) + inputIndex] * localGradient[outputIndex];
-            }
-        }
-
-        return inputGradient;
+        var preActivation = _lastPreActivation;
+        var localGrad     = ComputeLocalGradient(outputGrad, preActivation);
+        return ComputeInputGradient(localGrad);
     }
 
-    /// <summary>Hard-copies weights and biases from another layer (must have same shape).</summary>
-    public void CopyFrom(DenseLayer source)
+    // ── Target-network copy ──────────────────────────────────────────────────
+
+    public override void CopyFrom(NetworkLayer source)
     {
-        Array.Copy(source._weights, _weights, _weights.Length);
-        Array.Copy(source._biases, _biases, _biases.Length);
+        if (source is not DenseLayer dl)
+            throw new InvalidOperationException("CopyFrom: source must be a DenseLayer.");
+        Array.Copy(dl._weights, _weights, _weights.Length);
+        Array.Copy(dl._biases,  _biases,  _biases.Length);
     }
 
-    /// <summary>Polyak-averages weights from source: θ = τ*θ_src + (1-τ)*θ.</summary>
-    public void SoftUpdateFrom(DenseLayer source, float tau)
+    public override void SoftUpdateFrom(NetworkLayer source, float tau)
     {
+        if (source is not DenseLayer dl)
+            throw new InvalidOperationException("SoftUpdateFrom: source must be a DenseLayer.");
         for (var i = 0; i < _weights.Length; i++)
-        {
-            _weights[i] = tau * source._weights[i] + (1f - tau) * _weights[i];
-        }
-
+            _weights[i] = tau * dl._weights[i] + (1f - tau) * _weights[i];
         for (var i = 0; i < _biases.Length; i++)
-        {
-            _biases[i] = tau * source._biases[i] + (1f - tau) * _biases[i];
-        }
+            _biases[i] = tau * dl._biases[i] + (1f - tau) * _biases[i];
     }
 
-    public void AppendSerialized(ICollection<float> weights, ICollection<int> shapes)
+    // ── Serialization ────────────────────────────────────────────────────────
+
+    public override void AppendSerialized(ICollection<float> weights, ICollection<int> shapes)
     {
+        shapes.Add((int)RLLayerKind.Dense);
         shapes.Add(_inputSize);
         shapes.Add(_outputSize);
         shapes.Add(_activation.HasValue ? (int)_activation.Value + 1 : 0);
-        foreach (var weight in _weights)
-        {
-            weights.Add(weight);
-        }
-
-        foreach (var bias in _biases)
-        {
-            weights.Add(bias);
-        }
+        foreach (var w in _weights) weights.Add(w);
+        foreach (var b in _biases)  weights.Add(b);
     }
 
-    public void LoadSerialized(IReadOnlyList<float> weights, ref int weightIndex, IReadOnlyList<int> shapes, ref int shapeIndex)
+    public override void LoadSerialized(
+        IReadOnlyList<float> weights, ref int wi,
+        IReadOnlyList<int>   shapes,  ref int si,
+        bool isLegacy = false)
     {
-        var serializedInputSize = shapes[shapeIndex++];
-        var serializedOutputSize = shapes[shapeIndex++];
-        var serializedActivation = shapes[shapeIndex++];
-        if (serializedInputSize != _inputSize || serializedOutputSize != _outputSize)
+        if (!isLegacy)
         {
+            var typeCode = shapes[si++];
+            if (typeCode != (int)RLLayerKind.Dense)
+                throw new InvalidOperationException($"Expected Dense layer type ({(int)RLLayerKind.Dense}), got {typeCode}.");
+        }
+
+        var serializedIn   = shapes[si++];
+        var serializedOut  = shapes[si++];
+        var serializedAct  = shapes[si++];
+
+        if (serializedIn != _inputSize || serializedOut != _outputSize)
             throw new InvalidOperationException("Checkpoint layer shape does not match the active network.");
-        }
 
-        var expectedActivation = _activation.HasValue ? (int)_activation.Value + 1 : 0;
-        if (serializedActivation != expectedActivation)
-        {
+        var expectedAct = _activation.HasValue ? (int)_activation.Value + 1 : 0;
+        if (serializedAct != expectedAct)
             throw new InvalidOperationException("Checkpoint activation does not match the active network.");
-        }
 
-        for (var index = 0; index < _weights.Length; index++)
-        {
-            _weights[index] = weights[weightIndex++];
-        }
+        for (var i = 0; i < _weights.Length; i++) _weights[i] = weights[wi++];
+        for (var i = 0; i < _biases.Length;  i++) _biases[i]  = weights[wi++];
 
-        for (var index = 0; index < _biases.Length; index++)
-        {
-            _biases[index] = weights[weightIndex++];
-        }
-
-        // Reset Adam moments on checkpoint load so they warm up from the new weights
-        if (_useAdam)
+        // Reset Adam moments so they warm up from the new weights
+        if (_optimizer == RLOptimizerKind.Adam)
         {
             Array.Clear(_wm!, 0, _wm!.Length);
             Array.Clear(_wv!, 0, _wv!.Length);
@@ -409,19 +301,75 @@ internal sealed class DenseLayer
         }
     }
 
-    private static float Activate(float value, RLActivationKind activation)
+    // ── Private helpers ──────────────────────────────────────────────────────
+
+    private float[] ComputeLocalGradient(float[] outputGrad, float[]? preActivation)
     {
-        return activation == RLActivationKind.Relu ? Mathf.Max(0.0f, value) : Mathf.Tanh(value);
+        if (!_activation.HasValue || preActivation is null)
+            return outputGrad.ToArray();
+
+        var local = outputGrad.ToArray();
+        for (var i = 0; i < local.Length; i++)
+            local[i] *= ActivateDerivative(preActivation[i], _activation.Value);
+        return local;
     }
 
-    private static float ActivateDerivative(float value, RLActivationKind activation)
+    private float[] ComputeInputGradient(float[] localGrad)
+    {
+        var inputGrad = new float[_inputSize];
+        for (var oi = 0; oi < _outputSize; oi++)
+            for (var ii = 0; ii < _inputSize; ii++)
+                inputGrad[ii] += _weights[oi * _inputSize + ii] * localGrad[oi];
+        return inputGrad;
+    }
+
+    private void ApplyWeightUpdate(float[] input, float[] localGrad, float learningRate, float gradScale)
+    {
+        if (_optimizer == RLOptimizerKind.None) return;
+
+        if (_optimizer == RLOptimizerKind.Adam)
+        {
+            _adamB1Pow *= AdamBeta1;
+            _adamB2Pow *= AdamBeta2;
+            var b1Corr = 1f - _adamB1Pow;
+            var b2Corr = 1f - _adamB2Pow;
+
+            for (var oi = 0; oi < _outputSize; oi++)
+            {
+                for (var ii = 0; ii < _inputSize; ii++)
+                {
+                    var wi = oi * _inputSize + ii;
+                    var g  = localGrad[oi] * input[ii] * gradScale;
+                    _wm![wi] = AdamBeta1 * _wm[wi] + (1f - AdamBeta1) * g;
+                    _wv![wi] = AdamBeta2 * _wv[wi] + (1f - AdamBeta2) * g * g;
+                    _weights[wi] -= learningRate * (_wm[wi] / b1Corr) / (Mathf.Sqrt(_wv![wi] / b2Corr) + AdamEpsilon);
+                }
+
+                var bg = localGrad[oi] * gradScale;
+                _bm![oi] = AdamBeta1 * _bm[oi] + (1f - AdamBeta1) * bg;
+                _bv![oi] = AdamBeta2 * _bv[oi] + (1f - AdamBeta2) * bg * bg;
+                _biases[oi] -= learningRate * (_bm[oi] / b1Corr) / (Mathf.Sqrt(_bv![oi] / b2Corr) + AdamEpsilon);
+            }
+        }
+        else // SGD
+        {
+            for (var oi = 0; oi < _outputSize; oi++)
+            {
+                for (var ii = 0; ii < _inputSize; ii++)
+                    _weights[oi * _inputSize + ii] -= learningRate * localGrad[oi] * input[ii] * gradScale;
+                _biases[oi] -= learningRate * localGrad[oi] * gradScale;
+            }
+        }
+    }
+
+    private static float Activate(float value, RLActivationKind activation) =>
+        activation == RLActivationKind.Relu ? Mathf.Max(0.0f, value) : Mathf.Tanh(value);
+
+    private static float ActivateDerivative(float preActivation, RLActivationKind activation)
     {
         if (activation == RLActivationKind.Relu)
-        {
-            return value > 0.0f ? 1.0f : 0.0f;
-        }
-
-        var tanh = Mathf.Tanh(value);
-        return 1.0f - (tanh * tanh);
+            return preActivation > 0.0f ? 1.0f : 0.0f;
+        var t = Mathf.Tanh(preActivation);
+        return 1.0f - t * t;
     }
 }
