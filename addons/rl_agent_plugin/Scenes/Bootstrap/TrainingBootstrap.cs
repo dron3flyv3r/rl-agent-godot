@@ -38,6 +38,8 @@ public partial class TrainingBootstrap : Node
     private readonly Dictionary<string, bool>       _pfspEnabledByGroup  = new(StringComparer.Ordinal);
     private readonly Dictionary<string, float>      _pfspAlphaByGroup    = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int>        _maxPoolSizeByGroup  = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, float> _quickTestRewardTotalsByGroup = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _quickTestEpisodeLengthTotalsByGroup = new(StringComparer.Ordinal);
 
     // Per-agent state
     private readonly Dictionary<IRLAgent, AgentRuntimeState> _agentStates = new();
@@ -51,6 +53,11 @@ public partial class TrainingBootstrap : Node
     private int _actionRepeat = 1;
     private int _batchSize = 1;
     private bool _showBatchGrid;
+    private bool _quickTestMode;
+    private int _quickTestEpisodeLimit;
+    private bool _quickTestShowSpyOverlay;
+    private string _finalStatus = "stopped";
+    private string _finalStatusMessage = "Training ended.";
     private readonly List<SubViewport> _viewports = new();
 
     public override void _Ready()
@@ -83,18 +90,30 @@ public partial class TrainingBootstrap : Node
             return;
         }
 
+        _quickTestMode = _manifest.QuickTestMode;
+        _quickTestEpisodeLimit = Math.Max(1, _manifest.QuickTestEpisodeLimit);
+        _quickTestShowSpyOverlay = _quickTestMode && _manifest.QuickTestShowSpyOverlay;
+
         _batchSize = Math.Max(1, firstAcademy.BatchSize);
         _checkpointInterval = Math.Max(1, firstAcademy.CheckpointInterval);
         _actionRepeat = Math.Max(1, firstAcademy.ActionRepeat);
         _showBatchGrid = firstAcademy.ShowBatchGrid;
+        if (_quickTestMode)
+        {
+            _batchSize = 1;
+            _showBatchGrid = false;
+        }
 
         _previousTimeScale = Engine.TimeScale;
         _previousMaxPhysicsStepsPerFrame = Engine.MaxPhysicsStepsPerFrame;
-        var simulationSpeed = Math.Max(0.1f, firstAcademy.SimulationSpeed);
+        var simulationSpeed = _quickTestMode
+            ? 1.0
+            : Math.Max(0.1f, firstAcademy.SimulationSpeed);
         Engine.TimeScale = simulationSpeed;
         Engine.MaxPhysicsStepsPerFrame = Math.Max(8, (int)Math.Ceiling(simulationSpeed) + 1);
 
-        if (_manifest.BatchSize != _batchSize
+        var manifestBatchSize = _quickTestMode ? 1 : _manifest.BatchSize;
+        if (manifestBatchSize != _batchSize
             || _manifest.CheckpointInterval != _checkpointInterval
             || _manifest.ActionRepeat != _actionRepeat
             || Math.Abs(_manifest.SimulationSpeed - simulationSpeed) > 0.001f)
@@ -185,6 +204,13 @@ public partial class TrainingBootstrap : Node
         }
 
         SetupBatchDisplay();
+
+        if (_quickTestShowSpyOverlay)
+        {
+            var spyOverlay = new RLAgentSpyOverlay();
+            spyOverlay.Initialize(firstAcademy, includeTrainAgents: true);
+            firstAcademy.AddChild(spyOverlay);
+        }
 
         if (_academies.Count == 0)
         {
@@ -331,9 +357,20 @@ public partial class TrainingBootstrap : Node
         _allTrainAgents = _academies.SelectMany(a => a.GetAgents(RLAgentControlMode.Train)).ToList();
 
         _statusWriter = new RunMetricsWriter(string.Empty, _manifest.StatusPath);
-        _statusWriter.WriteStatus("running", _manifest.ScenePath, _totalSteps, 0, "Training started.");
+        _statusWriter.WriteStatus(
+            "running",
+            _manifest.ScenePath,
+            _totalSteps,
+            0,
+            _quickTestMode
+                ? $"Quick test running ({_quickTestEpisodeLimit} episode target)."
+                : "Training started.");
         GD.Print($"[RL] Run: {_manifest.RunId}");
-        if (_batchSize > 1)
+        if (_quickTestMode)
+        {
+            GD.Print($"[RL] Quick test mode: stopping after {_quickTestEpisodeLimit} completed episode(s).");
+        }
+        else if (_batchSize > 1)
         {
             GD.Print($"[RL] Batch size: {_batchSize} ({_allTrainAgents.Count} total agents)");
         }
@@ -456,8 +493,19 @@ public partial class TrainingBootstrap : Node
         if (trainerConfig is not null && _totalSteps % Math.Max(1, trainerConfig.StatusWriteIntervalSteps) == 0)
         {
             var totalEpisodes = _episodeCountByGroup.Values.Sum();
-            _statusWriter.WriteStatus("running", _manifest.ScenePath, _totalSteps, totalEpisodes,
-                $"Training update {_updateCountByGroup.Values.Sum()}");
+            var statusMessage = _quickTestMode
+                ? $"Quick test running: {totalEpisodes}/{_quickTestEpisodeLimit} episodes complete."
+                : $"Training update {_updateCountByGroup.Values.Sum()}";
+            _statusWriter.WriteStatus("running", _manifest.ScenePath, _totalSteps, totalEpisodes, statusMessage);
+        }
+
+        if (_quickTestMode)
+        {
+            var totalEpisodes = _episodeCountByGroup.Values.Sum();
+            if (totalEpisodes >= _quickTestEpisodeLimit)
+            {
+                CompleteQuickTest();
+            }
         }
     }
 
@@ -485,7 +533,44 @@ public partial class TrainingBootstrap : Node
         }
 
         var totalEpisodes = _episodeCountByGroup.Values.Sum();
-        _statusWriter?.WriteStatus("stopped", _manifest.ScenePath, _totalSteps, totalEpisodes, "Training ended.");
+        _statusWriter?.WriteStatus(_finalStatus, _manifest.ScenePath, _totalSteps, totalEpisodes, _finalStatusMessage);
+    }
+
+    private void CompleteQuickTest()
+    {
+        if (!_quickTestMode)
+        {
+            return;
+        }
+
+        _finalStatus = "done";
+        _finalStatusMessage = BuildQuickTestSummary();
+        GD.Print($"[RL] {_finalStatusMessage}");
+        GetTree().Quit();
+    }
+
+    private string BuildQuickTestSummary()
+    {
+        var totalEpisodes = _episodeCountByGroup.Values.Sum();
+        var summaries = new List<string>();
+        foreach (var (groupId, episodeCount) in _episodeCountByGroup.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            if (episodeCount <= 0)
+            {
+                continue;
+            }
+
+            var totalReward = _quickTestRewardTotalsByGroup.GetValueOrDefault(groupId);
+            var totalLength = _quickTestEpisodeLengthTotalsByGroup.GetValueOrDefault(groupId);
+            var displayName = GetGroupDisplayName(groupId);
+            summaries.Add(
+                $"{displayName}: avg reward {(totalReward / episodeCount):0.###}, avg length {(totalLength / (float)episodeCount):0.#}");
+        }
+
+        var suffix = summaries.Count > 0
+            ? $" {string.Join(" | ", summaries)}"
+            : string.Empty;
+        return $"Quick test complete: {totalEpisodes} episode(s), {_totalSteps} step(s).{suffix}";
     }
 
     private bool TryConfigureSelfPlay(out string error)
@@ -590,9 +675,11 @@ public partial class TrainingBootstrap : Node
             : _selfPlayPairsByKey.Values.Max(pair => pair.LearnerCount);
         if (_batchSize < requiredBatchCopies)
         {
-            error =
-                $"Self-play requires at least {requiredBatchCopies} batch copies for the configured rival groups, " +
-                $"but BatchSize is {_batchSize}.";
+            error = _quickTestMode
+                ? $"Quick test does not support the configured self-play setup because it forces BatchSize = 1, " +
+                  $"but self-play requires at least {requiredBatchCopies} batch copies."
+                : $"Self-play requires at least {requiredBatchCopies} batch copies for the configured rival groups, " +
+                  $"but BatchSize is {_batchSize}.";
             return false;
         }
 
@@ -845,6 +932,8 @@ public partial class TrainingBootstrap : Node
             {
                 _episodeCountByGroup[groupId] += 1;
                 _lastEpisodeRewardByGroup[groupId] = pending.Agent.EpisodeReward;
+                _quickTestRewardTotalsByGroup[groupId] = _quickTestRewardTotalsByGroup.GetValueOrDefault(groupId) + pending.Agent.EpisodeReward;
+                _quickTestEpisodeLengthTotalsByGroup[groupId] = _quickTestEpisodeLengthTotalsByGroup.GetValueOrDefault(groupId) + pending.Agent.EpisodeSteps;
                 var episodeCount = _episodeCountByGroup[groupId];
 
                 if (role.IsSelfPlayLearner)

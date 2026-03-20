@@ -19,7 +19,7 @@ public partial class RLAgent2D : Node2D, IRLAgent
     private readonly Dictionary<string, float> _episodeRewardComponents = new(StringComparer.Ordinal);
     private Dictionary<string, float> _lastStepRewardBreakdown = new(StringComparer.Ordinal);
     private bool _donePending;
-    private RLAgentControlMode _controlMode = RLAgentControlMode.Train;
+    private RLAgentControlMode _controlMode = RLAgentControlMode.Auto;
 
     [ExportGroup("Control")]
     [Export]
