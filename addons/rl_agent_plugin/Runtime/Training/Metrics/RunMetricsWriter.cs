@@ -54,7 +54,8 @@ public sealed class RunMetricsWriter
         string opponentCheckpointPath = "",
         long? opponentUpdateCount = null,
         float? learnerElo   = null,
-        float? poolWinRate  = null)
+        float? poolWinRate  = null,
+        float? curriculumProgress = null)
     {
         EnsureFileDirectory(_metricsPath);
         var mode = FileAccess.FileExists(_metricsPath)
@@ -132,6 +133,11 @@ public sealed class RunMetricsWriter
         if (poolWinRate.HasValue)
         {
             payload["pool_avg_win_rate"] = poolWinRate.Value;
+        }
+
+        if (curriculumProgress.HasValue)
+        {
+            payload["curriculum_progress"] = curriculumProgress.Value;
         }
 
         file.StoreLine(Json.Stringify(payload));

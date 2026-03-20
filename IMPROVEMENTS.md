@@ -581,9 +581,9 @@ Suggested implementation order for the first five items:
 | Yes | 4 (nice to have) | Hyperparameter schedules |
 | Yes | 4 (nice to have) | `RLInferenceRunner` helper |
 | Yes | 4 (nice to have) | In-editor quick inference mode |
-| No | 4 (nice to have) | Quick Test mode |
+| Yes | 4 (nice to have) | Quick Test mode |
 | Yes | 4 (nice to have) | Remove duplicated inline agent config vs `RLAgentConfig` resource state |
-| No | 5 (advanced) | Curriculum learning hook |
+| Yes | 5 (advanced) | Curriculum learning hook |
 | Yes | 5 (advanced) | `IPolicyNetwork` interface for custom architectures |
 | No | 5 (advanced) | Multi-observation / heterogeneous input support |
 | No | 5 (advanced) | Evaluation rollouts |

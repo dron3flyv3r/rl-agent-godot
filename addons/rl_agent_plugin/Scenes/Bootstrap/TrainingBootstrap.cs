@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Godot;
 
 namespace RlAgentPlugin.Runtime;
@@ -40,6 +41,7 @@ public partial class TrainingBootstrap : Node
     private readonly Dictionary<string, int>        _maxPoolSizeByGroup  = new(StringComparer.Ordinal);
     private readonly Dictionary<string, float> _quickTestRewardTotalsByGroup = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _quickTestEpisodeLengthTotalsByGroup = new(StringComparer.Ordinal);
+    private readonly Queue<bool> _curriculumEpisodeOutcomes = new();
 
     // Per-agent state
     private readonly Dictionary<IRLAgent, AgentRuntimeState> _agentStates = new();
@@ -53,12 +55,64 @@ public partial class TrainingBootstrap : Node
     private int _actionRepeat = 1;
     private int _batchSize = 1;
     private bool _showBatchGrid;
+    private bool _asyncGradientUpdates;
+    private bool _parallelPolicyGroups;
     private bool _quickTestMode;
     private int _quickTestEpisodeLimit;
     private bool _quickTestShowSpyOverlay;
     private string _finalStatus = "stopped";
     private string _finalStatusMessage = "Training ended.";
     private readonly List<SubViewport> _viewports = new();
+    private int _curriculumSuccessCount;
+
+    private void SetCurriculumProgressForAllAcademies(float progress)
+    {
+        foreach (var academy in _academies)
+            academy.SetCurriculumProgress(progress);
+    }
+
+    private void ResetAdaptiveCurriculumWindow()
+    {
+        _curriculumEpisodeOutcomes.Clear();
+        _curriculumSuccessCount = 0;
+    }
+
+    private void UpdateAdaptiveCurriculum(RLCurriculumConfig config, float episodeReward)
+    {
+        var windowSize = Math.Max(1, config.SuccessWindowEpisodes);
+        var wasSuccess = episodeReward >= config.SuccessRewardThreshold;
+        _curriculumEpisodeOutcomes.Enqueue(wasSuccess);
+        if (wasSuccess)
+            _curriculumSuccessCount += 1;
+
+        while (_curriculumEpisodeOutcomes.Count > windowSize)
+        {
+            if (_curriculumEpisodeOutcomes.Dequeue())
+                _curriculumSuccessCount -= 1;
+        }
+
+        if (config.RequireFullWindow && _curriculumEpisodeOutcomes.Count < windowSize)
+            return;
+
+        var sampleCount = _curriculumEpisodeOutcomes.Count;
+        if (sampleCount == 0)
+            return;
+
+        var successRate = _curriculumSuccessCount / (float)sampleCount;
+        var currentProgress = _academies.Count > 0 ? _academies[0].CurriculumProgress : 0f;
+        var nextProgress = currentProgress;
+
+        if (successRate >= config.PromoteThreshold)
+            nextProgress = Mathf.Clamp(currentProgress + config.ProgressStepUp, 0f, 1f);
+        else if (successRate <= config.DemoteThreshold)
+            nextProgress = Mathf.Clamp(currentProgress - config.ProgressStepDown, 0f, 1f);
+
+        if (!Mathf.IsEqualApprox(nextProgress, currentProgress))
+        {
+            SetCurriculumProgressForAllAcademies(nextProgress);
+            ResetAdaptiveCurriculumWindow();
+        }
+    }
 
     public override void _Ready()
     {
@@ -98,10 +152,14 @@ public partial class TrainingBootstrap : Node
         _checkpointInterval = Math.Max(1, firstAcademy.CheckpointInterval);
         _actionRepeat = Math.Max(1, firstAcademy.ActionRepeat);
         _showBatchGrid = firstAcademy.ShowBatchGrid;
+        _asyncGradientUpdates = firstAcademy.AsyncGradientUpdates;
+        _parallelPolicyGroups = firstAcademy.ParallelPolicyGroups;
         if (_quickTestMode)
         {
             _batchSize = 1;
             _showBatchGrid = false;
+            _asyncGradientUpdates = false;
+            _parallelPolicyGroups = false;
         }
 
         _previousTimeScale = Engine.TimeScale;
@@ -132,6 +190,7 @@ public partial class TrainingBootstrap : Node
             var sceneInstance = batchIdx == 0 ? firstSceneInstance : packedScene.Instantiate();
 
             var viewport = new SubViewport();
+            viewport.OwnWorld3D = true;
             viewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
             viewport.HandleInputLocally = false;
             viewport.AddChild(sceneInstance);
@@ -346,6 +405,10 @@ public partial class TrainingBootstrap : Node
 
         foreach (var environment in _environments)
         {
+            // In quick-test mode, seed the curriculum to the debug value so OnEpisodeBegin sees the right difficulty.
+            if (_quickTestMode && environment.Academy.DebugCurriculumProgress > 0f)
+                environment.Academy.SetCurriculumProgress(environment.Academy.DebugCurriculumProgress);
+
             if (!TryInitializeEnvironment(environment, out var initializationError))
             {
                 GD.PushError($"[RL] {initializationError}");
@@ -434,11 +497,16 @@ public partial class TrainingBootstrap : Node
             }
         }
 
-        foreach (var (groupId, pendingDecisions) in pendingLearningDecisionsByGroup)
+        if (_parallelPolicyGroups && pendingLearningDecisionsByGroup.Count > 1)
         {
-            if (_trainersByGroup.TryGetValue(groupId, out var trainer))
+            RunParallelGroupDecisions(pendingLearningDecisionsByGroup);
+        }
+        else
+        {
+            foreach (var (groupId, pendingDecisions) in pendingLearningDecisionsByGroup)
             {
-                ProcessLearningDecisions(groupId, trainer, pendingDecisions);
+                if (_trainersByGroup.TryGetValue(groupId, out var trainer))
+                    ProcessLearningDecisions(groupId, trainer, pendingDecisions);
             }
         }
 
@@ -462,7 +530,18 @@ public partial class TrainingBootstrap : Node
                 });
             }
 
-            var updateStats = trainer.TryUpdate(groupId, _totalSteps, episodeCount);
+            TrainerUpdateStats? updateStats;
+            if (_asyncGradientUpdates && trainer is IAsyncTrainer asyncTrainer)
+            {
+                // Poll for any result completed since last frame, then schedule the next job.
+                updateStats = asyncTrainer.TryPollResult(groupId, _totalSteps, episodeCount);
+                asyncTrainer.TryScheduleBackgroundUpdate(groupId, _totalSteps, episodeCount);
+            }
+            else
+            {
+                updateStats = trainer.TryUpdate(groupId, _totalSteps, episodeCount);
+            }
+
             if (updateStats is null)
             {
                 continue;
@@ -523,6 +602,12 @@ public partial class TrainingBootstrap : Node
         {
             var episodeCount = _episodeCountByGroup.GetValueOrDefault(groupId);
             var updateCount = _updateCountByGroup.GetValueOrDefault(groupId);
+
+            // If an async gradient update is in flight, wait for it and apply the result so the
+            // final checkpoint reflects the most recent trained weights.
+            if (_asyncGradientUpdates && trainer is IAsyncTrainer asyncTrainer)
+                asyncTrainer.FlushPendingUpdate(groupId, _totalSteps, episodeCount);
+
             var finalCheckpoint = trainer.CreateCheckpoint(groupId, _totalSteps, episodeCount, updateCount);
             PersistCheckpoint(groupId, finalCheckpoint, updateCount, forceLatestWrite: true, allowFrozenSnapshot: false);
 
@@ -586,6 +671,12 @@ public partial class TrainingBootstrap : Node
         _pfspAlphaByGroup.Clear();
         _maxPoolSizeByGroup.Clear();
         _eloTrackersByGroup.Clear();
+
+        if (_quickTestMode)
+        {
+            GD.Print("[RL] Quick test mode: skipping self-play setup — all agents will train independently.");
+            return true;
+        }
 
         var configuredPairings = GetConfiguredSelfPlayPairings();
         return configuredPairings.Count == 0
@@ -790,6 +881,8 @@ public partial class TrainingBootstrap : Node
 
     private void SaveInitialCheckpoints()
     {
+        if (_quickTestMode) return;
+
         foreach (var (groupId, trainer) in _trainersByGroup)
         {
             var checkpoint = trainer.CreateCheckpoint(groupId, _totalSteps, _episodeCountByGroup[groupId], _updateCountByGroup[groupId]);
@@ -879,7 +972,76 @@ public partial class TrainingBootstrap : Node
         return true;
     }
 
+    // ── Learning decision pipeline ────────────────────────────────────────────
+    //
+    // The pipeline is split into four phases so that the pure-math phases (A and C) can be
+    // parallelised across policy groups when ParallelPolicyGroups is enabled.
+    //
+    //  Phase A  EstimateNextValues         — pure math, parallelisable across groups
+    //  Phase B  RecordTransitionsAndReset  — Godot API + list mutations, main thread only
+    //  Phase C  trainer.SampleActions      — pure math, parallelisable across groups
+    //  Phase D  ApplyGroupDecisions        — Godot API (ApplyDecision), main thread only
+
+    /// <summary>Single-group orchestrator used when parallelism is off or only one group is active.</summary>
     private void ProcessLearningDecisions(string groupId, ITrainer trainer, List<PendingDecisionContext> pendingDecisions)
+    {
+        var nextValues = EstimateNextValues(trainer, pendingDecisions);
+        var decisionObservations = RecordTransitionsAndResetEpisodes(groupId, trainer, pendingDecisions, nextValues);
+        var decisions = trainer.SampleActions(VectorBatch.FromRows(decisionObservations));
+        ApplyGroupDecisions(groupId, pendingDecisions, decisions, decisionObservations);
+    }
+
+    /// <summary>
+    /// Multi-group orchestrator: phases A and C run in parallel across groups;
+    /// phases B and D stay sequential on the main thread.
+    /// </summary>
+    private void RunParallelGroupDecisions(Dictionary<string, List<PendingDecisionContext>> pendingByGroup)
+    {
+        var groups = pendingByGroup.ToList();
+        var nextValuesPerGroup      = new float[groups.Count][];
+        var decisionObsPerGroup     = new List<float[]>[groups.Count];
+        var decisionsPerGroup       = new PolicyDecision[groups.Count][];
+
+        // Phase A: parallel value estimation (pure math, no Godot API, no shared writes)
+        Parallel.For(0, groups.Count, i =>
+        {
+            var (groupId, pending) = groups[i];
+            if (_trainersByGroup.TryGetValue(groupId, out var t))
+                nextValuesPerGroup[i] = EstimateNextValues(t, pending);
+        });
+
+        // Phase B: main-thread transition recording + episode resets (Godot API)
+        for (var i = 0; i < groups.Count; i++)
+        {
+            var (groupId, pending) = groups[i];
+            if (_trainersByGroup.TryGetValue(groupId, out var trainer) && nextValuesPerGroup[i] is not null)
+                decisionObsPerGroup[i] = RecordTransitionsAndResetEpisodes(groupId, trainer, pending, nextValuesPerGroup[i]);
+        }
+
+        // Phase C: parallel action sampling (pure math, no Godot API, no shared writes)
+        Parallel.For(0, groups.Count, i =>
+        {
+            var (groupId, _) = groups[i];
+            if (_trainersByGroup.TryGetValue(groupId, out var t) && decisionObsPerGroup[i] is not null)
+                decisionsPerGroup[i] = t.SampleActions(VectorBatch.FromRows(decisionObsPerGroup[i]));
+        });
+
+        // Phase D: main-thread ApplyDecision (Godot API) + state updates
+        for (var i = 0; i < groups.Count; i++)
+        {
+            var (groupId, pending) = groups[i];
+            if (decisionsPerGroup[i] is not null && decisionObsPerGroup[i] is not null)
+                ApplyGroupDecisions(groupId, pending, decisionsPerGroup[i], decisionObsPerGroup[i]);
+        }
+    }
+
+    // ── Phase A ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Pure-math: calls <c>EstimateValues</c> for non-terminal agents to obtain bootstrap
+    /// values for GAE. Safe to call from any thread; each group has its own trainer instance.
+    /// </summary>
+    private static float[] EstimateNextValues(ITrainer trainer, IReadOnlyList<PendingDecisionContext> pendingDecisions)
     {
         var nextValues = new float[pendingDecisions.Count];
         var nonTerminalObservations = new List<float[]>();
@@ -898,12 +1060,24 @@ public partial class TrainingBootstrap : Node
         {
             var estimatedValues = trainer.EstimateValues(VectorBatch.FromRows(nonTerminalObservations));
             for (var index = 0; index < nonTerminalIndices.Count; index++)
-            {
                 nextValues[nonTerminalIndices[index]] = estimatedValues[index];
-            }
         }
 
+        return nextValues;
+    }
+
+    // ── Phase B ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Main-thread: record transitions into the trainer buffer, handle episode-done logic
+    /// (ELO, metrics, curriculum, matchup refresh, ResetEpisode), and collect next observations.
+    /// Returns the observation list used to feed Phase C's action sampling.
+    /// </summary>
+    private List<float[]> RecordTransitionsAndResetEpisodes(
+        string groupId, ITrainer trainer, List<PendingDecisionContext> pendingDecisions, float[] nextValues)
+    {
         var decisionObservations = new List<float[]>(pendingDecisions.Count);
+
         for (var index = 0; index < pendingDecisions.Count; index++)
         {
             var pending = pendingDecisions[index];
@@ -935,45 +1109,64 @@ public partial class TrainingBootstrap : Node
                 _quickTestRewardTotalsByGroup[groupId] = _quickTestRewardTotalsByGroup.GetValueOrDefault(groupId) + pending.Agent.EpisodeReward;
                 _quickTestEpisodeLengthTotalsByGroup[groupId] = _quickTestEpisodeLengthTotalsByGroup.GetValueOrDefault(groupId) + pending.Agent.EpisodeSteps;
                 var episodeCount = _episodeCountByGroup[groupId];
+                var curriculumEnvironment = _environments[state.EnvironmentIndex];
 
                 if (role.IsSelfPlayLearner)
                 {
-                    var won   = pending.Agent.EpisodeReward > _winThresholdByGroup.GetValueOrDefault(groupId, 0f);
-                    var score = won ? 1.0f : 0.0f;
+                    var won = pending.Agent.EpisodeReward > _winThresholdByGroup.GetValueOrDefault(groupId, 0f);
                     if (_opponentBanksByGroup.TryGetValue(role.OpponentGroupId, out var ob))
                         ob.Pool.RecordOutcome(role.ActiveSnapshotKey, won);
                     if (_eloTrackersByGroup.TryGetValue(groupId, out var elo))
                     {
                         var rec = ob?.Pool.Records.FirstOrDefault(r => r.SnapshotKey == role.ActiveSnapshotKey);
-                        elo.Update(rec?.SnapshotElo ?? EloTracker.InitialRating, score);
+                        elo.Update(rec?.SnapshotElo ?? EloTracker.InitialRating, won ? 1.0f : 0.0f);
                     }
                 }
 
-                _metricsWritersByGroup[groupId].AppendMetric(
-                    pending.Agent.EpisodeReward,
-                    pending.Agent.EpisodeSteps,
-                    _lastPolicyLossByGroup[groupId],
-                    _lastValueLossByGroup[groupId],
-                    _lastEntropyByGroup[groupId],
-                    _lastClipFractionByGroup[groupId],
-                    _totalSteps,
-                    episodeCount,
-                    pending.Agent.GetEpisodeRewardBreakdown(),
-                    policyGroup: GetGroupDisplayName(groupId),
-                    opponentGroup: role.IsSelfPlayLearner ? GetGroupDisplayName(role.OpponentGroupId) : string.Empty,
-                    opponentSource: role.IsSelfPlayLearner ? role.ActiveOpponentSource : string.Empty,
-                    opponentCheckpointPath: role.IsSelfPlayLearner ? role.ActiveOpponentCheckpointPath : string.Empty,
-                    opponentUpdateCount: role.IsSelfPlayLearner ? role.ActiveOpponentUpdateCount : null,
-                    learnerElo:  role.IsSelfPlayLearner && _eloTrackersByGroup.TryGetValue(groupId, out var ep)
-                        ? ep.Rating : null,
-                    poolWinRate: role.IsSelfPlayLearner && _opponentBanksByGroup.TryGetValue(role.OpponentGroupId, out var opb)
-                        ? opb.Pool.AverageWinRate : null);
+                if (!_quickTestMode)
+                {
+                    _metricsWritersByGroup[groupId].AppendMetric(
+                        pending.Agent.EpisodeReward,
+                        pending.Agent.EpisodeSteps,
+                        _lastPolicyLossByGroup[groupId],
+                        _lastValueLossByGroup[groupId],
+                        _lastEntropyByGroup[groupId],
+                        _lastClipFractionByGroup[groupId],
+                        _totalSteps,
+                        episodeCount,
+                        pending.Agent.GetEpisodeRewardBreakdown(),
+                        policyGroup: GetGroupDisplayName(groupId),
+                        opponentGroup: role.IsSelfPlayLearner ? GetGroupDisplayName(role.OpponentGroupId) : string.Empty,
+                        opponentSource: role.IsSelfPlayLearner ? role.ActiveOpponentSource : string.Empty,
+                        opponentCheckpointPath: role.IsSelfPlayLearner ? role.ActiveOpponentCheckpointPath : string.Empty,
+                        opponentUpdateCount: role.IsSelfPlayLearner ? role.ActiveOpponentUpdateCount : null,
+                        learnerElo: role.IsSelfPlayLearner && _eloTrackersByGroup.TryGetValue(groupId, out var ep)
+                            ? ep.Rating : null,
+                        poolWinRate: role.IsSelfPlayLearner && _opponentBanksByGroup.TryGetValue(role.OpponentGroupId, out var opb)
+                            ? opb.Pool.AverageWinRate : null,
+                        curriculumProgress: curriculumEnvironment.Academy.Curriculum is not null
+                            ? curriculumEnvironment.Academy.CurriculumProgress
+                            : null);
+                }
+
+                // Curriculum: update progress before reset so OnEpisodeBegin sees the new difficulty.
+                var curriculumConfig = curriculumEnvironment.Academy.Curriculum;
+                if (curriculumConfig is not null)
+                {
+                    if (curriculumConfig.Mode == RLCurriculumMode.SuccessRate)
+                    {
+                        UpdateAdaptiveCurriculum(curriculumConfig, pending.Agent.EpisodeReward);
+                    }
+                    else if (curriculumEnvironment.Academy.MaxCurriculumSteps > 0)
+                    {
+                        var progress = Mathf.Clamp(_totalSteps / (float)curriculumEnvironment.Academy.MaxCurriculumSteps, 0f, 1f);
+                        SetCurriculumProgressForAllAcademies(progress);
+                    }
+                }
 
                 PrepareEnvironmentForNextEpisode(state.EnvironmentIndex);
                 if (!EnsureEnvironmentMatchupsReady(state.EnvironmentIndex))
-                {
                     GD.PushWarning($"[RL] Could not refresh self-play matchup for environment {state.EnvironmentIndex}; reusing the previous opponent policy.");
-                }
 
                 pending.Agent.ResetEpisode();
                 decisionObservations.Add(pending.Agent.CollectObservationArray());
@@ -984,7 +1177,21 @@ public partial class TrainingBootstrap : Node
             }
         }
 
-        var decisions = trainer.SampleActions(VectorBatch.FromRows(decisionObservations));
+        return decisionObservations;
+    }
+
+    // ── Phase D ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Main-thread: writes the sampled decisions back into each agent's runtime state and
+    /// calls <c>ApplyDecision</c> on the Godot scene tree.
+    /// </summary>
+    private void ApplyGroupDecisions(
+        string groupId,
+        List<PendingDecisionContext> pendingDecisions,
+        PolicyDecision[] decisions,
+        IReadOnlyList<float[]> decisionObservations)
+    {
         var entropySum = 0f;
         for (var index = 0; index < pendingDecisions.Count; index++)
         {
@@ -1049,6 +1256,7 @@ public partial class TrainingBootstrap : Node
         bool forceLatestWrite = false,
         bool allowFrozenSnapshot = true)
     {
+        if (_quickTestMode) return;
         var checkpointPath = GetGroupCheckpointPath(groupId);
         var participatesInSelfPlay = _selfPlayParticipantGroups.Contains(groupId);
         var shouldWriteLatest = forceLatestWrite

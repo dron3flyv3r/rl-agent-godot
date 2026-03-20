@@ -410,7 +410,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
         _setupDock.SetLaunchStatus($"Launching {manifest.RunId}\n{ProjectSettings.GlobalizePath(manifest.RunDirectory)}");
 
         // Write initial meta.json so the dashboard can show policy-group names on export.
-        WriteRunMeta(manifest.RunId, validation.ExportNames, validation.ExportGroups);
+        WriteRunMeta(manifest.RunId, validation.ExportNames, validation.ExportGroups, validation.HasCurriculum);
 
         var bootstrapScene = "res://addons/rl_agent_plugin/Scenes/Bootstrap/TrainingBootstrap.tscn";
         EditorInterface.Singleton.PlayCustomScene(bootstrapScene);
@@ -460,12 +460,12 @@ public partial class RLAgentPluginEditor : EditorPlugin
         manifest.ScenePath = scenePath;
         manifest.AcademyNodePath = validation.AcademyPath;
         manifest.RunId = $"{runPrefix}_{Time.GetUnixTimeFromSystem()}";
-        manifest.RunDirectory = $"res://RL-Agent-Training/runs/{manifest.RunId}";
-        manifest.CheckpointPath = $"{manifest.RunDirectory}/{runPrefix}_checkpoint.json";
+        manifest.RunDirectory = "user://rl_agent_plugin/quick_test";
+        manifest.CheckpointPath = string.Empty;
         manifest.TrainingConfigPath = validation.TrainingConfigPath;
         manifest.TrainerConfigPath = validation.TrainerConfigPath;
         manifest.NetworkConfigPath = validation.NetworkConfigPath;
-        manifest.MetricsPath = $"{manifest.RunDirectory}/metrics.jsonl";
+        manifest.MetricsPath = string.Empty;
         manifest.StatusPath = $"{manifest.RunDirectory}/status.json";
         manifest.CheckpointInterval = validation.CheckpointInterval;
         manifest.SimulationSpeed = 1.0f;
@@ -473,7 +473,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
         manifest.BatchSize = 1;
         manifest.QuickTestMode = true;
         manifest.QuickTestEpisodeLimit = QuickTestEpisodeLimit;
-        manifest.QuickTestShowSpyOverlay = validation.EnableSpyOverlay;
+        manifest.QuickTestShowSpyOverlay = true;
 
         var writeError = manifest.SaveToUserStorage();
         if (writeError != Error.Ok)
@@ -483,19 +483,13 @@ public partial class RLAgentPluginEditor : EditorPlugin
         }
 
         _activeStatusPath = manifest.StatusPath;
-        var overlayNote = manifest.QuickTestShowSpyOverlay
-            ? " Spy overlay enabled."
-            : " Spy overlay disabled on RLAcademy.";
         _setupDock.SetLaunchStatus(
-            $"Launching quick test: {QuickTestEpisodeLimit} episodes, batch=1, speed=1.0.{overlayNote}");
-
-        WriteRunMeta(manifest.RunId, validation.ExportNames, validation.ExportGroups);
+            $"Launching quick test: {QuickTestEpisodeLimit} episodes, batch=1, speed=1.0. Spy overlay enabled.");
 
         var bootstrapScene = "res://addons/rl_agent_plugin/Scenes/Bootstrap/TrainingBootstrap.tscn";
         EditorInterface.Singleton.PlayCustomScene(bootstrapScene);
         _launchedQuickTestRun = true;
         _launchedTrainingRun = false;
-        _dashboard?.OnTrainingStarted(manifest.RunId);
     }
 
     private void OnRunInferenceRequested()
@@ -571,7 +565,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
             : $"Scene validation failed: {validation.Errors[0]}");
     }
 
-    private static void WriteRunMeta(string runId, IReadOnlyList<string> agentNames, IReadOnlyList<string> agentGroups)
+    private static void WriteRunMeta(string runId, IReadOnlyList<string> agentNames, IReadOnlyList<string> agentGroups, bool hasCurriculum)
     {
         try
         {
@@ -589,6 +583,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
                 { "display_name",  "" },
                 { "agent_names",   agentArr },
                 { "agent_groups",  groupArr },
+                { "has_curriculum", hasCurriculum },
             };
 
             System.IO.File.WriteAllText(
@@ -744,6 +739,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
                 validation.ActionRepeat = ReadIntProperty(academy, "ActionRepeat", 1);
                 validation.BatchSize = ReadIntProperty(academy, "BatchSize", 1);
                 validation.EnableSpyOverlay = ReadBoolProperty(academy, "EnableSpyOverlay");
+                validation.HasCurriculum = ReadResourceProperty(academy, "Curriculum") is not null;
 
                 if (trainingConfigRes is null && trainerConfigRes is null)
                 {
@@ -754,7 +750,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
                 var algorithm = RLAlgorithmKind.PPO;
                 if (trainingConfigRes is RLTrainingConfig trainingConfig)
                 {
-                    algorithm = trainingConfig.Algorithm;
+                    algorithm = trainingConfig.Algorithm?.AlgorithmKind ?? RLAlgorithmKind.PPO;
                 }
                 else if (trainerConfigRes is RLTrainerConfig trainerConfig)
                 {
@@ -895,15 +891,6 @@ public partial class RLAgentPluginEditor : EditorPlugin
                         ? validation.PolicyGroups[0].ActionCount
                         : 0;
                 }
-            }
-
-            if (validation.AgentNames.Count == 0)
-            {
-                validation.Errors.Add("No RLAgent2D or RLAgent3D nodes were found in the selected scene.");
-            }
-            else if (validation.TrainAgentCount == 0)
-            {
-                validation.Errors.Add("No agents are set to Train or Auto mode.");
             }
 
             validation.IsValid = validation.Errors.Count == 0;

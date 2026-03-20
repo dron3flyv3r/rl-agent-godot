@@ -1,8 +1,9 @@
 using System;
+using System.Threading.Tasks;
 
 namespace RlAgentPlugin.Runtime;
 
-public sealed class SacTrainer : ITrainer
+public sealed class SacTrainer : ITrainer, IAsyncTrainer
 {
     private readonly PolicyGroupConfig _config;
     private readonly RLTrainerConfig _trainerConfig;
@@ -14,6 +15,10 @@ public sealed class SacTrainer : ITrainer
     private float _logAlpha;
     private readonly float _targetEntropy;
     private long _totalStepsSeen;
+
+    // ── Async gradient update state ───────────────────────────────────────────
+    private SacNetwork? _shadowNetwork;
+    private Task<SacAsyncResult>? _pendingUpdate;
 
     public SacTrainer(PolicyGroupConfig config)
     {
@@ -117,18 +122,13 @@ public sealed class SacTrainer : ITrainer
     public TrainerUpdateStats? TryUpdate(string groupId, long totalSteps, long episodeCount)
     {
         if (_buffer.Count < _trainerConfig.SacWarmupSteps)
-        {
             return null;
-        }
 
         if (_totalStepsSeen % Math.Max(1, _trainerConfig.SacUpdateEverySteps) != 0)
-        {
             return null;
-        }
 
         var batch = _buffer.SampleBatch(_trainerConfig.SacBatchSize, _rng);
         var alpha = MathF.Exp(_logAlpha);
-
         var policyLoss = 0f;
         var valueLoss = 0f;
         var entropySum = 0f;
@@ -136,13 +136,9 @@ public sealed class SacTrainer : ITrainer
         foreach (var t in batch)
         {
             if (_isContinuous)
-            {
-                UpdateContinuous(t, alpha, ref policyLoss, ref valueLoss, ref entropySum);
-            }
+                UpdateContinuous(_network, t, alpha, _trainerConfig, ref _logAlpha, ref policyLoss, ref valueLoss, ref entropySum, _targetEntropy, _rng);
             else
-            {
-                UpdateDiscrete(t, alpha, ref policyLoss, ref valueLoss, ref entropySum);
-            }
+                UpdateDiscrete(_network, t, alpha, _trainerConfig, ref _logAlpha, ref policyLoss, ref valueLoss, ref entropySum, _targetEntropy);
         }
 
         _network.SoftUpdateTargets(_trainerConfig.SacTau);
@@ -165,13 +161,127 @@ public sealed class SacTrainer : ITrainer
             _config);
     }
 
+    // ── IAsyncTrainer ─────────────────────────────────────────────────────────
+
+    public bool TryScheduleBackgroundUpdate(string groupId, long totalSteps, long episodeCount)
+    {
+        if (_pendingUpdate is not null)
+            return false;
+
+        if (_buffer.Count < _trainerConfig.SacWarmupSteps)
+            return false;
+
+        if (_totalStepsSeen % Math.Max(1, _trainerConfig.SacUpdateEverySteps) != 0)
+            return false;
+
+        // Pre-sample the batch on the main thread (buffer access is main-thread-safe here).
+        var batch = _buffer.SampleBatch(_trainerConfig.SacBatchSize, _rng);
+
+        // Lazy-create shadow with identical architecture.
+        _shadowNetwork ??= new SacNetwork(
+            _config.ObservationSize,
+            _isContinuous ? _config.ContinuousActionDimensions : _config.DiscreteActionCount,
+            _isContinuous,
+            _config.NetworkGraph,
+            _trainerConfig.LearningRate);
+
+        // Copy live weights into shadow so the background job works on an isolated copy.
+        _network.CopyWeightsTo(_shadowNetwork);
+
+        var shadow = _shadowNetwork;
+        var config = _trainerConfig;
+        var isContinuous = _isContinuous;
+        var logAlpha = _logAlpha;
+        var targetEntropy = _targetEntropy;
+        var rng = new Random(); // dedicated RNG — System.Random is not thread-safe
+
+        _pendingUpdate = Task.Run(() => RunBackgroundUpdate(shadow, batch, config, isContinuous, logAlpha, targetEntropy, rng));
+        return true;
+    }
+
+    public TrainerUpdateStats? TryPollResult(string groupId, long totalSteps, long episodeCount)
+    {
+        if (_pendingUpdate is null || !_pendingUpdate.IsCompleted)
+            return null;
+
+        var result = _pendingUpdate.Result;
+        _pendingUpdate = null;
+
+        // Apply trained shadow weights back to the live network (main thread only).
+        _network.LoadWeightsFrom(_shadowNetwork!);
+        _logAlpha = result.NewLogAlpha;
+
+        return new TrainerUpdateStats
+        {
+            PolicyLoss = result.PolicyLoss,
+            ValueLoss = result.ValueLoss,
+            Entropy = result.Entropy,
+            ClipFraction = 0f,
+            Checkpoint = CreateCheckpoint(groupId, totalSteps, episodeCount, 0),
+        };
+    }
+
+    public TrainerUpdateStats? FlushPendingUpdate(string groupId, long totalSteps, long episodeCount)
+    {
+        if (_pendingUpdate is null)
+            return null;
+        _pendingUpdate.Wait();
+        return TryPollResult(groupId, totalSteps, episodeCount);
+    }
+
+    // ── Background job ────────────────────────────────────────────────────────
+
+    private static SacAsyncResult RunBackgroundUpdate(
+        SacNetwork network,
+        Transition[] batch,
+        RLTrainerConfig config,
+        bool isContinuous,
+        float logAlpha,
+        float targetEntropy,
+        Random rng)
+    {
+        // alpha is fixed for the entire batch (standard SAC practice); only logAlpha accumulates.
+        var alpha = MathF.Exp(logAlpha);
+        var policyLoss = 0f;
+        var valueLoss = 0f;
+        var entropySum = 0f;
+
+        foreach (var t in batch)
+        {
+            if (isContinuous)
+                UpdateContinuous(network, t, alpha, config, ref logAlpha, ref policyLoss, ref valueLoss, ref entropySum, targetEntropy, rng);
+            else
+                UpdateDiscrete(network, t, alpha, config, ref logAlpha, ref policyLoss, ref valueLoss, ref entropySum, targetEntropy);
+        }
+
+        network.SoftUpdateTargets(config.SacTau);
+
+        var n = Math.Max(1, batch.Length);
+        return new SacAsyncResult
+        {
+            PolicyLoss = policyLoss / n,
+            ValueLoss = valueLoss / n,
+            Entropy = entropySum / n,
+            NewLogAlpha = logAlpha,
+        };
+    }
+
     // ── Discrete SAC update ──────────────────────────────────────────────────
 
-    private void UpdateDiscrete(Transition t, float alpha, ref float policyLoss, ref float valueLoss, ref float entropySum)
+    private static void UpdateDiscrete(
+        SacNetwork network,
+        Transition t,
+        float alpha,
+        RLTrainerConfig config,
+        ref float logAlpha,
+        ref float policyLoss,
+        ref float valueLoss,
+        ref float entropySum,
+        float targetEntropy)
     {
         // Compute target V(s') = sum_a pi(a|s') * (min_Q_target(s',a) - alpha * log_pi(a|s'))
-        var (nextQ1, nextQ2) = _network.GetDiscreteTargetQValues(t.NextObservation);
-        var (nextProbs, nextLogProbs) = DiscreteActorProbs(t.NextObservation);
+        var (nextQ1, nextQ2) = network.GetDiscreteTargetQValues(t.NextObservation);
+        var (nextProbs, nextLogProbs) = network.GetDiscreteActorProbs(t.NextObservation);
 
         var nextV = 0f;
         for (var a = 0; a < nextQ1.Length; a++)
@@ -182,33 +292,31 @@ public sealed class SacTrainer : ITrainer
 
         // Bellman target
         var mask = t.Done ? 0f : 1f;
-        var y = t.Reward + _trainerConfig.Gamma * mask * nextV;
+        var y = t.Reward + config.Gamma * mask * nextV;
 
         // Update Q networks
-        var (q1, q2) = _network.GetDiscreteQValues(t.Observation);
+        var (q1, q2) = network.GetDiscreteQValues(t.Observation);
         valueLoss += MathF.Abs(q1[t.DiscreteAction] - y) + MathF.Abs(q2[t.DiscreteAction] - y);
 
-        _network.UpdateQ1Discrete(t.Observation, t.DiscreteAction, y);
-        _network.UpdateQ2Discrete(t.Observation, t.DiscreteAction, y);
+        network.UpdateQ1Discrete(t.Observation, t.DiscreteAction, y);
+        network.UpdateQ2Discrete(t.Observation, t.DiscreteAction, y);
 
         // Update actor
-        _network.UpdateActorDiscrete(t.Observation, alpha);
+        network.UpdateActorDiscrete(t.Observation, alpha);
 
         // Compute entropy for logging and alpha update
-        var (probs, logProbs) = DiscreteActorProbs(t.Observation);
+        var (probs, logProbs) = network.GetDiscreteActorProbs(t.Observation);
         var entropy = 0f;
         for (var a = 0; a < probs.Length; a++)
-        {
             entropy -= probs[a] * logProbs[a];
-        }
 
         entropySum += entropy;
 
         // Auto-tune alpha: minimize log_alpha * (entropy - target_entropy)
-        if (_trainerConfig.SacAutoTuneAlpha)
+        if (config.SacAutoTuneAlpha)
         {
-            var alphaLossGrad = -(entropy - _targetEntropy);
-            _logAlpha -= _trainerConfig.LearningRate * alphaLossGrad;
+            var alphaLossGrad = -(entropy - targetEntropy);
+            logAlpha -= config.LearningRate * alphaLossGrad;
         }
 
         policyLoss -= entropy; // policy loss ≈ -entropy as a proxy metric
@@ -216,42 +324,57 @@ public sealed class SacTrainer : ITrainer
 
     // ── Continuous SAC update ────────────────────────────────────────────────
 
-    private void UpdateContinuous(Transition t, float alpha, ref float policyLoss, ref float valueLoss, ref float entropySum)
+    private static void UpdateContinuous(
+        SacNetwork network,
+        Transition t,
+        float alpha,
+        RLTrainerConfig config,
+        ref float logAlpha,
+        ref float policyLoss,
+        ref float valueLoss,
+        ref float entropySum,
+        float targetEntropy,
+        Random rng)
     {
         // Sample next action for target
-        var (nextAction, nextLogProb, _, _) = _network.SampleContinuousAction(t.NextObservation, _rng);
-        var (nextQ1t, nextQ2t) = _network.GetContinuousTargetQValues(t.NextObservation, nextAction);
+        var (nextAction, nextLogProb, _, _) = network.SampleContinuousAction(t.NextObservation, rng);
+        var (nextQ1t, nextQ2t) = network.GetContinuousTargetQValues(t.NextObservation, nextAction);
         var nextMinQ = Math.Min(nextQ1t, nextQ2t);
         var nextV = nextMinQ - alpha * nextLogProb;
 
         var mask = t.Done ? 0f : 1f;
-        var y = t.Reward + _trainerConfig.Gamma * mask * nextV;
+        var y = t.Reward + config.Gamma * mask * nextV;
 
         // Update Q networks
-        var (q1, q2) = _network.GetContinuousQValues(t.Observation, t.ContinuousActions);
+        var (q1, q2) = network.GetContinuousQValues(t.Observation, t.ContinuousActions);
         valueLoss += MathF.Abs(q1 - y) + MathF.Abs(q2 - y);
 
-        _network.UpdateQ1Continuous(t.Observation, t.ContinuousActions, y);
-        _network.UpdateQ2Continuous(t.Observation, t.ContinuousActions, y);
+        network.UpdateQ1Continuous(t.Observation, t.ContinuousActions, y);
+        network.UpdateQ2Continuous(t.Observation, t.ContinuousActions, y);
 
         // Sample fresh action for actor update (reparameterization)
-        var (action, logProb, eps, u) = _network.SampleContinuousAction(t.Observation, _rng);
-        _network.UpdateActorContinuous(t.Observation, action, eps, u, alpha);
+        var (action, logProb, eps, u) = network.SampleContinuousAction(t.Observation, rng);
+        network.UpdateActorContinuous(t.Observation, action, eps, u, alpha);
 
         entropySum += -logProb;
 
         // Auto-tune alpha
-        if (_trainerConfig.SacAutoTuneAlpha)
+        if (config.SacAutoTuneAlpha)
         {
-            var alphaLossGrad = -(-logProb - _targetEntropy);
-            _logAlpha -= _trainerConfig.LearningRate * alphaLossGrad;
+            var alphaLossGrad = -(-logProb - targetEntropy);
+            logAlpha -= config.LearningRate * alphaLossGrad;
         }
 
         policyLoss += logProb; // policy loss proxy
     }
 
-    private (float[] probs, float[] logProbs) DiscreteActorProbs(float[] obs)
+    // ── Private types ─────────────────────────────────────────────────────────
+
+    private sealed class SacAsyncResult
     {
-        return _network.GetDiscreteActorProbs(obs);
+        public float PolicyLoss { get; init; }
+        public float ValueLoss { get; init; }
+        public float Entropy { get; init; }
+        public float NewLogAlpha { get; init; }
     }
 }

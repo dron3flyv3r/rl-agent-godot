@@ -68,7 +68,8 @@ public static class RLModelLoader
             var layerCount = reader.ReadInt32();
 
             // ── Layers ────────────────────────────────────────────────────────
-            var shapes  = new List<int>(layerCount * 3);
+            var usesTypedLayerShapes = version >= RLCheckpoint.CurrentFormatVersion;
+            var shapes  = new List<int>(layerCount * (usesTypedLayerShapes ? 4 : 3));
             var weights = new List<float>();
 
             for (var i = 0; i < layerCount; i++)
@@ -76,6 +77,11 @@ public static class RLModelLoader
                 var inSize     = reader.ReadInt32();
                 var outSize    = reader.ReadInt32();
                 var activation = reader.ReadInt32();
+
+                if (usesTypedLayerShapes)
+                {
+                    shapes.Add((int)RLLayerKind.Dense);
+                }
 
                 shapes.Add(inSize);
                 shapes.Add(outSize);

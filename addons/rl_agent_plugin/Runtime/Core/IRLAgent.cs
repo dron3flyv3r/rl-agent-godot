@@ -47,6 +47,7 @@ public interface IRLAgent
     // ── Episode management ────────────────────────────────────────────────────
     void EndEpisode();
     void ResetEpisode();
+    void NotifyCurriculumProgress(float progress);
     bool HasReachedEpisodeLimit();
     void AccumulateReward(float reward, IReadOnlyDictionary<string, float>? rewardBreakdown = null);
 
@@ -57,6 +58,7 @@ public interface IRLAgent
     // ── Framework-internal ────────────────────────────────────────────────────
     float[] CollectObservationArray();
     void TickStep();
+    void HandleHumanInput();
     float ConsumePendingReward();
     Dictionary<string, float> ConsumePendingRewardBreakdown();
     bool ConsumeDonePending();

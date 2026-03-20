@@ -39,17 +39,14 @@ public static class RLModelExporter
     /// </summary>
     public static Error Export(string checkpointAbsPath, string destAbsPath)
     {
+        checkpointAbsPath = ResolveCheckpointSourcePath(checkpointAbsPath);
         var checkpoint = LoadCheckpointJson(checkpointAbsPath);
         if (checkpoint is null) return Error.Failed;
 
-        var shapes  = checkpoint.LayerShapeBuffer;
-        var weights = checkpoint.WeightBuffer;
-
-        if (shapes.Length == 0 || shapes.Length % 3 != 0)
-        {
-            GD.PushError($"[RLModelExporter] Invalid LayerShapeBuffer length {shapes.Length} in {checkpointAbsPath}");
+        if (!TryNormalizeDenseLayerShapes(checkpoint.LayerShapeBuffer, checkpointAbsPath, out var shapes))
             return Error.Failed;
-        }
+
+        var weights = checkpoint.WeightBuffer;
 
         var layerCount = shapes.Length / 3;
         var obsSize = checkpoint.ObservationSize;
@@ -135,5 +132,60 @@ public static class RLModelExporter
         }
 
         return checkpoint;
+    }
+
+    private static string ResolveCheckpointSourcePath(string checkpointAbsPath)
+    {
+        if (checkpointAbsPath.EndsWith(".meta.json", StringComparison.Ordinal))
+        {
+            var fullCheckpointPath = checkpointAbsPath.Replace(".meta.json", ".json", StringComparison.Ordinal);
+            if (File.Exists(fullCheckpointPath))
+            {
+                return fullCheckpointPath;
+            }
+        }
+
+        return checkpointAbsPath;
+    }
+
+    private static bool TryNormalizeDenseLayerShapes(int[] shapeBuffer, string checkpointAbsPath, out int[] denseShapes)
+    {
+        denseShapes = Array.Empty<int>();
+
+        if (shapeBuffer.Length == 0)
+        {
+            GD.PushError($"[RLModelExporter] Invalid LayerShapeBuffer length 0 in {checkpointAbsPath}");
+            return false;
+        }
+
+        if (shapeBuffer.Length % 4 == 0)
+        {
+            var normalized = new int[(shapeBuffer.Length / 4) * 3];
+            for (int sourceIndex = 0, targetIndex = 0; sourceIndex < shapeBuffer.Length; sourceIndex += 4)
+            {
+                var layerKind = shapeBuffer[sourceIndex];
+                if (layerKind != (int)RLLayerKind.Dense)
+                {
+                    GD.PushError($"[RLModelExporter] Unsupported layer kind {layerKind} in {checkpointAbsPath}");
+                    return false;
+                }
+
+                normalized[targetIndex++] = shapeBuffer[sourceIndex + 1];
+                normalized[targetIndex++] = shapeBuffer[sourceIndex + 2];
+                normalized[targetIndex++] = shapeBuffer[sourceIndex + 3];
+            }
+
+            denseShapes = normalized;
+            return true;
+        }
+
+        if (shapeBuffer.Length % 3 == 0)
+        {
+            denseShapes = shapeBuffer;
+            return true;
+        }
+
+        GD.PushError($"[RLModelExporter] Invalid LayerShapeBuffer length {shapeBuffer.Length} in {checkpointAbsPath}");
+        return false;
     }
 }

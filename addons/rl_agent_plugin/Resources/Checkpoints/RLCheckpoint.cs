@@ -78,7 +78,6 @@ public partial class RLCheckpoint : Resource
         };
 
         file.StoreString(Json.Stringify(data));
-        GD.Print($"[RLCheckpoint] Saved {checkpoint.WeightBuffer.Length} weights → {path}");
         return Error.Ok;
     }
 

@@ -40,7 +40,7 @@ public partial class RLAgentSpyOverlay : CanvasLayer
         foreach (var agent in _academy.GetAgents())
         {
             if (agent.ControlMode is RLAgentControlMode.Human or RLAgentControlMode.Inference
-                || (_includeTrainAgents && agent.ControlMode == RLAgentControlMode.Train))
+                || (_includeTrainAgents && agent.ControlMode is RLAgentControlMode.Train or RLAgentControlMode.Auto))
                 _agents.Add(agent);
         }
 

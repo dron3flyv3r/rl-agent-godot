@@ -1,22 +1,35 @@
 [gd_scene format=3 uid="uid://4x0lwgom1myl"]
 
-[ext_resource type="Script" uid="uid://6k7h4e3y50oa" path="res://demo/TagArenaController.cs" id="1"]
-[ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/Core/RLAcademy.cs" id="2"]
-[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl_agent_plugin/Resources/Config/RLTrainingConfig.cs" id="3"]
-[ext_resource type="Resource" uid="uid://borlltwsvuyg7" path="res://demo/chasers.tres" id="4_l0srx"]
-[ext_resource type="Script" uid="uid://bl3qlpw5eopg4" path="res://addons/rl_agent_plugin/Resources/Config/RLPolicyPairingConfig.cs" id="4_pair"]
-[ext_resource type="Script" uid="uid://cyyxb04k8uacu" path="res://demo/TagAgent.cs" id="5"]
-[ext_resource type="Resource" uid="uid://b3ipgpbt331i1" path="res://demo/runners.tres" id="5_j73ki"]
-[ext_resource type="Script" uid="uid://bdrwoeuh2mcbl" path="res://demo/TagPlayer.cs" id="6"]
+[ext_resource type="Script" uid="uid://6k7h4e3y50oa" path="res://demo/MultiAgentSelfPlay/Scripts/TagArenaController.cs" id="1_lmqxp"]
+[ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/Core/RLAcademy.cs" id="2_d577h"]
+[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl_agent_plugin/Resources/Config/RLTrainingConfig.cs" id="3_650tm"]
+[ext_resource type="Script" uid="uid://bl3qlpw5eopg4" path="res://addons/rl_agent_plugin/Resources/Config/RLPolicyPairingConfig.cs" id="4_rb47y"]
+[ext_resource type="Resource" uid="uid://borlltwsvuyg7" path="res://demo/MultiAgentSelfPlay/Policies/chasers.tres" id="5_fc5f6"]
+[ext_resource type="Resource" uid="uid://b3ipgpbt331i1" path="res://demo/MultiAgentSelfPlay/Policies/runners.tres" id="6_6walo"]
+[ext_resource type="Script" uid="uid://bdrwoeuh2mcbl" path="res://demo/MultiAgentSelfPlay/Scripts/TagPlayer.cs" id="7_3gkkj"]
+[ext_resource type="Script" uid="uid://cyyxb04k8uacu" path="res://demo/MultiAgentSelfPlay/Scripts/TagAgent.cs" id="8_h1ebu"]
+[ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl_agent_plugin/Resources/Config/RLRunConfig.cs" id="9_runcfg"]
+[ext_resource type="Script" uid="uid://dsmgeg1rldr87" path="res://addons/rl_agent_plugin/Resources/Config/RLSelfPlayConfig.cs" id="10_selfplay"]
 
 [sub_resource type="Resource" id="TrainingConfig"]
-script = ExtResource("3")
+script = ExtResource("3_650tm")
 
 [sub_resource type="Resource" id="Resource_pairing"]
-script = ExtResource("4_pair")
+script = ExtResource("4_rb47y")
 PairingId = "chasers_vs_runners"
-GroupA = ExtResource("4_l0srx")
-GroupB = ExtResource("5_j73ki")
+GroupA = ExtResource("5_fc5f6")
+GroupB = ExtResource("6_6walo")
+
+[sub_resource type="Resource" id="RunConfig_tag"]
+script = ExtResource("9_runcfg")
+RunPrefix = "TagDemo"
+SimulationSpeed = 12.0
+ActionRepeat = 2
+BatchSize = 8
+
+[sub_resource type="Resource" id="SelfPlay_tag"]
+script = ExtResource("10_selfplay")
+Pairings = Array[RLPolicyPairingConfig]([SubResource("Resource_pairing")])
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_q38m4"]
 radius = 14.0
@@ -30,7 +43,7 @@ font_size = 15
 font_color = Color(0.792157, 0.858824, 0.8, 1)
 
 [node name="TagDemo" type="Node2D" unique_id=1899410076]
-script = ExtResource("1")
+script = ExtResource("1_lmqxp")
 ArenaMin = Vector2(92, 152)
 ArenaMax = Vector2(708, 516)
 TagRadius = 32.0
@@ -65,23 +78,21 @@ width = 2.0
 default_color = Color(0.34902, 0.596078, 0.423529, 1)
 
 [node name="Academy" type="Node" parent="." unique_id=1794390983]
-script = ExtResource("2")
+script = ExtResource("2_d577h")
 TrainingConfig = SubResource("TrainingConfig")
-RunPrefix = "TagDemo"
-SimulationSpeed = 12.0
-ActionRepeat = 2
+RunConfig = SubResource("RunConfig_tag")
 MaxEpisodeSteps = 600
-BatchSize = 8
-SelfPlayPairings = Array[ExtResource("4_pair")]([SubResource("Resource_pairing")])
+SelfPlay = SubResource("SelfPlay_tag")
+EnableSpyOverlay = true
 
 [node name="ChaserA" type="CharacterBody2D" parent="." unique_id=1432916565]
 position = Vector2(238, 244)
-script = ExtResource("6")
+script = ExtResource("7_3gkkj")
 Role = 0
 
 [node name="Agent" type="Node2D" parent="ChaserA" unique_id=1690261792]
-script = ExtResource("5")
-PolicyGroupConfig = ExtResource("4_l0srx")
+script = ExtResource("8_h1ebu")
+PolicyGroupConfig = ExtResource("5_fc5f6")
 
 [node name="Visual" type="Polygon2D" parent="ChaserA" unique_id=693159168]
 color = Color(0.937255, 0.4, 0.364706, 1)
@@ -92,12 +103,12 @@ shape = SubResource("CircleShape2D_q38m4")
 
 [node name="ChaserB" type="CharacterBody2D" parent="." unique_id=529484080]
 position = Vector2(238, 424)
-script = ExtResource("6")
+script = ExtResource("7_3gkkj")
 Role = 0
 
 [node name="Agent" type="Node2D" parent="ChaserB" unique_id=1464470303]
-script = ExtResource("5")
-PolicyGroupConfig = ExtResource("4_l0srx")
+script = ExtResource("8_h1ebu")
+PolicyGroupConfig = ExtResource("5_fc5f6")
 
 [node name="Visual" type="Polygon2D" parent="ChaserB" unique_id=1562436759]
 color = Color(0.890196, 0.301961, 0.27451, 1)
@@ -108,11 +119,11 @@ shape = SubResource("CircleShape2D_q38m4")
 
 [node name="RunnerA" type="CharacterBody2D" parent="." unique_id=1317511240]
 position = Vector2(562, 244)
-script = ExtResource("6")
+script = ExtResource("7_3gkkj")
 
 [node name="Agent" type="Node2D" parent="RunnerA" unique_id=1105293076]
-script = ExtResource("5")
-PolicyGroupConfig = ExtResource("5_j73ki")
+script = ExtResource("8_h1ebu")
+PolicyGroupConfig = ExtResource("6_6walo")
 
 [node name="Visual" type="Polygon2D" parent="RunnerA" unique_id=657237264]
 color = Color(0.298039, 0.741176, 0.941176, 1)
@@ -123,11 +134,11 @@ shape = SubResource("CircleShape2D_q38m4")
 
 [node name="RunnerB" type="CharacterBody2D" parent="." unique_id=2122069439]
 position = Vector2(562, 424)
-script = ExtResource("6")
+script = ExtResource("7_3gkkj")
 
 [node name="Agent" type="Node2D" parent="RunnerB" unique_id=1113519001]
-script = ExtResource("5")
-PolicyGroupConfig = ExtResource("5_j73ki")
+script = ExtResource("8_h1ebu")
+PolicyGroupConfig = ExtResource("6_6walo")
 
 [node name="Visual" type="Polygon2D" parent="RunnerB" unique_id=1444018664]
 color = Color(0.207843, 0.596078, 0.901961, 1)

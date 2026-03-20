@@ -1,0 +1,292 @@
+[gd_scene format=3 uid="uid://4atis8ag6nou"]
+
+[ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/Core/RLAcademy.cs" id="1_rlacad"]
+[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl_agent_plugin/Resources/Config/RLPolicyGroupConfig.cs" id="3_pgcfg"]
+[ext_resource type="Script" uid="uid://bdtmbmcdx2pf" path="res://demo/WallClimbCurriculum/Scripts/WallClimbArenaController.cs" id="4_arena"]
+[ext_resource type="Script" uid="uid://b7t8gl7dj6bkm" path="res://demo/WallClimbCurriculum/Scripts/WallClimbPlayer.cs" id="5_player"]
+[ext_resource type="Script" uid="uid://ckm73lgraynm5" path="res://demo/WallClimbCurriculum/Scripts/WallClimbAgent.cs" id="6_agent"]
+[ext_resource type="Script" uid="uid://oouep3l8683y" path="res://addons/rl_agent_plugin/Resources/Models/RLDenseLayerDef.cs" id="7_agi8e"]
+[ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl_agent_plugin/Resources/Config/RLRunConfig.cs" id="7_runcfg"]
+[ext_resource type="Script" uid="uid://n4fexef4ftko" path="res://addons/rl_agent_plugin/Resources/Models/RLDropoutLayerDef.cs" id="8_8hnum"]
+[ext_resource type="Script" uid="uid://dqlna0p1b58h1" path="res://addons/rl_agent_plugin/Resources/Config/RLCurriculumConfig.cs" id="8_curcfg"]
+[ext_resource type="Script" uid="uid://covgl5skelf7g" path="res://addons/rl_agent_plugin/Resources/Models/RLNetworkGraph.cs" id="9_rjimn"]
+[ext_resource type="Script" uid="uid://dqngqwg7thrn6" path="res://addons/rl_agent_plugin/Runtime/Observations/Sensors3D/RLRaycastSensor3D.cs" id="9_sensor"]
+
+[sub_resource type="Resource" id="RunConfig_wallclimb"]
+script = ExtResource("7_runcfg")
+RunPrefix = "WallClimbCurriculum"
+SimulationSpeed = 4.0
+BatchSize = 64
+AsyncGradientUpdates = true
+
+[sub_resource type="Resource" id="Curriculum_wallclimb"]
+script = ExtResource("8_curcfg")
+MaxSteps = 400
+
+[sub_resource type="BoxMesh" id="PlatformMesh"]
+size = Vector3(10, 0.2, 10)
+
+[sub_resource type="BoxShape3D" id="PlatformShape"]
+size = Vector3(10, 0.2, 10)
+
+[sub_resource type="BoxMesh" id="WallMeshRes"]
+size = Vector3(0.3, 2, 10)
+
+[sub_resource type="StandardMaterial3D" id="WallMaterial"]
+albedo_color = Color(0.5, 0.35, 0.15, 1)
+
+[sub_resource type="BoxShape3D" id="WallShape"]
+size = Vector3(0.3, 2, 10)
+
+[sub_resource type="BoxMesh" id="GoalMeshRes"]
+size = Vector3(1, 0.1, 1)
+
+[sub_resource type="StandardMaterial3D" id="GoalMaterial"]
+albedo_color = Color(0.1, 0.85, 0.2, 1)
+emission_enabled = true
+emission = Color(0.1, 0.85, 0.2, 1)
+emission_energy_multiplier = 1.5
+
+[sub_resource type="BoxShape3D" id="GoalShape"]
+size = Vector3(1, 0.1, 1)
+
+[sub_resource type="BoxMesh" id="PushBoxMesh"]
+size = Vector3(0.8, 0.8, 0.8)
+
+[sub_resource type="StandardMaterial3D" id="PushBoxMaterial"]
+albedo_color = Color(1, 0.5, 0.1, 1)
+
+[sub_resource type="BoxShape3D" id="PushBoxShape"]
+size = Vector3(0.8, 0.8, 0.8)
+
+[sub_resource type="BoxMesh" id="PlayerMesh"]
+size = Vector3(0.6, 0.8, 0.6)
+
+[sub_resource type="StandardMaterial3D" id="PlayerMaterial"]
+albedo_color = Color(0.2, 0.4, 1, 1)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_4qw6h"]
+size = Vector3(0.6, 0.8, 0.6)
+
+[sub_resource type="Resource" id="Resource_rb1yt"]
+script = ExtResource("7_agi8e")
+Size = 128
+metadata/_custom_type_script = "uid://oouep3l8683y"
+
+[sub_resource type="Resource" id="Resource_8ogcm"]
+script = ExtResource("8_8hnum")
+metadata/_custom_type_script = "uid://n4fexef4ftko"
+
+[sub_resource type="Resource" id="Resource_xg6mi"]
+script = ExtResource("7_agi8e")
+Size = 128
+metadata/_custom_type_script = "uid://oouep3l8683y"
+
+[sub_resource type="Resource" id="Resource_tq55t"]
+script = ExtResource("8_8hnum")
+metadata/_custom_type_script = "uid://n4fexef4ftko"
+
+[sub_resource type="Resource" id="Resource_ahmh2"]
+script = ExtResource("7_agi8e")
+metadata/_custom_type_script = "uid://oouep3l8683y"
+
+[sub_resource type="Resource" id="Resource_3khbc"]
+script = ExtResource("9_rjimn")
+TrunkLayers = Array[Resource]([SubResource("Resource_rb1yt"), SubResource("Resource_8ogcm"), SubResource("Resource_xg6mi"), SubResource("Resource_tq55t"), SubResource("Resource_ahmh2")])
+metadata/_custom_type_script = "uid://covgl5skelf7g"
+
+[sub_resource type="Resource" id="PolicyGroupConfig"]
+resource_name = "wall_climb"
+script = ExtResource("3_pgcfg")
+AgentId = "wall_climb"
+InferenceModelPath = "res://demo/WallClimbCurriculum/models/agent.rlmodel"
+NetworkGraph = SubResource("Resource_3khbc")
+metadata/_custom_type_script = "uid://bniwqapplki00"
+
+[sub_resource type="ProceduralSkyMaterial" id="SkyMaterial"]
+
+[sub_resource type="Sky" id="SkyRes"]
+sky_material = SubResource("SkyMaterial")
+
+[sub_resource type="Environment" id="Env"]
+background_mode = 2
+sky = SubResource("SkyRes")
+
+[node name="WallClimbDemo" type="Node3D" unique_id=1805711599]
+
+[node name="Academy" type="Node" parent="." unique_id=2015693760]
+script = ExtResource("1_rlacad")
+MaxEpisodeSteps = 1000
+RunConfig = SubResource("RunConfig_wallclimb")
+Curriculum = SubResource("Curriculum_wallclimb")
+EnableSpyOverlay = true
+
+[node name="Arena" type="Node3D" parent="." unique_id=1773525197]
+script = ExtResource("4_arena")
+
+[node name="Platform" type="StaticBody3D" parent="Arena" unique_id=400528539]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
+collision_mask = 3
+
+[node name="Mesh" type="MeshInstance3D" parent="Arena/Platform" unique_id=1390755219]
+mesh = SubResource("PlatformMesh")
+
+[node name="Collision" type="CollisionShape3D" parent="Arena/Platform" unique_id=1999440848]
+shape = SubResource("PlatformShape")
+
+[node name="Wall" type="StaticBody3D" parent="Arena" unique_id=417818711]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8894162, 0)
+collision_mask = 3
+
+[node name="Mesh" type="MeshInstance3D" parent="Arena/Wall" unique_id=1593183304]
+mesh = SubResource("WallMeshRes")
+surface_material_override/0 = SubResource("WallMaterial")
+
+[node name="Collision" type="CollisionShape3D" parent="Arena/Wall" unique_id=123270715]
+shape = SubResource("WallShape")
+
+[node name="Goal" type="Area3D" parent="Arena" unique_id=1895254236]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0.1, 3)
+
+[node name="Mesh" type="MeshInstance3D" parent="Arena/Goal" unique_id=756460675]
+layers = 3
+mesh = SubResource("GoalMeshRes")
+surface_material_override/0 = SubResource("GoalMaterial")
+
+[node name="Collision" type="CollisionShape3D" parent="Arena/Goal" unique_id=355751932]
+shape = SubResource("GoalShape")
+
+[node name="PushBox" type="RigidBody3D" parent="Arena" unique_id=1224193778]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.5, 0.5, 0)
+collision_layer = 2
+mass = 0.1
+lock_rotation = true
+
+[node name="Mesh" type="MeshInstance3D" parent="Arena/PushBox" unique_id=1935121581]
+mesh = SubResource("PushBoxMesh")
+surface_material_override/0 = SubResource("PushBoxMaterial")
+
+[node name="Collision" type="CollisionShape3D" parent="Arena/PushBox" unique_id=1055373353]
+shape = SubResource("PushBoxShape")
+
+[node name="WallClimbPlayer" type="CharacterBody3D" parent="Arena" unique_id=574490676]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0.5, 0)
+collision_mask = 3
+axis_lock_angular_x = true
+axis_lock_angular_y = true
+axis_lock_angular_z = true
+script = ExtResource("5_player")
+
+[node name="Mesh" type="MeshInstance3D" parent="Arena/WallClimbPlayer" unique_id=1156276708]
+layers = 2
+mesh = SubResource("PlayerMesh")
+surface_material_override/0 = SubResource("PlayerMaterial")
+
+[node name="Collision" type="CollisionShape3D" parent="Arena/WallClimbPlayer" unique_id=176357760]
+shape = SubResource("BoxShape3D_4qw6h")
+
+[node name="WallClimbAgent" type="Node3D" parent="Arena/WallClimbPlayer" unique_id=1103264779]
+script = ExtResource("6_agent")
+PolicyGroupConfig = SubResource("PolicyGroupConfig")
+
+[node name="RLRaycastSensor3D" type="Node3D" parent="Arena/WallClimbPlayer/WallClimbAgent" unique_id=1481434422]
+transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 0, 0, 0)
+script = ExtResource("9_sensor")
+HorizontalRayCount = 13
+HorizontalSpreadDeg = 240.0
+CollisionMask = 3
+ShowDebug = false
+DetectionMask = 2
+IncludeHitClass = true
+metadata/_custom_type_script = "uid://dqngqwg7thrn6"
+
+[node name="__rays" type="Node3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D" unique_id=90299534]
+
+[node name="@RayCast3D@5523167" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1946419794]
+visible = false
+target_position = Vector3(8.660254, 0, 5.0000005)
+collision_mask = 3
+debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
+
+[node name="@RayCast3D@5523168" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=393713081]
+visible = false
+target_position = Vector3(9.848078, 0, 1.7364819)
+collision_mask = 3
+debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
+
+[node name="@RayCast3D@5523169" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1114281354]
+visible = false
+target_position = Vector3(9.848078, 0, -1.7364823)
+collision_mask = 3
+debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
+
+[node name="@RayCast3D@5523170" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1872005535]
+visible = false
+target_position = Vector3(8.6602545, 0, -4.9999995)
+collision_mask = 3
+debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
+
+[node name="@RayCast3D@5523171" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1825007746]
+visible = false
+target_position = Vector3(6.4278755, 0, -7.6604443)
+collision_mask = 3
+debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
+
+[node name="@RayCast3D@5523172" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=2084475210]
+visible = false
+target_position = Vector3(3.4202018, 0, -9.396926)
+collision_mask = 3
+debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
+
+[node name="@RayCast3D@5523173" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=922988982]
+visible = false
+target_position = Vector3(0, 0, -10)
+collision_mask = 3
+debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
+
+[node name="@RayCast3D@5523174" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=506110579]
+visible = false
+target_position = Vector3(-3.4202006, 0, -9.396926)
+collision_mask = 3
+debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
+
+[node name="@RayCast3D@5523175" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1485723314]
+visible = false
+target_position = Vector3(-6.427877, 0, -7.660444)
+collision_mask = 3
+debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
+
+[node name="@RayCast3D@5523176" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=913226802]
+visible = false
+target_position = Vector3(-8.6602545, 0, -4.9999995)
+collision_mask = 3
+debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
+
+[node name="@RayCast3D@5523177" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=582433148]
+visible = false
+target_position = Vector3(-9.848078, 0, -1.7364823)
+collision_mask = 3
+debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
+
+[node name="@RayCast3D@5523178" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1026284358]
+visible = false
+target_position = Vector3(-9.848078, 0, 1.736483)
+collision_mask = 3
+debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
+
+[node name="@RayCast3D@5523179" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=2135426206]
+visible = false
+target_position = Vector3(-8.660254, 0, 5.0000005)
+collision_mask = 3
+debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1178333071]
+transform = Transform3D(0.9536592, 0.1881473, -0.23480782, 0, 0.7803805, 0.62530494, 0.3008889, -0.5963278, 0.74421704, -2.6954336, 6.108443, 7.0332212)
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1642859324]
+transform = Transform3D(0.8332012, -0.3910088, 0.3910088, 0, 0.7071068, 0.7071068, -0.55297, -0.5891623, 0.5891623, 0, 10, 10)
+light_energy = 1.2
+shadow_enabled = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1125100183]
+environment = SubResource("Env")
