@@ -10,7 +10,7 @@ public partial class TrainingBootstrap : Node
     private TrainingLaunchManifest? _manifest;
     private readonly List<RLAcademy> _academies = new();
     private readonly List<EnvironmentRuntime> _environments = new();
-    private List<RLAgent2D> _allTrainAgents = new();
+    private List<IRLAgent> _allTrainAgents = new();
     private RunMetricsWriter? _statusWriter;
     private readonly RandomNumberGenerator _selfPlayRng = new();
 
@@ -33,15 +33,18 @@ public partial class TrainingBootstrap : Node
     private readonly Dictionary<string, IInferencePolicy> _frozenPoliciesBySnapshotKey = new(StringComparer.Ordinal);
     private readonly HashSet<string> _selfPlayParticipantGroups = new(StringComparer.Ordinal);
     private readonly Dictionary<string, EloTracker> _eloTrackersByGroup  = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, float> _lastEpisodeRewardByGroup = new(StringComparer.Ordinal);
     private readonly Dictionary<string, float>      _winThresholdByGroup = new(StringComparer.Ordinal);
     private readonly Dictionary<string, bool>       _pfspEnabledByGroup  = new(StringComparer.Ordinal);
     private readonly Dictionary<string, float>      _pfspAlphaByGroup    = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int>        _maxPoolSizeByGroup  = new(StringComparer.Ordinal);
 
     // Per-agent state
-    private readonly Dictionary<RLAgent2D, AgentRuntimeState> _agentStates = new();
+    private readonly Dictionary<IRLAgent, AgentRuntimeState> _agentStates = new();
 
     private long _totalSteps;
+    private RLTrainingConfig? _trainingConfig;
+    private RLTrainerConfig?  _trainerConfig;
     private double _previousTimeScale = 1.0;
     private int _previousMaxPhysicsStepsPerFrame = 8;
     private int _checkpointInterval = 10;
@@ -103,7 +106,7 @@ public partial class TrainingBootstrap : Node
 
         RLTrainingConfig? trainingConfig = null;
         RLTrainerConfig? trainerConfig = null;
-        var groupedAgents = new Dictionary<string, List<RLAgent2D>>(StringComparer.Ordinal);
+        var groupedAgents = new Dictionary<string, List<IRLAgent>>(StringComparer.Ordinal);
 
         for (var batchIdx = 0; batchIdx < _batchSize; batchIdx++)
         {
@@ -138,6 +141,9 @@ public partial class TrainingBootstrap : Node
                 trainerConfig = academy.ResolveTrainerConfig()
                     ?? trainingConfig?.ToTrainerConfig()
                     ?? GD.Load<RLTrainerConfig>(_manifest.TrainerConfigPath);
+
+                _trainingConfig = trainingConfig;
+                _trainerConfig  = trainerConfig;
             }
 
             var environment = new EnvironmentRuntime
@@ -150,16 +156,16 @@ public partial class TrainingBootstrap : Node
             var batchAgents = academy.GetAgents(RLAgentControlMode.Train);
             foreach (var agent in batchAgents)
             {
-                var binding = RLPolicyGroupBindingResolver.Resolve(sceneInstance, agent);
+                var binding = RLPolicyGroupBindingResolver.Resolve(sceneInstance, agent.AsNode());
                 if (binding is null)
                 {
-                    GD.PushError($"[RL] Agent '{agent.Name}' has no PolicyGroupConfig assigned and will not be trained.");
+                    GD.PushError($"[RL] Agent '{agent.AsNode().Name}' has no PolicyGroupConfig assigned and will not be trained.");
                     continue;
                 }
 
                 if (!environment.AgentsByGroup.TryGetValue(binding.BindingKey, out var environmentGroup))
                 {
-                    environmentGroup = new List<RLAgent2D>();
+                    environmentGroup = new List<IRLAgent>();
                     environment.AgentsByGroup[binding.BindingKey] = environmentGroup;
                 }
 
@@ -167,7 +173,7 @@ public partial class TrainingBootstrap : Node
 
                 if (!groupedAgents.TryGetValue(binding.BindingKey, out var grouped))
                 {
-                    grouped = new List<RLAgent2D>();
+                    grouped = new List<IRLAgent>();
                     groupedAgents[binding.BindingKey] = grouped;
                     _groupBindingsByGroup[binding.BindingKey] = binding;
                 }
@@ -196,6 +202,7 @@ public partial class TrainingBootstrap : Node
         }
 
         var algorithm = trainerConfig.Algorithm;
+        var customTrainerId = trainerConfig.CustomTrainerId;
         foreach (var (groupId, groupAgents) in groupedAgents)
         {
             var binding = _groupBindingsByGroup[groupId];
@@ -232,11 +239,19 @@ public partial class TrainingBootstrap : Node
                 return;
             }
 
+            // Custom trainers declare their own action-space constraints; skip built-in checks.
+            if (algorithm == RLAlgorithmKind.Custom && string.IsNullOrWhiteSpace(customTrainerId))
+            {
+                GD.PushError($"[RL] Group '{groupId}': Algorithm is Custom but CustomTrainerId is not set.");
+                GetTree().Quit(1);
+                return;
+            }
+
             foreach (var agent in groupAgents)
             {
                 if (!ObservationSizeInference.TryInferAgentObservationSize(agent, out var agentObservationSize, out observationError))
                 {
-                    GD.PushError($"[RL] Group '{groupId}': observation inference failed for '{agent.Name}': {observationError}");
+                    GD.PushError($"[RL] Group '{groupId}': observation inference failed for '{agent.AsNode().Name}': {observationError}");
                     GetTree().Quit(1);
                     return;
                 }
@@ -250,7 +265,7 @@ public partial class TrainingBootstrap : Node
 
                 if (algorithm == RLAlgorithmKind.PPO && agent.GetDiscreteActionCount() != discreteCount)
                 {
-                    GD.PushError($"[RL] Group '{groupId}': all agents must have the same discrete action count.");
+                    GD.PushError($"[RL] Group '{groupId}': all PPO agents must have the same discrete action count.");
                     GetTree().Quit(1);
                     return;
                 }
@@ -265,6 +280,7 @@ public partial class TrainingBootstrap : Node
                 GroupId = groupId,
                 RunId = _manifest.RunId,
                 Algorithm = algorithm,
+                CustomTrainerId = customTrainerId,
                 SharedPolicy = binding.Config,
                 TrainerConfig = trainerConfig,
                 NetworkGraph = binding.Config?.ResolvedNetworkGraph ?? RLNetworkGraph.CreateDefault(),
@@ -398,6 +414,17 @@ public partial class TrainingBootstrap : Node
         foreach (var (groupId, trainer) in _trainersByGroup)
         {
             var episodeCount = _episodeCountByGroup[groupId];
+
+            if (_trainingConfig is not null && _trainerConfig is not null)
+            {
+                _trainingConfig.ApplySchedules(_trainerConfig, new ScheduleContext
+                {
+                    UpdateCount  = _updateCountByGroup[groupId],
+                    TotalSteps   = _totalSteps,
+                    EpisodeCount = episodeCount,
+                });
+            }
+
             var updateStats = trainer.TryUpdate(groupId, _totalSteps, episodeCount);
             if (updateStats is null)
             {
@@ -411,6 +438,7 @@ public partial class TrainingBootstrap : Node
             _lastClipFractionByGroup[groupId] = updateStats.ClipFraction;
 
             var currentCheckpoint = trainer.CreateCheckpoint(groupId, _totalSteps, episodeCount, _updateCountByGroup[groupId]);
+            currentCheckpoint.RewardSnapshot = _lastEpisodeRewardByGroup.GetValueOrDefault(groupId);
             lastCheckpoint = currentCheckpoint;
 
             PersistCheckpoint(groupId, currentCheckpoint, _updateCountByGroup[groupId]);
@@ -816,6 +844,7 @@ public partial class TrainingBootstrap : Node
             if (pending.Done)
             {
                 _episodeCountByGroup[groupId] += 1;
+                _lastEpisodeRewardByGroup[groupId] = pending.Agent.EpisodeReward;
                 var episodeCount = _episodeCountByGroup[groupId];
 
                 if (role.IsSelfPlayLearner)
@@ -941,6 +970,17 @@ public partial class TrainingBootstrap : Node
         if (!string.IsNullOrEmpty(checkpointPath) && shouldWriteLatest)
         {
             RLCheckpoint.SaveToFile(checkpoint, checkpointPath);
+        }
+
+        // Write a named history snapshot alongside the latest checkpoint (skip update 0).
+        if (shouldWriteLatest && updateCount > 0 && _manifest is not null)
+        {
+            var safeId = _groupBindingsByGroup.TryGetValue(groupId, out var histBinding)
+                ? histBinding.SafeGroupId
+                : RLPolicyGroupBindingResolver.MakeSafeGroupId(groupId);
+            var historyResPath = $"{_manifest.RunDirectory}/history/checkpoint__{safeId}__u{updateCount:D6}.json";
+            RLCheckpoint.SaveToFile(checkpoint, historyResPath);
+            WriteCheckpointSidecar(checkpoint, historyResPath);
         }
 
         if (!_opponentBanksByGroup.TryGetValue(groupId, out var bank) || string.IsNullOrEmpty(checkpointPath))
@@ -1196,6 +1236,30 @@ public partial class TrainingBootstrap : Node
         return $"{_manifest?.RunDirectory}/selfplay/{safeId}";
     }
 
+    private static void WriteCheckpointSidecar(RLCheckpoint checkpoint, string checkpointResPath)
+    {
+        var sidecarResPath = checkpointResPath.Replace(".json", ".meta.json", StringComparison.Ordinal);
+        var data = new Godot.Collections.Dictionary
+        {
+            { "format_version", checkpoint.FormatVersion },
+            { "run_id",         checkpoint.RunId },
+            { "total_steps",    checkpoint.TotalSteps },
+            { "episode_count",  checkpoint.EpisodeCount },
+            { "update_count",   checkpoint.UpdateCount },
+            { "meta",           checkpoint.CreateMetadataDictionary() },
+        };
+        var absPath = ProjectSettings.GlobalizePath(sidecarResPath);
+        try
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(absPath)!);
+            System.IO.File.WriteAllText(absPath, Json.Stringify(data));
+        }
+        catch (Exception ex)
+        {
+            GD.PushWarning($"[RL] Sidecar write failed: {ex.Message}");
+        }
+    }
+
     private string? GetGroupCheckpointPath(string groupId)
     {
         var safeId = _groupBindingsByGroup.TryGetValue(groupId, out var binding)
@@ -1204,7 +1268,7 @@ public partial class TrainingBootstrap : Node
         return $"{_manifest?.RunDirectory}/checkpoint__{safeId}.json";
     }
 
-    private static void ApplyDecision(RLAgent2D agent, PolicyDecision decision)
+    private static void ApplyDecision(IRLAgent agent, PolicyDecision decision)
     {
         if (decision.DiscreteAction >= 0)
         {
@@ -1216,7 +1280,7 @@ public partial class TrainingBootstrap : Node
         }
     }
 
-    private static void ReapplyAction(RLAgent2D agent, AgentRuntimeState state)
+    private static void ReapplyAction(IRLAgent agent, AgentRuntimeState state)
     {
         if (state.PendingAction >= 0)
         {
@@ -1332,7 +1396,7 @@ public partial class TrainingBootstrap : Node
 
     private sealed class PendingDecisionContext
     {
-        public RLAgent2D Agent { get; init; } = null!;
+        public IRLAgent Agent { get; init; } = null!;
         public AgentRuntimeState State { get; init; } = null!;
         public float[] TransitionObservation { get; init; } = Array.Empty<float>();
         public bool Done { get; init; }
@@ -1343,7 +1407,7 @@ public partial class TrainingBootstrap : Node
         public int Index { get; init; }
         public Node SceneRoot { get; init; } = null!;
         public RLAcademy Academy { get; init; } = null!;
-        public Dictionary<string, List<RLAgent2D>> AgentsByGroup { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, List<IRLAgent>> AgentsByGroup { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, EnvironmentGroupRole> GroupRoles { get; } = new(StringComparer.Ordinal);
         public bool NeedsMatchupRefresh { get; set; }
     }

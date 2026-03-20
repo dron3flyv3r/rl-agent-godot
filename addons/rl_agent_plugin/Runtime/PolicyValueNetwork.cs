@@ -7,59 +7,43 @@ namespace RlAgentPlugin.Runtime;
 
 internal sealed class PolicyValueNetwork
 {
-    private readonly DenseLayer[] _trunkLayers;
+    private readonly NetworkLayer[] _trunkLayers;
     private readonly DenseLayer _policyHead;
     private readonly DenseLayer _valueHead;
 
     public PolicyValueNetwork(int observationSize, int actionCount, RLNetworkGraph graph)
     {
-        var useAdam = graph.Optimizer == RLOptimizerKind.Adam;
         _trunkLayers = graph.BuildTrunkLayers(observationSize);
         var lastSize = graph.OutputSize(observationSize);
-        _policyHead = new DenseLayer(lastSize, actionCount, null, useAdam);
-        _valueHead = new DenseLayer(lastSize, 1, null, useAdam);
+        _policyHead = new DenseLayer(lastSize, actionCount, null, graph.Optimizer);
+        _valueHead  = new DenseLayer(lastSize, 1,           null, graph.Optimizer);
     }
 
     public NetworkInference Infer(float[] observation)
     {
-        var cache = new ForwardCache(observation);
+        var x = observation;
         foreach (var layer in _trunkLayers)
-        {
-            cache.AddLayer(layer.Forward(cache.LastOutput));
-        }
+            x = layer.Forward(x);
 
-        cache.Policy = _policyHead.Forward(cache.LastOutput);
-        cache.Value = _valueHead.Forward(cache.LastOutput);
+        var logits = _policyHead.Forward(x);
+        var value  = _valueHead.Forward(x);
 
-        return new NetworkInference
-        {
-            Cache = cache,
-            Logits = cache.Policy.Activated,
-            Value = cache.Value.Activated[0],
-        };
+        return new NetworkInference { Logits = logits, Value = value[0] };
     }
 
     public BatchNetworkInference InferBatch(VectorBatch observations)
     {
         var trunkOutput = observations;
         foreach (var layer in _trunkLayers)
-        {
             trunkOutput = layer.ForwardBatch(trunkOutput);
-        }
 
-        var logits = _policyHead.ForwardBatch(trunkOutput);
+        var logits     = _policyHead.ForwardBatch(trunkOutput);
         var valueBatch = _valueHead.ForwardBatch(trunkOutput);
-        var values = new float[observations.BatchSize];
-        for (var batchIndex = 0; batchIndex < observations.BatchSize; batchIndex++)
-        {
-            values[batchIndex] = valueBatch.Get(batchIndex, 0);
-        }
+        var values     = new float[observations.BatchSize];
+        for (var b = 0; b < observations.BatchSize; b++)
+            values[b] = valueBatch.Get(b, 0);
 
-        return new BatchNetworkInference
-        {
-            Logits = logits,
-            Values = values,
-        };
+        return new BatchNetworkInference { Logits = logits, Values = values };
     }
 
     public void ApplyGradients(TrainingSample sample, RLTrainerConfig config)
@@ -76,18 +60,10 @@ internal sealed class PolicyValueNetwork
         if (unclippedObjective <= clippedObjective)
         {
             for (var index = 0; index < probs.Length; index++)
-            {
                 logitsGradient[index] = ratio * probs[index] * sample.Advantage;
-            }
-
             logitsGradient[sample.Action] -= ratio * sample.Advantage;
         }
 
-        // Entropy bonus: add entropyCoeff * H to the objective.
-        // Gradient of -entropyCoeff*H w.r.t. logit j:
-        //   = -entropyCoeff * dH/dz_j
-        //   = -entropyCoeff * p_j * (-H - log(p_j))
-        //   = entropyCoeff * p_j * (H + log(p_j))
         if (config.EntropyCoefficient > 0f)
         {
             var entropy = 0f;
@@ -106,42 +82,34 @@ internal sealed class PolicyValueNetwork
         var valueError = inference.Value - sample.Return;
         var valueGradient = new[] { config.ValueLossCoefficient * valueError };
 
-        var trunkGradientFromPolicy = _policyHead.Backward(inference.Cache.LastOutput, logitsGradient, config.LearningRate);
-        var trunkGradientFromValue = _valueHead.Backward(inference.Cache.LastOutput, valueGradient, config.LearningRate);
+        // Layers cache their own Forward state — Backward uses it automatically.
+        var trunkGradientFromPolicy = _policyHead.Backward(logitsGradient, config.LearningRate);
+        var trunkGradientFromValue  = _valueHead.Backward(valueGradient,   config.LearningRate);
 
         var trunkGradient = new float[trunkGradientFromPolicy.Length];
         for (var index = 0; index < trunkGradient.Length; index++)
-        {
             trunkGradient[index] = trunkGradientFromPolicy[index] + trunkGradientFromValue[index];
-        }
 
         for (var layerIndex = _trunkLayers.Length - 1; layerIndex >= 0; layerIndex--)
-        {
-            var layerCache = inference.Cache.HiddenLayers[layerIndex];
-            trunkGradient = _trunkLayers[layerIndex].Backward(layerCache.Input, trunkGradient, config.LearningRate, layerCache.PreActivation);
-        }
+            trunkGradient = _trunkLayers[layerIndex].Backward(trunkGradient, config.LearningRate);
     }
 
     public PpoBatchUpdateStats ApplyGradients(IReadOnlyList<TrainingSample> samples, RLTrainerConfig config)
     {
         if (samples.Count == 0)
-        {
             return new PpoBatchUpdateStats();
-        }
 
         var trunkGradients = new GradientBuffer[_trunkLayers.Length];
-        for (var layerIndex = 0; layerIndex < _trunkLayers.Length; layerIndex++)
-        {
-            trunkGradients[layerIndex] = _trunkLayers[layerIndex].CreateGradientBuffer();
-        }
+        for (var i = 0; i < _trunkLayers.Length; i++)
+            trunkGradients[i] = _trunkLayers[i].CreateGradientBuffer();
 
         var policyGradients = _policyHead.CreateGradientBuffer();
-        var valueGradients = _valueHead.CreateGradientBuffer();
+        var valueGradients  = _valueHead.CreateGradientBuffer();
 
         var totalPolicyLoss = 0f;
-        var totalValueLoss = 0f;
-        var totalEntropy = 0f;
-        var clipCount = 0;
+        var totalValueLoss  = 0f;
+        var totalEntropy    = 0f;
+        var clipCount       = 0;
 
         foreach (var sample in samples)
         {
@@ -153,32 +121,22 @@ internal sealed class PolicyValueNetwork
             var clippedRatio = Math.Clamp(ratio, 1.0f - config.ClipEpsilon, 1.0f + config.ClipEpsilon);
             var unclippedObjective = ratio * sample.Advantage;
             var clippedObjective = clippedRatio * sample.Advantage;
-            var policyObjective = Math.Min(unclippedObjective, clippedObjective);
-            totalPolicyLoss += -policyObjective;
+            totalPolicyLoss += -Math.Min(unclippedObjective, clippedObjective);
 
-            if (Mathf.Abs(ratio - 1.0f) > config.ClipEpsilon)
-            {
-                clipCount += 1;
-            }
+            if (Mathf.Abs(ratio - 1.0f) > config.ClipEpsilon) clipCount++;
 
             var logitsGradient = new float[probs.Length];
             if (unclippedObjective <= clippedObjective)
             {
                 for (var index = 0; index < probs.Length; index++)
-                {
                     logitsGradient[index] = ratio * probs[index] * sample.Advantage;
-                }
-
                 logitsGradient[sample.Action] -= ratio * sample.Advantage;
             }
 
             var entropy = 0f;
             foreach (var probability in probs)
             {
-                if (probability > 1e-6f)
-                {
-                    entropy -= probability * Mathf.Log(probability);
-                }
+                if (probability > 1e-6f) entropy -= probability * Mathf.Log(probability);
             }
 
             totalEntropy += entropy;
@@ -206,85 +164,64 @@ internal sealed class PolicyValueNetwork
                 {
                     valueLoss = clippedValueLoss;
                     if (Mathf.Abs(valuePrediction - sample.ValueEstimate) > config.ValueClipEpsilon)
-                    {
                         valueGradientScalar = 0f;
-                    }
                 }
             }
 
             totalValueLoss += valueLoss;
             var valueGradient = new[] { config.ValueLossCoefficient * valueGradientScalar };
 
-            var trunkGradientFromPolicy = _policyHead.AccumulateGradients(inference.Cache.LastOutput, logitsGradient, policyGradients);
-            var trunkGradientFromValue = _valueHead.AccumulateGradients(inference.Cache.LastOutput, valueGradient, valueGradients);
+            // Infer() already cached state in each layer; AccumulateGradients uses it.
+            var trunkGradientFromPolicy = _policyHead.AccumulateGradients(logitsGradient, policyGradients);
+            var trunkGradientFromValue  = _valueHead.AccumulateGradients(valueGradient,   valueGradients);
 
             var trunkGradient = new float[trunkGradientFromPolicy.Length];
             for (var index = 0; index < trunkGradient.Length; index++)
-            {
                 trunkGradient[index] = trunkGradientFromPolicy[index] + trunkGradientFromValue[index];
-            }
 
             for (var layerIndex = _trunkLayers.Length - 1; layerIndex >= 0; layerIndex--)
-            {
-                var layerCache = inference.Cache.HiddenLayers[layerIndex];
-                trunkGradient = _trunkLayers[layerIndex].AccumulateGradients(
-                    layerCache.Input,
-                    trunkGradient,
-                    trunkGradients[layerIndex],
-                    layerCache.PreActivation);
-            }
+                trunkGradient = _trunkLayers[layerIndex].AccumulateGradients(trunkGradient, trunkGradients[layerIndex]);
         }
 
         var globalNormSquared = policyGradients.SumSquares() + valueGradients.SumSquares();
-        foreach (var gradients in trunkGradients)
-        {
-            globalNormSquared += gradients.SumSquares();
-        }
+        foreach (var g in trunkGradients) globalNormSquared += g.SumSquares();
 
         var gradientScale = 1f / samples.Count;
         if (config.MaxGradientNorm > 0f)
         {
             var averageNorm = Mathf.Sqrt(globalNormSquared) * gradientScale;
             if (averageNorm > config.MaxGradientNorm)
-            {
                 gradientScale *= config.MaxGradientNorm / averageNorm;
-            }
         }
 
         _policyHead.ApplyGradients(policyGradients, config.LearningRate, gradientScale);
-        _valueHead.ApplyGradients(valueGradients, config.LearningRate, gradientScale);
+        _valueHead.ApplyGradients(valueGradients,   config.LearningRate, gradientScale);
         for (var layerIndex = _trunkLayers.Length - 1; layerIndex >= 0; layerIndex--)
-        {
             _trunkLayers[layerIndex].ApplyGradients(trunkGradients[layerIndex], config.LearningRate, gradientScale);
-        }
 
         return new PpoBatchUpdateStats
         {
-            PolicyLoss = totalPolicyLoss / samples.Count,
-            ValueLoss = totalValueLoss / samples.Count,
-            Entropy = totalEntropy / samples.Count,
-            ClipFraction = (float)clipCount / samples.Count,
+            PolicyLoss    = totalPolicyLoss / samples.Count,
+            ValueLoss     = totalValueLoss  / samples.Count,
+            Entropy       = totalEntropy    / samples.Count,
+            ClipFraction  = (float)clipCount / samples.Count,
         };
     }
 
     public RLCheckpoint SaveCheckpoint(string runId, long totalSteps, long episodeCount, long updateCount)
     {
         var weights = new List<float>();
-        var shapes = new List<int>();
-        foreach (var layer in _trunkLayers)
-        {
-            layer.AppendSerialized(weights, shapes);
-        }
-
+        var shapes  = new List<int>();
+        foreach (var layer in _trunkLayers) layer.AppendSerialized(weights, shapes);
         _policyHead.AppendSerialized(weights, shapes);
         _valueHead.AppendSerialized(weights, shapes);
 
         return new RLCheckpoint
         {
-            RunId = runId,
-            TotalSteps = totalSteps,
+            RunId        = runId,
+            TotalSteps   = totalSteps,
             EpisodeCount = episodeCount,
-            UpdateCount = updateCount,
+            UpdateCount  = updateCount,
             WeightBuffer = weights.ToArray(),
             LayerShapeBuffer = shapes.ToArray(),
         };
@@ -292,16 +229,15 @@ internal sealed class PolicyValueNetwork
 
     public void LoadCheckpoint(RLCheckpoint checkpoint)
     {
-        var weightIndex = 0;
-        var shapeIndex = 0;
+        var wi       = 0;
+        var si       = 0;
+        var isLegacy = checkpoint.FormatVersion < RLCheckpoint.CurrentFormatVersion;
 
         foreach (var layer in _trunkLayers)
-        {
-            layer.LoadSerialized(checkpoint.WeightBuffer, ref weightIndex, checkpoint.LayerShapeBuffer, ref shapeIndex);
-        }
+            layer.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si, isLegacy);
 
-        _policyHead.LoadSerialized(checkpoint.WeightBuffer, ref weightIndex, checkpoint.LayerShapeBuffer, ref shapeIndex);
-        _valueHead.LoadSerialized(checkpoint.WeightBuffer, ref weightIndex, checkpoint.LayerShapeBuffer, ref shapeIndex);
+        _policyHead.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si, isLegacy);
+        _valueHead.LoadSerialized(checkpoint.WeightBuffer,  ref wi, checkpoint.LayerShapeBuffer, ref si, isLegacy);
     }
 
     public int SelectGreedyAction(float[] observation)
@@ -325,21 +261,17 @@ internal sealed class PolicyValueNetwork
     {
         var inference = InferBatch(observations);
         var actions = new int[observations.BatchSize];
-        for (var batchIndex = 0; batchIndex < observations.BatchSize; batchIndex++)
+        for (var b = 0; b < observations.BatchSize; b++)
         {
             var bestIndex = 0;
-            var bestValue = inference.Logits.Get(batchIndex, 0);
-            for (var actionIndex = 1; actionIndex < inference.Logits.VectorSize; actionIndex++)
+            var bestValue = inference.Logits.Get(b, 0);
+            for (var a = 1; a < inference.Logits.VectorSize; a++)
             {
-                var logit = inference.Logits.Get(batchIndex, actionIndex);
-                if (logit > bestValue)
-                {
-                    bestValue = logit;
-                    bestIndex = actionIndex;
-                }
+                var logit = inference.Logits.Get(b, a);
+                if (logit > bestValue) { bestValue = logit; bestIndex = a; }
             }
 
-            actions[batchIndex] = bestIndex;
+            actions[b] = bestIndex;
         }
 
         return actions;
@@ -357,16 +289,13 @@ internal sealed class PolicyValueNetwork
         }
 
         for (var index = 0; index < expValues.Length; index++)
-        {
             expValues[index] /= total;
-        }
 
         return expValues;
     }
 
     internal sealed class NetworkInference
     {
-        public ForwardCache Cache { get; init; } = new(Array.Empty<float>());
         public float[] Logits { get; init; } = Array.Empty<float>();
         public float Value { get; init; }
     }
@@ -379,28 +308,9 @@ internal sealed class PolicyValueNetwork
 
     internal sealed class PpoBatchUpdateStats
     {
-        public float PolicyLoss { get; init; }
-        public float ValueLoss { get; init; }
-        public float Entropy { get; init; }
+        public float PolicyLoss   { get; init; }
+        public float ValueLoss    { get; init; }
+        public float Entropy      { get; init; }
         public float ClipFraction { get; init; }
-    }
-
-    internal sealed class ForwardCache
-    {
-        public ForwardCache(float[] observation)
-        {
-            Observation = observation;
-        }
-
-        public float[] Observation { get; }
-        public List<LayerCache> HiddenLayers { get; } = new();
-        public LayerCache Policy { get; set; } = LayerCache.Empty;
-        public LayerCache Value { get; set; } = LayerCache.Empty;
-        public float[] LastOutput => HiddenLayers.Count == 0 ? Observation : HiddenLayers[^1].Activated;
-
-        public void AddLayer(LayerCache cache)
-        {
-            HiddenLayers.Add(cache);
-        }
     }
 }

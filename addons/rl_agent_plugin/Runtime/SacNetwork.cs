@@ -15,89 +15,78 @@ internal sealed class SacNetwork
     private readonly float _learningRate;
 
     // Actor layers (trunk + head)
-    private readonly DenseLayer[] _actorTrunk;
-    private readonly DenseLayer _actorHead;
+    private readonly NetworkLayer[] _actorTrunk;
+    private readonly NetworkLayer   _actorHead;
 
     // Twin Q-networks
-    private readonly DenseLayer[] _q1Trunk;
-    private readonly DenseLayer _q1Head;
-    private readonly DenseLayer[] _q2Trunk;
-    private readonly DenseLayer _q2Head;
+    private readonly NetworkLayer[] _q1Trunk;
+    private readonly NetworkLayer   _q1Head;
+    private readonly NetworkLayer[] _q2Trunk;
+    private readonly NetworkLayer   _q2Head;
 
-    // Target Q-networks (no optimizer needed, only forward + soft-update)
-    private readonly DenseLayer[] _q1TargetTrunk;
-    private readonly DenseLayer _q1TargetHead;
-    private readonly DenseLayer[] _q2TargetTrunk;
-    private readonly DenseLayer _q2TargetHead;
+    // Target Q-networks (frozen — weights maintained via soft/hard copy only)
+    private readonly NetworkLayer[] _q1TargetTrunk;
+    private readonly NetworkLayer   _q1TargetHead;
+    private readonly NetworkLayer[] _q2TargetTrunk;
+    private readonly NetworkLayer   _q2TargetHead;
 
     public SacNetwork(int obsSize, int actionDim, bool isContinuous, RLNetworkGraph graph, float learningRate)
     {
-        _obsSize = obsSize;
-        _actionDim = actionDim;
+        _obsSize      = obsSize;
+        _actionDim    = actionDim;
         _learningRate = learningRate;
-        var useAdam = graph.Optimizer == RLOptimizerKind.Adam;
 
         _actorTrunk = graph.BuildTrunkLayers(obsSize);
         var actorTrunkOut = graph.OutputSize(obsSize);
         // Discrete: logits over actions; Continuous: [mean_0..mean_D, log_std_0..log_std_D]
         var actorOutSize = isContinuous ? actionDim * 2 : actionDim;
-        _actorHead = new DenseLayer(actorTrunkOut, actorOutSize, null, useAdam);
+        _actorHead = new DenseLayer(actorTrunkOut, actorOutSize, null, graph.Optimizer);
 
-        // Q-networks
         var qInputSize = isContinuous ? obsSize + actionDim : obsSize;
-        var qOutSize = isContinuous ? 1 : actionDim;
-        var qTrunkOut = graph.OutputSize(qInputSize);
+        var qOutSize   = isContinuous ? 1 : actionDim;
+        var qTrunkOut  = graph.OutputSize(qInputSize);
 
         _q1Trunk = graph.BuildTrunkLayers(qInputSize);
-        _q1Head = new DenseLayer(qTrunkOut, qOutSize, null, useAdam);
+        _q1Head  = new DenseLayer(qTrunkOut, qOutSize, null, graph.Optimizer);
 
         _q2Trunk = graph.BuildTrunkLayers(qInputSize);
-        _q2Head = new DenseLayer(qTrunkOut, qOutSize, null, useAdam);
+        _q2Head  = new DenseLayer(qTrunkOut, qOutSize, null, graph.Optimizer);
 
-        // Target Q-networks (no optimizer — weights are maintained via soft/hard copy)
-        _q1TargetTrunk = graph.BuildTrunkLayers(qInputSize, forceUseAdam: false);
-        _q1TargetHead = new DenseLayer(qTrunkOut, qOutSize, null, false);
+        // Target Q-networks — RLOptimizerKind.None: no moment vectors, no weight updates
+        _q1TargetTrunk = graph.BuildTrunkLayers(qInputSize, RLOptimizerKind.None);
+        _q1TargetHead  = new DenseLayer(qTrunkOut, qOutSize, null, RLOptimizerKind.None);
 
-        _q2TargetTrunk = graph.BuildTrunkLayers(qInputSize, forceUseAdam: false);
-        _q2TargetHead = new DenseLayer(qTrunkOut, qOutSize, null, false);
+        _q2TargetTrunk = graph.BuildTrunkLayers(qInputSize, RLOptimizerKind.None);
+        _q2TargetHead  = new DenseLayer(qTrunkOut, qOutSize, null, RLOptimizerKind.None);
 
-        // Initialize targets as hard copies of online networks
         HardCopyToTargets();
     }
 
     // ── Discrete action methods ──────────────────────────────────────────────
 
     public (int action, float logProb, float entropy) SampleDiscreteAction(float[] obs, Random rng)
-    {
-        var logits = ForwardActor(obs);
-        return SampleDiscreteActionFromLogits(logits, rng);
-    }
+        => SampleDiscreteActionFromLogits(ForwardActor(obs), rng);
 
     public DiscreteActionBatch SampleDiscreteActions(VectorBatch observations, Random rng)
     {
         var logitsBatch = ForwardActorBatch(observations);
-        var actions = new int[observations.BatchSize];
-        var logProbabilities = new float[observations.BatchSize];
-        var entropies = new float[observations.BatchSize];
-        for (var batchIndex = 0; batchIndex < observations.BatchSize; batchIndex++)
+        var actions     = new int[observations.BatchSize];
+        var logProbs    = new float[observations.BatchSize];
+        var entropies   = new float[observations.BatchSize];
+        for (var b = 0; b < observations.BatchSize; b++)
         {
-            var (action, logProb, entropy) = SampleDiscreteActionFromLogits(logitsBatch.CopyRow(batchIndex), rng);
-            actions[batchIndex] = action;
-            logProbabilities[batchIndex] = logProb;
-            entropies[batchIndex] = entropy;
+            var (action, logProb, entropy) = SampleDiscreteActionFromLogits(logitsBatch.CopyRow(b), rng);
+            actions[b]   = action;
+            logProbs[b]  = logProb;
+            entropies[b] = entropy;
         }
 
-        return new DiscreteActionBatch
-        {
-            Actions = actions,
-            LogProbabilities = logProbabilities,
-            Entropies = entropies,
-        };
+        return new DiscreteActionBatch { Actions = actions, LogProbabilities = logProbs, Entropies = entropies };
     }
 
     private static (int action, float logProb, float entropy) SampleDiscreteActionFromLogits(float[] logits, Random rng)
     {
-        var probs = Softmax(logits);
+        var probs  = Softmax(logits);
         var action = SampleFromProbs(probs, rng);
         var logProb = MathF.Log(Math.Max(probs[action], 1e-8f));
         var entropy = 0f;
@@ -121,102 +110,72 @@ internal sealed class SacNetwork
         return best;
     }
 
-    /// <summary>
-    /// Returns (probs, logProbs) for all discrete actions from the actor.
-    /// </summary>
     public (float[] probs, float[] logProbs) GetDiscreteActorProbs(float[] obs)
     {
         var logits = ForwardActor(obs);
-        var probs = Softmax(logits);
+        var probs  = Softmax(logits);
         var logProbs = new float[probs.Length];
         for (var i = 0; i < probs.Length; i++)
-        {
             logProbs[i] = probs[i] > 1e-8f ? MathF.Log(probs[i]) : MathF.Log(1e-8f);
-        }
-
         return (probs, logProbs);
     }
 
-    /// <summary>
-    /// Returns online Q1[a] and Q2[a] for all actions (discrete).
-    /// </summary>
     public (float[] q1, float[] q2) GetDiscreteQValues(float[] obs)
-    {
-        return (ForwardQ(_q1Trunk, _q1Head, obs), ForwardQ(_q2Trunk, _q2Head, obs));
-    }
+        => (ForwardQ(_q1Trunk, _q1Head, obs), ForwardQ(_q2Trunk, _q2Head, obs));
 
-    /// <summary>
-    /// Returns target Q1[a] and Q2[a] for all actions (discrete).
-    /// </summary>
     public (float[] q1Target, float[] q2Target) GetDiscreteTargetQValues(float[] obs)
-    {
-        return (ForwardQ(_q1TargetTrunk, _q1TargetHead, obs), ForwardQ(_q2TargetTrunk, _q2TargetHead, obs));
-    }
+        => (ForwardQ(_q1TargetTrunk, _q1TargetHead, obs), ForwardQ(_q2TargetTrunk, _q2TargetHead, obs));
 
     // ── Continuous action methods ────────────────────────────────────────────
 
-    /// <summary>
-    /// Sample continuous action via reparameterization with tanh squashing.
-    /// Returns (action, logProb).
-    /// </summary>
     public (float[] action, float logProb, float[] eps, float[] u) SampleContinuousAction(float[] obs, Random rng)
-    {
-        var actorOut = ForwardActor(obs);
-        return SampleContinuousActionFromActorOutput(actorOut, rng);
-    }
+        => SampleContinuousActionFromActorOutput(ForwardActor(obs), rng);
 
     public ContinuousActionBatch SampleContinuousActions(VectorBatch observations, Random rng)
     {
         var actorBatch = ForwardActorBatch(observations);
-        var actions = new float[observations.BatchSize][];
-        var logProbabilities = new float[observations.BatchSize];
-        var epsilons = new float[observations.BatchSize][];
-        var preSquashActions = new float[observations.BatchSize][];
-        for (var batchIndex = 0; batchIndex < observations.BatchSize; batchIndex++)
+        var actions    = new float[observations.BatchSize][];
+        var logProbs   = new float[observations.BatchSize];
+        var epsilons   = new float[observations.BatchSize][];
+        var preSquash  = new float[observations.BatchSize][];
+        for (var b = 0; b < observations.BatchSize; b++)
         {
-            var (action, logProb, eps, u) = SampleContinuousActionFromActorOutput(actorBatch.CopyRow(batchIndex), rng);
-            actions[batchIndex] = action;
-            logProbabilities[batchIndex] = logProb;
-            epsilons[batchIndex] = eps;
-            preSquashActions[batchIndex] = u;
+            var (action, logProb, eps, u) = SampleContinuousActionFromActorOutput(actorBatch.CopyRow(b), rng);
+            actions[b]   = action;
+            logProbs[b]  = logProb;
+            epsilons[b]  = eps;
+            preSquash[b] = u;
         }
 
         return new ContinuousActionBatch
         {
-            Actions = actions,
-            LogProbabilities = logProbabilities,
-            Epsilons = epsilons,
-            PreSquashActions = preSquashActions,
+            Actions = actions, LogProbabilities = logProbs,
+            Epsilons = epsilons, PreSquashActions = preSquash,
         };
     }
 
     private (float[] action, float logProb, float[] eps, float[] u) SampleContinuousActionFromActorOutput(float[] actorOut, Random rng)
     {
-        var mean = actorOut[.._actionDim];
+        var mean   = actorOut[.._actionDim];
         var logStd = new float[_actionDim];
         for (var i = 0; i < _actionDim; i++)
-        {
             logStd[i] = Math.Clamp(actorOut[_actionDim + i], -20f, 2f);
-        }
 
-        var eps = new float[_actionDim];
-        var u = new float[_actionDim];
-        var action = new float[_actionDim];
+        var eps     = new float[_actionDim];
+        var u       = new float[_actionDim];
+        var action  = new float[_actionDim];
         var logProb = 0f;
         for (var i = 0; i < _actionDim; i++)
         {
             eps[i] = SampleNormal(rng);
             var std = MathF.Exp(logStd[i]);
-            u[i] = mean[i] + std * eps[i];
+            u[i]   = mean[i] + std * eps[i];
             action[i] = MathF.Tanh(u[i]);
-            // log_pi = Normal.logpdf(eps) - log(1 - tanh^2(u) + eps_small) - log_std
             var squash = 1f - action[i] * action[i];
             logProb += -0.5f * eps[i] * eps[i] - logStd[i] - MathF.Log(squash + 1e-6f);
         }
 
-        // Constant term: -D/2 * log(2*pi)
         logProb -= _actionDim * 0.5f * MathF.Log(2f * MathF.PI);
-
         return (action, logProb, eps, u);
     }
 
@@ -224,26 +183,16 @@ internal sealed class SacNetwork
     {
         var actorOut = ForwardActor(obs);
         var action = new float[_actionDim];
-        for (var i = 0; i < _actionDim; i++)
-        {
-            action[i] = MathF.Tanh(actorOut[i]);
-        }
-
+        for (var i = 0; i < _actionDim; i++) action[i] = MathF.Tanh(actorOut[i]);
         return action;
     }
 
-    /// <summary>
-    /// Returns online Q1 and Q2 for a continuous [obs, action] input.
-    /// </summary>
     public (float q1, float q2) GetContinuousQValues(float[] obs, float[] action)
     {
         var input = Concat(obs, action);
         return (ForwardQ(_q1Trunk, _q1Head, input)[0], ForwardQ(_q2Trunk, _q2Head, input)[0]);
     }
 
-    /// <summary>
-    /// Returns target Q1 and Q2 for a continuous [obs, action] input.
-    /// </summary>
     public (float q1Target, float q2Target) GetContinuousTargetQValues(float[] obs, float[] action)
     {
         var input = Concat(obs, action);
@@ -252,138 +201,94 @@ internal sealed class SacNetwork
 
     // ── Gradient updates ─────────────────────────────────────────────────────
 
-    /// <summary>Update Q1 toward target y for a given discrete action.</summary>
     public void UpdateQ1Discrete(float[] obs, int action, float target)
     {
         var qVals = ForwardQ(_q1Trunk, _q1Head, obs);
-        var grad = new float[qVals.Length]; // zero gradient for all other actions
+        var grad  = new float[qVals.Length];
         grad[action] = qVals[action] - target;
         BackwardQ(_q1Trunk, _q1Head, obs, grad);
     }
 
-    /// <summary>Update Q2 toward target y for a given discrete action.</summary>
     public void UpdateQ2Discrete(float[] obs, int action, float target)
     {
         var qVals = ForwardQ(_q2Trunk, _q2Head, obs);
-        var grad = new float[qVals.Length];
+        var grad  = new float[qVals.Length];
         grad[action] = qVals[action] - target;
         BackwardQ(_q2Trunk, _q2Head, obs, grad);
     }
 
-    /// <summary>Update Q1 toward target y for continuous actions.</summary>
     public void UpdateQ1Continuous(float[] obs, float[] action, float target)
     {
         var input = Concat(obs, action);
-        var q = ForwardQ(_q1Trunk, _q1Head, input)[0];
+        var q     = ForwardQ(_q1Trunk, _q1Head, input)[0];
         BackwardQ(_q1Trunk, _q1Head, input, new[] { q - target });
     }
 
-    /// <summary>Update Q2 toward target y for continuous actions.</summary>
     public void UpdateQ2Continuous(float[] obs, float[] action, float target)
     {
         var input = Concat(obs, action);
-        var q = ForwardQ(_q2Trunk, _q2Head, input)[0];
+        var q     = ForwardQ(_q2Trunk, _q2Head, input)[0];
         BackwardQ(_q2Trunk, _q2Head, input, new[] { q - target });
     }
 
-    /// <summary>
-    /// Update actor for discrete SAC: maximize E_pi[min_Q(s,a) - alpha * log_pi(a|s)].
-    /// Gradient of logit j: -pi(j) * (f(j) - E_pi[f]) where f(a) = min_Q(s,a) - alpha * log_pi(a).
-    /// </summary>
     public void UpdateActorDiscrete(float[] obs, float alpha)
     {
-        var logits = ForwardActorFull(obs, out var trunkCaches);
-        var probs = Softmax(logits);
+        var logits = ForwardActorFull(obs);
+        var probs  = Softmax(logits);
 
-        var (q1, q2) = GetDiscreteQValues(obs);
+        var (q1, q2)     = GetDiscreteQValues(obs);
         var logProbClipped = new float[probs.Length];
         for (var i = 0; i < probs.Length; i++)
-        {
             logProbClipped[i] = probs[i] > 1e-8f ? MathF.Log(probs[i]) : MathF.Log(1e-8f);
-        }
 
-        // f(a) = min_Q(s,a) - alpha * log_pi(a)
-        var f = new float[probs.Length];
+        var f    = new float[probs.Length];
         var eFpi = 0f;
         for (var i = 0; i < probs.Length; i++)
         {
-            f[i] = Math.Min(q1[i], q2[i]) - alpha * logProbClipped[i];
+            f[i]  = Math.Min(q1[i], q2[i]) - alpha * logProbClipped[i];
             eFpi += probs[i] * f[i];
         }
 
-        // Actor gradient of loss = -V: grad_j = -pi(j) * (f(j) - E_pi[f])
         var grad = new float[probs.Length];
         for (var j = 0; j < probs.Length; j++)
-        {
             grad[j] = -probs[j] * (f[j] - eFpi);
-        }
 
-        BackwardActorFromLogits(trunkCaches, logits, grad);
+        BackwardActorFromLogits(grad);
     }
 
-    /// <summary>
-    /// Update actor for continuous SAC via reparameterization gradient.
-    /// </summary>
     public void UpdateActorContinuous(float[] obs, float[] action, float[] eps, float[] u, float alpha)
     {
-        // Compute dQ/d(action) without updating Q network weights
         var input = Concat(obs, action);
+
+        // Forward both Q networks to get Q values and cache their states.
         var q1 = ForwardQ(_q1Trunk, _q1Head, input)[0];
         var q2 = ForwardQ(_q2Trunk, _q2Head, input)[0];
 
-        float[] qInputGrad;
-        if (q1 <= q2)
-        {
-            ForwardQFull(_q1Trunk, _q1Head, input, out var q1Caches);
-            qInputGrad = ComputeQInputGradOnly(_q1Trunk, _q1Head, input, q1Caches, new[] { 1f });
-        }
-        else
-        {
-            ForwardQFull(_q2Trunk, _q2Head, input, out var q2Caches);
-            qInputGrad = ComputeQInputGradOnly(_q2Trunk, _q2Head, input, q2Caches, new[] { 1f });
-        }
+        // Use whichever Q network has the lower (more pessimistic) value.
+        var qInputGrad = q1 <= q2
+            ? ComputeQInputGradOnly(_q1Trunk, _q1Head, new[] { 1f })
+            : ComputeQInputGradOnly(_q2Trunk, _q2Head, new[] { 1f });
 
-        // Action gradient from Q (slice off the obs part)
         var dQdAction = qInputGrad[_obsSize..];
 
-        // Actor outputs [mean_0..mean_{D-1}, log_std_0..log_std_{D-1}]
-        var actorOut = ForwardActorFull(obs, out var actorCaches);
+        var actorOut  = ForwardActorFull(obs);
         var actorGrad = new float[_actionDim * 2];
 
         for (var d = 0; d < _actionDim; d++)
         {
-            var a = action[d];
-            var squash = 1f - a * a; // sech^2(u) = 1 - tanh^2(u)
+            var a      = action[d];
+            var squash = 1f - a * a;
             var logStd = Math.Clamp(actorOut[_actionDim + d], -20f, 2f);
-            var std = MathF.Exp(logStd);
+            var std    = MathF.Exp(logStd);
 
-            // Gradient of loss = -V = -(min_Q - alpha * log_pi) w.r.t. actor outputs.
-            //
-            // d(-V)/d(mean_d) = -dQ/da_d * squash + alpha * d(-log_pi)/d(mean_d)
-            //   where d(-log_pi)/d(mean_d) = 2*a*squash/(squash+eps) via chain rule through tanh
-            //   but NOTE: log_pi = -log(sech^2) - log_std - ... so d(log_pi)/d(mean) = 2*a*squash/(squash+eps)
-            //   and d(-log_pi)/d(mean) = -2*a*squash/(squash+eps) [increases entropy → decreases -log_pi]
-            //   SAC maximizes V = Q + alpha*H, so grad of -V w.r.t. mean:
-            //   = -dQ/da * squash - alpha * d(log_pi)/d(mean)
-            //   = -dQdAction[d]*squash - alpha * 2*a*squash/(squash+eps)
-            //   Wait, H = -E[log_pi], so dV/d(mean) = dQ/da*squash - alpha*d(log_pi)/d(mean)
-            //   d(log_pi)/d(mean) = 2*a*squash/(squash+eps) (via chain rule, log(1-a^2) term)
-            //   d(-V)/d(mean) = -dQ/da*squash + alpha*d(log_pi)/d(mean)
-            //                 = squash*(-dQdAction[d] + 2*alpha*a/(squash+eps))
             actorGrad[d] = squash * (-dQdAction[d] + 2f * alpha * a / (squash + 1e-6f));
-
-            // d(-V)/d(log_std_d) = -dQ/da_d * squash * std * eps_d + alpha * d(log_pi)/d(log_std_d)
-            //   d(log_pi)/d(log_std_d) = -1 + 2*a*squash*std*eps_d/(squash+eps)
-            //   (the -1 comes from the -log_std term in log_pi)
-            //   d(-V)/d(log_std_d) = -dQdAction[d]*squash*std*eps_d - alpha*(1 - 2*a*squash*std*eps_d/(squash+eps))
             actorGrad[_actionDim + d] = -dQdAction[d] * squash * std * eps[d]
                 - alpha * (1f - 2f * a * squash * std * eps[d] / (squash + 1e-6f));
         }
 
-        BackwardActorFromLogits(actorCaches, actorOut, actorGrad);
+        BackwardActorFromLogits(actorGrad);
     }
 
-    /// <summary>Soft-updates target networks: θ_target = τ*θ + (1-τ)*θ_target.</summary>
     public void SoftUpdateTargets(float tau)
     {
         for (var i = 0; i < _q1Trunk.Length; i++)
@@ -401,7 +306,7 @@ internal sealed class SacNetwork
     public RLCheckpoint SaveCheckpoint(string groupId, long totalSteps, long episodeCount, long updateCount)
     {
         var weights = new List<float>();
-        var shapes = new List<int>();
+        var shapes  = new List<int>();
 
         foreach (var layer in _actorTrunk) layer.AppendSerialized(weights, shapes);
         _actorHead.AppendSerialized(weights, shapes);
@@ -412,10 +317,10 @@ internal sealed class SacNetwork
 
         return new RLCheckpoint
         {
-            RunId = groupId,
-            TotalSteps = totalSteps,
+            RunId        = groupId,
+            TotalSteps   = totalSteps,
             EpisodeCount = episodeCount,
-            UpdateCount = updateCount,
+            UpdateCount  = updateCount,
             WeightBuffer = weights.ToArray(),
             LayerShapeBuffer = shapes.ToArray(),
         };
@@ -423,133 +328,92 @@ internal sealed class SacNetwork
 
     public void LoadCheckpoint(RLCheckpoint checkpoint)
     {
-        var wi = 0;
-        var si = 0;
-        foreach (var layer in _actorTrunk) layer.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si);
-        _actorHead.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si);
-        foreach (var layer in _q1Trunk) layer.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si);
-        _q1Head.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si);
-        foreach (var layer in _q2Trunk) layer.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si);
-        _q2Head.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si);
+        var wi       = 0;
+        var si       = 0;
+        var isLegacy = checkpoint.FormatVersion < RLCheckpoint.CurrentFormatVersion;
 
-        // Reconstruct targets from online networks
+        foreach (var layer in _actorTrunk) layer.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si, isLegacy);
+        _actorHead.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si, isLegacy);
+        foreach (var layer in _q1Trunk) layer.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si, isLegacy);
+        _q1Head.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si, isLegacy);
+        foreach (var layer in _q2Trunk) layer.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si, isLegacy);
+        _q2Head.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si, isLegacy);
+
         HardCopyToTargets();
     }
 
     public void LoadActorCheckpoint(RLCheckpoint checkpoint)
     {
-        var weightIndex = 0;
-        var shapeIndex = 0;
-        foreach (var layer in _actorTrunk)
-        {
-            layer.LoadSerialized(checkpoint.WeightBuffer, ref weightIndex, checkpoint.LayerShapeBuffer, ref shapeIndex);
-        }
+        var wi       = 0;
+        var si       = 0;
+        var isLegacy = checkpoint.FormatVersion < RLCheckpoint.CurrentFormatVersion;
 
-        _actorHead.LoadSerialized(checkpoint.WeightBuffer, ref weightIndex, checkpoint.LayerShapeBuffer, ref shapeIndex);
+        foreach (var layer in _actorTrunk)
+            layer.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si, isLegacy);
+        _actorHead.LoadSerialized(checkpoint.WeightBuffer, ref wi, checkpoint.LayerShapeBuffer, ref si, isLegacy);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    /// <summary>Inference-only forward through the actor. Caches state for BackwardActorFromLogits.</summary>
     private float[] ForwardActor(float[] obs)
     {
         var x = obs;
-        foreach (var layer in _actorTrunk)
-        {
-            x = layer.Forward(x).Activated;
-        }
-
-        return _actorHead.Forward(x).Activated;
+        foreach (var layer in _actorTrunk) x = layer.Forward(x);
+        return _actorHead.Forward(x);
     }
 
     private VectorBatch ForwardActorBatch(VectorBatch observations)
     {
         var x = observations;
-        foreach (var layer in _actorTrunk)
-        {
-            x = layer.ForwardBatch(x);
-        }
-
+        foreach (var layer in _actorTrunk) x = layer.ForwardBatch(x);
         return _actorHead.ForwardBatch(x);
     }
 
-    private float[] ForwardActorFull(float[] obs, out (LayerCache[] trunk, LayerCache head, float[] trunkOut) caches)
+    /// <summary>
+    /// Forwards through the actor (same as ForwardActor), caching state in each layer.
+    /// Call BackwardActorFromLogits immediately after to apply the gradient.
+    /// </summary>
+    private float[] ForwardActorFull(float[] obs)
     {
-        var trunkCaches = new LayerCache[_actorTrunk.Length];
         var x = obs;
-        for (var i = 0; i < _actorTrunk.Length; i++)
-        {
-            trunkCaches[i] = _actorTrunk[i].Forward(x);
-            x = trunkCaches[i].Activated;
-        }
-
-        var headCache = _actorHead.Forward(x);
-        caches = (trunkCaches, headCache, x);
-        return headCache.Activated;
+        foreach (var layer in _actorTrunk) x = layer.Forward(x);
+        return _actorHead.Forward(x);
     }
 
-    private void BackwardActorFromLogits(
-        (LayerCache[] trunk, LayerCache head, float[] trunkOut) caches,
-        float[] headActivated, float[] outputGrad)
+    private void BackwardActorFromLogits(float[] outputGrad)
     {
-        var grad = _actorHead.Backward(caches.trunkOut, outputGrad, _learningRate);
+        var grad = _actorHead.Backward(outputGrad, _learningRate);
         for (var i = _actorTrunk.Length - 1; i >= 0; i--)
-        {
-            // LayerCache.Input stores the input that was passed to Forward() for this layer
-            grad = _actorTrunk[i].Backward(caches.trunk[i].Input, grad, _learningRate, caches.trunk[i].PreActivation);
-        }
+            grad = _actorTrunk[i].Backward(grad, _learningRate);
     }
 
-    private static float[] ForwardQ(DenseLayer[] trunk, DenseLayer head, float[] input)
+    /// <summary>Forwards through a Q network, caching state in each layer.</summary>
+    private static float[] ForwardQ(NetworkLayer[] trunk, NetworkLayer head, float[] input)
     {
         var x = input;
-        foreach (var layer in trunk)
-        {
-            x = layer.Forward(x).Activated;
-        }
-
-        return head.Forward(x).Activated;
+        foreach (var layer in trunk) x = layer.Forward(x);
+        return head.Forward(x);
     }
 
-    private float[] ForwardQFull(DenseLayer[] trunk, DenseLayer head, float[] input,
-        out (LayerCache[] trunk, float[] trunkOut) caches)
+    private void BackwardQ(NetworkLayer[] trunk, NetworkLayer head, float[] input, float[] outputGrad)
     {
-        var trunkCaches = new LayerCache[trunk.Length];
-        var x = input;
-        for (var i = 0; i < trunk.Length; i++)
-        {
-            trunkCaches[i] = trunk[i].Forward(x);
-            x = trunkCaches[i].Activated;
-        }
-
-        var headOut = head.Forward(x).Activated;
-        caches = (trunkCaches, x);
-        return headOut;
-    }
-
-    private void BackwardQ(DenseLayer[] trunk, DenseLayer head, float[] input, float[] outputGrad)
-    {
-        // Re-forward to get caches
-        ForwardQFull(trunk, head, input, out var caches);
-        var grad = head.Backward(caches.trunkOut, outputGrad, _learningRate);
+        ForwardQ(trunk, head, input); // refresh caches
+        var grad = head.Backward(outputGrad, _learningRate);
         for (var i = trunk.Length - 1; i >= 0; i--)
-        {
-            grad = trunk[i].Backward(caches.trunk[i].Input, grad, _learningRate, caches.trunk[i].PreActivation);
-        }
+            grad = trunk[i].Backward(grad, _learningRate);
     }
 
     /// <summary>
-    /// Computes input gradient through a Q network WITHOUT updating any weights.
-    /// Used for actor update via reparameterization (we need dQ/da but must not touch Q).
+    /// Propagates the output gradient backward through a Q network WITHOUT updating any weights.
+    /// Used for actor reparameterization (dQ/da). Forward must have already been called on the
+    /// same trunk/head pair to populate the per-layer cache.
     /// </summary>
-    private static float[] ComputeQInputGradOnly(DenseLayer[] trunk, DenseLayer head, float[] input,
-        (LayerCache[] trunk, float[] trunkOut) caches, float[] outputGrad)
+    private static float[] ComputeQInputGradOnly(NetworkLayer[] trunk, NetworkLayer head, float[] outputGrad)
     {
-        var grad = head.ComputeInputGrad(caches.trunkOut, outputGrad);
+        var grad = head.ComputeInputGrad(outputGrad);
         for (var i = trunk.Length - 1; i >= 0; i--)
-        {
-            grad = trunk[i].ComputeInputGrad(caches.trunk[i].Input, grad, caches.trunk[i].PreActivation);
-        }
-
+            grad = trunk[i].ComputeInputGrad(grad);
         return grad;
     }
 
@@ -567,15 +431,10 @@ internal sealed class SacNetwork
 
     private static float[] Softmax(float[] logits)
     {
-        var max = logits.Max();
+        var max   = logits.Max();
         var probs = new float[logits.Length];
         var total = 0f;
-        for (var i = 0; i < logits.Length; i++)
-        {
-            probs[i] = MathF.Exp(logits[i] - max);
-            total += probs[i];
-        }
-
+        for (var i = 0; i < logits.Length; i++) { probs[i] = MathF.Exp(logits[i] - max); total += probs[i]; }
         for (var i = 0; i < probs.Length; i++) probs[i] /= total;
         return probs;
     }
@@ -583,11 +442,11 @@ internal sealed class SacNetwork
     private static int SampleFromProbs(float[] probs, Random rng)
     {
         var roll = rng.NextSingle();
-        var cumulative = 0f;
+        var cum  = 0f;
         for (var i = 0; i < probs.Length; i++)
         {
-            cumulative += probs[i];
-            if (roll <= cumulative) return i;
+            cum += probs[i];
+            if (roll <= cum) return i;
         }
 
         return probs.Length - 1;
@@ -595,7 +454,6 @@ internal sealed class SacNetwork
 
     private static float SampleNormal(Random rng)
     {
-        // Box-Muller transform
         var u1 = Math.Max(rng.NextSingle(), 1e-10f);
         var u2 = rng.NextSingle();
         return MathF.Sqrt(-2f * MathF.Log(u1)) * MathF.Cos(2f * MathF.PI * u2);

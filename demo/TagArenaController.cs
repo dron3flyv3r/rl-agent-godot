@@ -182,7 +182,6 @@ public partial class TagArenaController : Node2D
             ? 0
             : Math.Max(0, EpisodeStepLimit - _episodeStep);
         obs.AddNormalized(remainingSteps, 0, Math.Max(1, EpisodeStepLimit));
-        obs.Add(self.Role == TagAgentRole.Chaser);
     }
 
     public IReadOnlyDictionary<string, float> ConsumeStepRewardBreakdown(TagPlayer player)

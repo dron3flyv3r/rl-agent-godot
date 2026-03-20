@@ -12,8 +12,26 @@ namespace RlAgentPlugin;
 public partial class RLAgentPluginEditor : EditorPlugin
 {
     private const string AgentScriptPath = "res://addons/rl_agent_plugin/Runtime/RLAgent2D.cs";
+    private const string Agent3DScriptPath = "res://addons/rl_agent_plugin/Runtime/RLAgent3D.cs";
     private const string AcademyScriptPath = "res://addons/rl_agent_plugin/Runtime/RLAcademy.cs";
+    private const string DenseLayerDefScriptPath = "res://addons/rl_agent_plugin/Resources/RLDenseLayerDef.cs";
+    private const string DropoutLayerDefScriptPath = "res://addons/rl_agent_plugin/Resources/RLDropoutLayerDef.cs";
+    private const string FlattenLayerDefScriptPath = "res://addons/rl_agent_plugin/Resources/RLFlattenLayerDef.cs";
+    private const string LayerNormDefScriptPath = "res://addons/rl_agent_plugin/Resources/RLLayerNormDef.cs";
     private const string PluginIconPath = "res://icon.svg";
+    private static readonly string[] RequiredGlobalScriptClasses =
+    {
+        nameof(RLPolicyPairingConfig),
+        nameof(RLNetworkGraph),
+        nameof(RLDenseLayerDef),
+        nameof(RLDropoutLayerDef),
+        nameof(RLFlattenLayerDef),
+        nameof(RLLayerNormDef),
+        nameof(RLConstantSchedule),
+        nameof(RLLinearSchedule),
+        nameof(RLExponentialSchedule),
+        nameof(RLCosineSchedule),
+    };
     private static readonly Lazy<Dictionary<string, Type>> ScriptTypeIndex = new(BuildScriptTypeIndex);
 
     private Texture2D? _pluginIcon;
@@ -23,6 +41,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
     private RLDashboard? _dashboard;
     private Button? _startTrainingButton;
     private Button? _stopTrainingButton;
+    private Button? _runInferenceButton;
     private TrainingSceneValidation? _lastValidation;
     private bool _launchedTrainingRun;
     private string _lastAutoScenePath = string.Empty;
@@ -55,6 +74,10 @@ public partial class RLAgentPluginEditor : EditorPlugin
         _stopTrainingButton.Pressed += OnStopTrainingRequested;
         AddControlToContainer(CustomControlContainer.Toolbar, _stopTrainingButton);
 
+        _runInferenceButton = new Button { Text = "Run Inference", TooltipText = "Run the scene with trained agents in inference mode." };
+        _runInferenceButton.Pressed += OnRunInferenceRequested;
+        AddControlToContainer(CustomControlContainer.Toolbar, _runInferenceButton);
+
         _dashboard = new RLDashboard { Name = "RLDash" };
         EditorInterface.Singleton.GetEditorMainScreen().AddChild(_dashboard);
         _MakeVisible(false);
@@ -86,6 +109,12 @@ public partial class RLAgentPluginEditor : EditorPlugin
         {
             RemoveControlFromContainer(CustomControlContainer.Toolbar, _stopTrainingButton);
             _stopTrainingButton.QueueFree();
+        }
+
+        if (_runInferenceButton is not null)
+        {
+            RemoveControlFromContainer(CustomControlContainer.Toolbar, _runInferenceButton);
+            _runInferenceButton.QueueFree();
         }
 
         if (_setupDock is not null)
@@ -122,6 +151,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
     {
         // Training validation runs inside OnStartTrainingRequested(), not here.
         // Blocking the build would prevent normal "Run Project" from working.
+        EnsureProjectScriptClassesAreFresh();
         return true;
     }
 
@@ -152,6 +182,16 @@ public partial class RLAgentPluginEditor : EditorPlugin
             _stopTrainingButton.Disabled = !_launchedTrainingRun;
         }
 
+        if (_runInferenceButton is not null)
+        {
+            var hasCheckpoint = !string.IsNullOrEmpty(CheckpointRegistry.GetLatestCheckpointPath());
+            var hasTrainOrAutoAgents = _lastValidation is { TrainAgentCount: > 0 };
+            _runInferenceButton.Disabled = isPlaying || (!hasCheckpoint && !hasTrainOrAutoAgents);
+            _runInferenceButton.TooltipText = !hasCheckpoint
+                ? "Run Inference — train at least one checkpoint first, or set InferenceModelPath on agents."
+                : "Launch the scene with trained agents running in inference mode.";
+        }
+
         // Auto-refresh validation when the edited scene changes.
         var currentScenePath = ResolveTrainingScenePath();
         if (currentScenePath != _lastAutoScenePath)
@@ -176,9 +216,20 @@ public partial class RLAgentPluginEditor : EditorPlugin
             return;
         }
 
-        var missingPairingClass = !HasGlobalScriptClass(nameof(RLPolicyPairingConfig));
+        var missingRequiredClass = false;
+        foreach (var className in RequiredGlobalScriptClasses)
+        {
+            if (HasGlobalScriptClass(className))
+            {
+                continue;
+            }
+
+            missingRequiredClass = true;
+            break;
+        }
+
         var staleLegacyClass = HasGlobalScriptClass("RLNetworkConfig");
-        if (!missingPairingClass && !staleLegacyClass)
+        if (!missingRequiredClass && !staleLegacyClass)
         {
             return;
         }
@@ -189,22 +240,57 @@ public partial class RLAgentPluginEditor : EditorPlugin
     private void RegisterCustomTypes()
     {
         var agentScript = GD.Load<Script>(AgentScriptPath);
+        var agent3DScript = GD.Load<Script>(Agent3DScriptPath);
         var academyScript = GD.Load<Script>(AcademyScriptPath);
+        var denseLayerDefScript = GD.Load<Script>(DenseLayerDefScriptPath);
+        var dropoutLayerDefScript = GD.Load<Script>(DropoutLayerDefScriptPath);
+        var flattenLayerDefScript = GD.Load<Script>(FlattenLayerDefScriptPath);
+        var layerNormDefScript = GD.Load<Script>(LayerNormDefScriptPath);
         if (agentScript is not null)
         {
             AddCustomType(nameof(RLAgent2D), nameof(Node2D), agentScript, _pluginIcon);
+        }
+
+        if (agent3DScript is not null)
+        {
+            AddCustomType(nameof(RLAgent3D), nameof(Node3D), agent3DScript, _pluginIcon);
         }
 
         if (academyScript is not null)
         {
             AddCustomType(nameof(RLAcademy), nameof(Node), academyScript, _pluginIcon);
         }
+
+        if (denseLayerDefScript is not null)
+        {
+            AddCustomType(nameof(RLDenseLayerDef), nameof(Resource), denseLayerDefScript, _pluginIcon);
+        }
+
+        if (dropoutLayerDefScript is not null)
+        {
+            AddCustomType(nameof(RLDropoutLayerDef), nameof(Resource), dropoutLayerDefScript, _pluginIcon);
+        }
+
+        if (flattenLayerDefScript is not null)
+        {
+            AddCustomType(nameof(RLFlattenLayerDef), nameof(Resource), flattenLayerDefScript, _pluginIcon);
+        }
+
+        if (layerNormDefScript is not null)
+        {
+            AddCustomType(nameof(RLLayerNormDef), nameof(Resource), layerNormDefScript, _pluginIcon);
+        }
     }
 
     private void UnregisterCustomTypes()
     {
         RemoveCustomType(nameof(RLAgent2D));
+        RemoveCustomType(nameof(RLAgent3D));
         RemoveCustomType(nameof(RLAcademy));
+        RemoveCustomType(nameof(RLDenseLayerDef));
+        RemoveCustomType(nameof(RLDropoutLayerDef));
+        RemoveCustomType(nameof(RLFlattenLayerDef));
+        RemoveCustomType(nameof(RLLayerNormDef));
     }
 
     private void RefreshValidationFromActiveScene()
@@ -287,6 +373,57 @@ public partial class RLAgentPluginEditor : EditorPlugin
 
         // Notify dashboard immediately so it can auto-select the run and show LIVE badge.
         _dashboard?.OnTrainingStarted(manifest.RunId);
+    }
+
+    private void OnRunInferenceRequested()
+    {
+        if (_setupDock is null) return;
+
+        var scenePath = ResolveTrainingScenePath();
+        if (string.IsNullOrWhiteSpace(scenePath))
+        {
+            _setupDock.SetLaunchStatus("No active scene or main scene configured.");
+            return;
+        }
+
+        var validation = ValidateSceneSafely(scenePath, "inference launch");
+
+        // We only need an academy and at least one trainable agent; full training validation is not required.
+        if (string.IsNullOrWhiteSpace(validation.AcademyPath))
+        {
+            _setupDock.SetLaunchStatus("Inference launch failed: no RLAcademy found in the scene.");
+            return;
+        }
+
+        if (validation.TrainAgentCount == 0)
+        {
+            _setupDock.SetLaunchStatus("Inference launch failed: no Train or Auto mode agents found.");
+            return;
+        }
+
+        var manifest = new InferenceLaunchManifest
+        {
+            ScenePath       = scenePath,
+            AcademyNodePath = validation.AcademyPath,
+            SimulationSpeed = validation.SimulationSpeed,
+            ActionRepeat    = validation.ActionRepeat,
+        };
+
+        var writeError = manifest.SaveToUserStorage();
+        if (writeError != Error.Ok)
+        {
+            _setupDock.SetLaunchStatus($"Failed to write inference manifest: {writeError}");
+            return;
+        }
+
+        var latestCheckpoint = CheckpointRegistry.GetLatestCheckpointPath();
+        var checkpointNote = string.IsNullOrEmpty(latestCheckpoint)
+            ? " (no checkpoint found — agents with an InferenceModelPath will use that instead)"
+            : $" using latest checkpoint";
+        _setupDock.SetLaunchStatus($"Launching inference mode{checkpointNote}.");
+
+        var inferenceBootstrapScene = "res://addons/rl_agent_plugin/Scenes/InferenceBootstrap.tscn";
+        EditorInterface.Singleton.PlayCustomScene(inferenceBootstrapScene);
     }
 
     private static void WriteRunMeta(string runId, IReadOnlyList<string> agentNames, IReadOnlyList<string> agentGroups)
@@ -410,13 +547,14 @@ public partial class RLAgentPluginEditor : EditorPlugin
                     var binding = RLPolicyGroupBindingResolver.Resolve(root, node);
                     validation.AgentGroups.Add(binding?.SafeGroupId ?? string.Empty);
 
-                    if (controlMode == RLAgentControlMode.Train)
+                    if (controlMode == RLAgentControlMode.Train || controlMode == RLAgentControlMode.Auto)
                     {
                         validation.TrainAgentCount += 1;
 
                         if (binding is null)
                         {
-                            validation.Errors.Add($"Agent '{root.GetPathTo(node)}' is in Train mode but has no PolicyGroupConfig assigned.");
+                            var modeLabel = controlMode == RLAgentControlMode.Auto ? "Auto" : "Train";
+                            validation.Errors.Add($"Agent '{root.GetPathTo(node)}' is in {modeLabel} mode but has no PolicyGroupConfig assigned.");
                         }
                         else
                         {
@@ -433,6 +571,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
                     {
                         ValidateInferenceCheckpoint(node, root, validation);
                     }
+                    // Auto mode: no inference checkpoint required — checkpoint is resolved at runtime.
                 }
             });
 
@@ -473,12 +612,12 @@ public partial class RLAgentPluginEditor : EditorPlugin
                     algorithm = trainerConfig.Algorithm;
                 }
 
-                var typedTrainAgents = new List<RLAgent2D>();
+                var typedTrainAgents = new List<IRLAgent>();
                 foreach (var groupNodes in agentsByGroup.Values)
                 {
                     foreach (var groupNode in groupNodes)
                     {
-                        if (groupNode is RLAgent2D typedAgent)
+                        if (groupNode is IRLAgent typedAgent)
                         {
                             typedTrainAgents.Add(typedAgent);
                         }
@@ -556,11 +695,19 @@ public partial class RLAgentPluginEditor : EditorPlugin
                         validation.Errors.Add($"Group '{groupSummary.GroupId}': SAC does not support mixing discrete and continuous actions.");
                     }
 
+                    // Custom: id must be provided (action-space validation is the trainer's responsibility)
+                    if (algorithm == RLAlgorithmKind.Custom)
+                    {
+                        var customId = ReadStringProperty(trainerConfigRes ?? trainingConfigRes, "CustomTrainerId");
+                        if (string.IsNullOrWhiteSpace(customId))
+                            validation.Errors.Add($"Group '{groupSummary.GroupId}': Algorithm is Custom but CustomTrainerId is not set.");
+                    }
+
                     // All agents in group must be consistent
                     foreach (var node in groupNodes)
                     {
                         var nodePath = root.GetPathTo(node).ToString();
-                        var observationSize = node is RLAgent2D typedAgent
+                        var observationSize = node is IRLAgent typedAgent
                             && observationInference.AgentSizes.TryGetValue(typedAgent, out var inferredAgentSize)
                                 ? inferredAgentSize
                                 : ReadAgentObservationSize(node, root, validation);
@@ -602,11 +749,11 @@ public partial class RLAgentPluginEditor : EditorPlugin
 
             if (validation.AgentNames.Count == 0)
             {
-                validation.Errors.Add("No RLAgent2D nodes were found in the selected scene.");
+                validation.Errors.Add("No RLAgent2D or RLAgent3D nodes were found in the selected scene.");
             }
             else if (validation.TrainAgentCount == 0)
             {
-                validation.Errors.Add("No agents are set to Train mode.");
+                validation.Errors.Add("No agents are set to Train or Auto mode.");
             }
 
             validation.IsValid = validation.Errors.Count == 0;
@@ -648,18 +795,24 @@ public partial class RLAgentPluginEditor : EditorPlugin
 
     private static bool IsAgentNode(Node node)
     {
-        if (node is RLAgent2D)
+        if (node is IRLAgent)
         {
             return true;
         }
 
         var managedType = ResolveManagedScriptType(node);
-        return managedType is not null && typeof(RLAgent2D).IsAssignableFrom(managedType);
+        if (managedType is not null && typeof(IRLAgent).IsAssignableFrom(managedType))
+        {
+            return true;
+        }
+
+        return ScriptInheritsPath(GetNodeScript(node), AgentScriptPath)
+            || ScriptInheritsPath(GetNodeScript(node), Agent3DScriptPath);
     }
 
     private static int ReadAgentActionCount(Node node)
     {
-        if (node is RLAgent2D agent)
+        if (node is IRLAgent agent)
             return agent.GetDiscreteActionCount();
         // C# cast unavailable in editor context (e.g. assembly not yet fully loaded).
         // Return -1 so callers can skip checks rather than produce false-positive errors.
@@ -668,12 +821,12 @@ public partial class RLAgentPluginEditor : EditorPlugin
 
     private static int ReadAgentContinuousDims(Node node)
     {
-        return node is RLAgent2D agent ? agent.GetContinuousActionDimensions() : 0;
+        return node is IRLAgent agent ? agent.GetContinuousActionDimensions() : 0;
     }
 
     private static int ReadAgentObservationSize(Node node, Node root, TrainingSceneValidation validation)
     {
-        if (node is not RLAgent2D agent)
+        if (node is not IRLAgent agent)
         {
             // -1 = unknown (cast unavailable). 0 = cast succeeded but returned empty obs.
             return -1;
@@ -698,7 +851,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
 
     private static bool SupportsOnlyDiscreteActions(Node node)
     {
-        if (node is RLAgent2D agent)
+        if (node is IRLAgent agent)
             return agent.SupportsOnlyDiscreteActions();
         // Cast unavailable: assume discrete to avoid false-positive "PPO requires discrete-only" errors.
         return IsAgentNode(node);
@@ -706,7 +859,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
 
     private static void ValidateInferenceCheckpoint(Node node, Node root, TrainingSceneValidation validation)
     {
-        if (node is not RLAgent2D agent)
+        if (node is not IRLAgent agent)
         {
             return;
         }
@@ -772,7 +925,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
 
     private static RLAgentControlMode ReadAgentControlMode(Node node)
     {
-        if (node is RLAgent2D agent)
+        if (node is IRLAgent agent)
         {
             return agent.ControlMode;
         }
@@ -912,8 +1065,12 @@ public partial class RLAgentPluginEditor : EditorPlugin
     }
 
     private static string ReadStringProperty(Node node, string propertyName)
+        => ReadStringProperty((GodotObject)node, propertyName);
+
+    private static string ReadStringProperty(GodotObject? obj, string propertyName)
     {
-        var variant = node.Get(propertyName);
+        if (obj is null) return string.Empty;
+        var variant = obj.Get(propertyName);
         return variant.VariantType == Variant.Type.String ? variant.AsString() : string.Empty;
     }
 
@@ -936,7 +1093,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
 
     private static Type? ResolveManagedScriptType(Node node)
     {
-        if (node.GetType() != typeof(Node) && node.GetType() != typeof(Node2D))
+        if (node.GetType() != typeof(Node) && node.GetType() != typeof(Node2D) && node.GetType() != typeof(Node3D))
         {
             return node.GetType();
         }
@@ -1055,8 +1212,6 @@ public partial class RLAgentPluginEditor : EditorPlugin
                 builder.Append(policyGroupConfig?.AgentId ?? string.Empty);
                 builder.Append('|');
                 builder.Append(policyGroupConfig?.MaxEpisodeSteps ?? 0);
-                builder.Append('|');
-                builder.Append(ReadIntProperty(node, "MaxEpisodeSteps", -1));
                 builder.Append('|');
                 builder.Append(ReadAgentActionCount(node));
                 builder.Append('|');

@@ -8,6 +8,11 @@ public partial class RLTrainingConfig : Resource
 {
     [ExportGroup("Algorithm")]
     [Export] public RLAlgorithmKind Algorithm { get; set; } = RLAlgorithmKind.PPO;
+    /// <summary>
+    /// Used only when <see cref="Algorithm"/> is <see cref="RLAlgorithmKind.Custom"/>.
+    /// Must match the key passed to <see cref="TrainerFactory.Register"/>.
+    /// </summary>
+    [Export] public string CustomTrainerId { get; set; } = string.Empty;
 
     [ExportGroup("PPO")]
     [Export] public int RolloutLength { get; set; } = 256;
@@ -34,11 +39,39 @@ public partial class RLTrainingConfig : Resource
     [Export] public bool SacAutoTuneAlpha { get; set; } = true;
     [Export] public int SacUpdateEverySteps { get; set; } = 1;
 
+    /// <summary>
+    /// Optional per-hyperparameter schedules. When a schedule is assigned it
+    /// overrides the corresponding flat value at each gradient update. Leave null
+    /// to keep the flat value constant throughout training.
+    ///
+    /// Built-in types: RLConstantSchedule, RLLinearSchedule,
+    ///                 RLExponentialSchedule, RLCosineSchedule.
+    /// Custom: subclass RLHyperparamSchedule and add [GlobalClass].
+    /// </summary>
+    [ExportGroup("Schedules")]
+    [Export] public RLHyperparamSchedule? LearningRateSchedule      { get; set; }
+    [Export] public RLHyperparamSchedule? EntropyCoefficientSchedule { get; set; }
+    [Export] public RLHyperparamSchedule? ClipEpsilonSchedule        { get; set; }
+    [Export] public RLHyperparamSchedule? SacAlphaSchedule           { get; set; }
+
+    /// <summary>
+    /// Evaluates all non-null schedules and writes their results into <paramref name="config"/>.
+    /// Called by TrainingBootstrap once per gradient update, before TryUpdate().
+    /// </summary>
+    internal void ApplySchedules(RLTrainerConfig config, ScheduleContext ctx)
+    {
+        if (LearningRateSchedule      is not null) config.LearningRate        = LearningRateSchedule.Evaluate(ctx);
+        if (EntropyCoefficientSchedule is not null) config.EntropyCoefficient  = EntropyCoefficientSchedule.Evaluate(ctx);
+        if (ClipEpsilonSchedule        is not null) config.ClipEpsilon         = ClipEpsilonSchedule.Evaluate(ctx);
+        if (SacAlphaSchedule           is not null) config.SacInitAlpha        = SacAlphaSchedule.Evaluate(ctx);
+    }
+
     public RLTrainerConfig ToTrainerConfig()
     {
         return new RLTrainerConfig
         {
             Algorithm = Algorithm,
+            CustomTrainerId = CustomTrainerId,
             RolloutLength = RolloutLength,
             EpochsPerUpdate = EpochsPerUpdate,
             PpoMiniBatchSize = PpoMiniBatchSize,

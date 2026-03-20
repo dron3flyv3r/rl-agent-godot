@@ -51,7 +51,7 @@ public static class RLPolicyGroupBindingResolver
 
     private static RLPolicyGroupConfig? ResolvePolicyGroupConfig(Node agentNode)
     {
-        if (agentNode is RLAgent2D agent)
+        if (agentNode is IRLAgent agent)
         {
             return agent.PolicyGroupConfig;
         }
