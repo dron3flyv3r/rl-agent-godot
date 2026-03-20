@@ -227,6 +227,24 @@ internal sealed class PolicyValueNetwork
         };
     }
 
+    /// <summary>Copies weights from this network into <paramref name="other"/> (same architecture required).</summary>
+    internal void CopyWeightsTo(PolicyValueNetwork other)
+    {
+        for (var i = 0; i < _trunkLayers.Length; i++)
+            other._trunkLayers[i].CopyFrom(_trunkLayers[i]);
+        other._policyHead.CopyFrom(_policyHead);
+        other._valueHead.CopyFrom(_valueHead);
+    }
+
+    /// <summary>Overwrites this network's weights from <paramref name="other"/> (same architecture required).</summary>
+    internal void LoadWeightsFrom(PolicyValueNetwork other)
+    {
+        for (var i = 0; i < _trunkLayers.Length; i++)
+            _trunkLayers[i].CopyFrom(other._trunkLayers[i]);
+        _policyHead.CopyFrom(other._policyHead);
+        _valueHead.CopyFrom(other._valueHead);
+    }
+
     public void LoadCheckpoint(RLCheckpoint checkpoint)
     {
         var wi       = 0;

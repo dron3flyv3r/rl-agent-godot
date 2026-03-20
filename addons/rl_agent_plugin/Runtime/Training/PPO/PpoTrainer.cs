@@ -1,17 +1,22 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Godot;
 
 namespace RlAgentPlugin.Runtime;
 
-public sealed class PpoTrainer : ITrainer
+public sealed class PpoTrainer : ITrainer, IAsyncTrainer
 {
     private readonly PolicyGroupConfig _config;
     private readonly RLTrainerConfig _trainerConfig;
     private readonly PolicyValueNetwork _network;
     private readonly List<PpoTransition> _transitions = new();
     private readonly RandomNumberGenerator _rng = new();
+
+    // ── Async gradient update state ───────────────────────────────────────────
+    private PolicyValueNetwork? _shadowNetwork;
+    private Task<PpoAsyncResult>? _pendingUpdate;
 
     public PpoTrainer(PolicyGroupConfig config)
     {
@@ -141,26 +146,135 @@ public sealed class PpoTrainer : ITrainer
             _config);
     }
 
-    private List<TrainingSample> BuildTrainingSamples()
+    // ── IAsyncTrainer ─────────────────────────────────────────────────────────
+
+    public bool TryScheduleBackgroundUpdate(string groupId, long totalSteps, long episodeCount)
     {
-        var samples = new List<TrainingSample>(_transitions.Count);
-        var advantages = new float[_transitions.Count];
-        var returns = new float[_transitions.Count];
+        // Reject if a job is running or a completed result hasn't been polled yet.
+        if (_pendingUpdate is not null)
+            return false;
+
+        if (_transitions.Count < _trainerConfig.RolloutLength)
+            return false;
+
+        // Snapshot transitions and clear the live buffer so the main thread can keep filling it.
+        var transitions = _transitions.ToList();
+        _transitions.Clear();
+
+        // Lazy-create shadow network with identical architecture.
+        _shadowNetwork ??= new PolicyValueNetwork(
+            _config.ObservationSize, _config.DiscreteActionCount, _config.NetworkGraph);
+
+        // Copy live weights into shadow so backprop works on an isolated copy.
+        _network.CopyWeightsTo(_shadowNetwork);
+
+        var shadow = _shadowNetwork;
+        var config = _trainerConfig;
+        _pendingUpdate = Task.Run(() => RunBackgroundUpdate(shadow, transitions, config));
+        return true;
+    }
+
+    public TrainerUpdateStats? TryPollResult(string groupId, long totalSteps, long episodeCount)
+    {
+        if (_pendingUpdate is null || !_pendingUpdate.IsCompleted)
+            return null;
+
+        var result = _pendingUpdate.Result;
+        _pendingUpdate = null;
+
+        // Apply the trained shadow weights back to the live network (main thread only).
+        _network.LoadWeightsFrom(_shadowNetwork!);
+
+        return new TrainerUpdateStats
+        {
+            PolicyLoss = result.PolicyLoss,
+            ValueLoss = result.ValueLoss,
+            Entropy = result.Entropy,
+            ClipFraction = result.ClipFraction,
+            Checkpoint = CreateCheckpoint(groupId, totalSteps, episodeCount, 0),
+        };
+    }
+
+    public TrainerUpdateStats? FlushPendingUpdate(string groupId, long totalSteps, long episodeCount)
+    {
+        if (_pendingUpdate is null)
+            return null;
+        _pendingUpdate.Wait();
+        return TryPollResult(groupId, totalSteps, episodeCount);
+    }
+
+    // ── Background job ────────────────────────────────────────────────────────
+
+    private static PpoAsyncResult RunBackgroundUpdate(
+        PolicyValueNetwork network,
+        List<PpoTransition> transitions,
+        RLTrainerConfig config)
+    {
+        var samples = BuildTrainingSamplesFrom(transitions, config);
+        NormalizeAdvantages(samples);
+        var miniBatchSize = Math.Clamp(config.PpoMiniBatchSize, 1, samples.Count);
+        var policyLoss = 0f;
+        var valueLoss = 0f;
+        var entropy = 0f;
+        var clipFraction = 0f;
+        var processedSamples = 0;
+        var rng = new Random();
+
+        for (var epoch = 0; epoch < config.EpochsPerUpdate; epoch++)
+        {
+            ShuffleWithRandom(samples, rng);
+            for (var start = 0; start < samples.Count; start += miniBatchSize)
+            {
+                var count = Math.Min(miniBatchSize, samples.Count - start);
+                var batchSamples = new TrainingSample[count];
+                for (var i = 0; i < count; i++)
+                    batchSamples[i] = samples[start + i];
+
+                var stats = network.ApplyGradients(batchSamples, config);
+                policyLoss += stats.PolicyLoss * count;
+                valueLoss += stats.ValueLoss * count;
+                entropy += stats.Entropy * count;
+                clipFraction += stats.ClipFraction * count;
+                processedSamples += count;
+            }
+        }
+
+        var norm = Math.Max(1, processedSamples);
+        return new PpoAsyncResult
+        {
+            PolicyLoss = policyLoss / norm,
+            ValueLoss = valueLoss / norm,
+            Entropy = entropy / norm,
+            ClipFraction = clipFraction / norm,
+        };
+    }
+
+    // ── Training sample construction ──────────────────────────────────────────
+
+    private List<TrainingSample> BuildTrainingSamples() =>
+        BuildTrainingSamplesFrom(_transitions, _trainerConfig);
+
+    private static List<TrainingSample> BuildTrainingSamplesFrom(
+        IReadOnlyList<PpoTransition> transitions, RLTrainerConfig config)
+    {
+        var samples = new List<TrainingSample>(transitions.Count);
+        var advantages = new float[transitions.Count];
+        var returns = new float[transitions.Count];
         var nextAdvantage = 0.0f;
 
-        for (var index = _transitions.Count - 1; index >= 0; index--)
+        for (var index = transitions.Count - 1; index >= 0; index--)
         {
-            var transition = _transitions[index];
+            var transition = transitions[index];
             var mask = transition.Done ? 0.0f : 1.0f;
-            var delta = transition.Reward + (_trainerConfig.Gamma * transition.NextValue * mask) - transition.Value;
-            nextAdvantage = delta + (_trainerConfig.Gamma * _trainerConfig.GaeLambda * mask * nextAdvantage);
+            var delta = transition.Reward + (config.Gamma * transition.NextValue * mask) - transition.Value;
+            nextAdvantage = delta + (config.Gamma * config.GaeLambda * mask * nextAdvantage);
             advantages[index] = nextAdvantage;
             returns[index] = transition.Value + advantages[index];
         }
 
-        for (var index = 0; index < _transitions.Count; index++)
+        for (var index = 0; index < transitions.Count; index++)
         {
-            var transition = _transitions[index];
+            var transition = transitions[index];
             samples.Add(new TrainingSample
             {
                 Observation = transition.Observation,
@@ -216,6 +330,15 @@ public sealed class PpoTrainer : ITrainer
         }
     }
 
+    private static void ShuffleWithRandom(IList<TrainingSample> samples, Random rng)
+    {
+        for (var index = samples.Count - 1; index > 0; index--)
+        {
+            var swapIndex = rng.Next(0, index + 1);
+            (samples[index], samples[swapIndex]) = (samples[swapIndex], samples[index]);
+        }
+    }
+
     private static float[] Softmax(IReadOnlyList<float> logits)
     {
         var maxLogit = logits.Max();
@@ -249,6 +372,14 @@ public sealed class PpoTrainer : ITrainer
         }
 
         return entropy;
+    }
+
+    private sealed class PpoAsyncResult
+    {
+        public float PolicyLoss { get; init; }
+        public float ValueLoss { get; init; }
+        public float Entropy { get; init; }
+        public float ClipFraction { get; init; }
     }
 
     private sealed class PpoTransition

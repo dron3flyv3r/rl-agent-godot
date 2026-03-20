@@ -34,6 +34,7 @@ public sealed class TrainingSceneValidation
     public int ActionRepeat { get; set; } = 1;
     public int BatchSize { get; set; } = 1;
     public bool EnableSpyOverlay { get; set; }
+    public bool HasCurriculum { get; set; }
     public bool HasSelfPlayPairings { get; set; }
     public int ExpectedActionCount { get; set; }
     public int TrainAgentCount { get; set; }

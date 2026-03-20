@@ -19,7 +19,7 @@ public partial class RLAgent3D : Node3D, IRLAgent
     private readonly Dictionary<string, float> _episodeRewardComponents = new(StringComparer.Ordinal);
     private Dictionary<string, float> _lastStepRewardBreakdown = new(StringComparer.Ordinal);
     private bool _donePending;
-    private RLAgentControlMode _controlMode = RLAgentControlMode.Train;
+    private RLAgentControlMode _controlMode = RLAgentControlMode.Auto;
 
     [ExportGroup("Control")]
     [Export]
@@ -65,6 +65,14 @@ public partial class RLAgent3D : Node3D, IRLAgent
 
     /// <summary>Called at the start of every episode. Override to reset scene state.</summary>
     public virtual void OnEpisodeBegin() { }
+
+    /// <summary>Called before each new episode during training when MaxCurriculumSteps > 0. progress is in [0, 1].</summary>
+    public virtual void OnTrainingProgress(float progress) { }
+    void IRLAgent.NotifyCurriculumProgress(float progress) => OnTrainingProgress(progress);
+
+    /// <summary>Called each physics step when ControlMode is Human. Override to read player input.</summary>
+    protected virtual void OnHumanInput() { }
+    void IRLAgent.HandleHumanInput() => OnHumanInput();
 
     /// <summary>Accumulate reward for the current step.</summary>
     protected void AddReward(float reward) => _pendingReward += reward;

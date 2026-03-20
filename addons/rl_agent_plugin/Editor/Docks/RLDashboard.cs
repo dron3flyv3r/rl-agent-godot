@@ -31,6 +31,7 @@ public partial class RLDashboard : Control
         public long?  OpponentUpdateCount;
         public float? LearnerElo;
         public float? PoolWinRate;
+        public float? CurriculumProgress;
     }
 
     private sealed class RunStatus
@@ -41,7 +42,7 @@ public partial class RLDashboard : Control
         public string Message      = "";
     }
 
-    private sealed record RunMeta(string DisplayName, string[] AgentNames, string[] AgentGroups);
+    private sealed record RunMeta(string DisplayName, string[] AgentNames, string[] AgentGroups, bool HasCurriculum);
 
     // ── UI handles ───────────────────────────────────────────────────────────
     private OptionButton?   _runDropdown;
@@ -61,6 +62,7 @@ public partial class RLDashboard : Control
     private LineChartPanel? _entropyChart;
     private LineChartPanel? _lengthChart;
     private LineChartPanel? _eloChart;
+    private LineChartPanel? _curriculumChart;
     private FileDialog?     _exportDialog;
 
     // Checkpoint history panel
@@ -77,6 +79,7 @@ public partial class RLDashboard : Control
     private readonly List<string>              _runIds             = new();
     private readonly Dictionary<string, long>  _metricsFileOffsets = new();
     private string _selectedRunId = "";
+    private RunMeta _selectedRunMeta = new("", Array.Empty<string>(), Array.Empty<string>(), false);
     private double _pollTimer;
     private double _livePulseAccum;
     private bool   _isLive;
@@ -95,6 +98,7 @@ public partial class RLDashboard : Control
     private static readonly Color CEntropy    = new(0.88f, 0.68f, 0.22f);
     private static readonly Color CLength     = new(0.72f, 0.42f, 0.92f);
     private static readonly Color CElo        = new(0.92f, 0.42f, 0.78f);
+    private static readonly Color CCurriculum = new(0.35f, 0.82f, 0.88f);
 
     // ── Godot lifecycle ──────────────────────────────────────────────────────
     public override void _Ready()
@@ -362,13 +366,16 @@ public partial class RLDashboard : Control
         _entropyChart = MakeChart("Entropy");
         _lengthChart  = MakeChart("Episode Length");
         _eloChart     = MakeChart("Learner Elo");
+        _curriculumChart = MakeChart("Curriculum Progress");
         _eloChart.Visible = false;  // shown only during self-play
+        _curriculumChart.Visible = false;  // shown only when curriculum is configured
 
         grid.AddChild(_rewardChart);
         grid.AddChild(_lossChart);
         grid.AddChild(_entropyChart);
         grid.AddChild(_lengthChart);
         grid.AddChild(_eloChart);
+        grid.AddChild(_curriculumChart);
 
         return grid;
     }
@@ -452,14 +459,12 @@ public partial class RLDashboard : Control
         if (index < 0 || index >= _runIds.Count) return;
         var runId = _runIds[(int)index];
         SelectRun(runId);
-
-        var meta = ReadMeta(ProjectSettings.GlobalizePath($"res://RL-Agent-Training/runs/{runId}"));
-        if (_renameEdit is not null) _renameEdit.Text = meta.DisplayName;
     }
 
     private void SelectRun(string runId)
     {
         _selectedRunId = runId;
+        _selectedRunMeta = ReadMeta(ProjectSettings.GlobalizePath($"res://RL-Agent-Training/runs/{runId}"));
         _metricsFileOffsets.Clear();
         _metrics.Clear();
 
@@ -471,10 +476,13 @@ public partial class RLDashboard : Control
         _entropyChart?.ClearSeries();
         _lengthChart?.ClearSeries();
         _eloChart?.ClearSeries();
+        _curriculumChart?.ClearSeries();
         if (_eloChart is not null) _eloChart.Visible = false;
+        if (_curriculumChart is not null) _curriculumChart.Visible = false;
 
         if (_renameEdit is not null) _renameEdit.Editable = true;
         if (_renameBtn  is not null) _renameBtn.Visible   = true;
+        if (_renameEdit is not null) _renameEdit.Text = _selectedRunMeta.DisplayName;
 
         _checkpointEntries.Clear();
         RebuildCheckpointRows();
@@ -610,6 +618,7 @@ public partial class RLDashboard : Control
                     : null,
                 LearnerElo  = d.ContainsKey("learner_elo")       ? GetFloat(d, "learner_elo")       : null,
                 PoolWinRate = d.ContainsKey("pool_avg_win_rate")  ? GetFloat(d, "pool_avg_win_rate")  : null,
+                CurriculumProgress = d.ContainsKey("curriculum_progress") ? GetFloat(d, "curriculum_progress") : null,
             };
         }
         catch
@@ -727,12 +736,12 @@ public partial class RLDashboard : Control
     private static RunMeta ReadMeta(string runDirAbsPath)
     {
         var metaPath = System.IO.Path.Combine(runDirAbsPath, "meta.json");
-        if (!System.IO.File.Exists(metaPath)) return new RunMeta("", Array.Empty<string>(), Array.Empty<string>());
+        if (!System.IO.File.Exists(metaPath)) return new RunMeta("", Array.Empty<string>(), Array.Empty<string>(), false);
 
         try
         {
             var variant = Json.ParseString(System.IO.File.ReadAllText(metaPath));
-            if (variant.VariantType != Variant.Type.Dictionary) return new RunMeta("", Array.Empty<string>(), Array.Empty<string>());
+            if (variant.VariantType != Variant.Type.Dictionary) return new RunMeta("", Array.Empty<string>(), Array.Empty<string>(), false);
 
             var d           = variant.AsGodotDictionary();
             var displayName = GetString(d, "display_name", "");
@@ -740,12 +749,13 @@ public partial class RLDashboard : Control
             var groupArr    = d.ContainsKey("agent_groups") ? d["agent_groups"].AsGodotArray()  : new Godot.Collections.Array();
             var agentNames  = agentArr.Select(v => v.AsString()).ToArray();
             var agentGroups = groupArr.Select(v => v.AsString()).ToArray();
+            var hasCurriculum = d.ContainsKey("has_curriculum") && d["has_curriculum"].AsBool();
 
-            return new RunMeta(displayName, agentNames, agentGroups);
+            return new RunMeta(displayName, agentNames, agentGroups, hasCurriculum);
         }
         catch
         {
-            return new RunMeta("", Array.Empty<string>(), Array.Empty<string>());
+            return new RunMeta("", Array.Empty<string>(), Array.Empty<string>(), false);
         }
     }
 
@@ -766,6 +776,7 @@ public partial class RLDashboard : Control
                 { "display_name",  meta.DisplayName },
                 { "agent_names",   agentArr },
                 { "agent_groups",  groupArr },
+                { "has_curriculum", meta.HasCurriculum },
             };
 
             System.IO.File.WriteAllText(
@@ -830,6 +841,20 @@ public partial class RLDashboard : Control
             if (eloMetrics.Count > 0)
                 _eloChart.UpdateSeries("Elo", CElo, eloMetrics.Select(m => m.LearnerElo!.Value));
         }
+
+        var curriculumMetrics = _metrics.Where(m => m.CurriculumProgress.HasValue).ToList();
+        if (_curriculumChart is not null)
+        {
+            var showCurriculum = _selectedRunMeta.HasCurriculum || curriculumMetrics.Count > 0;
+            _curriculumChart.Visible = showCurriculum;
+            if (curriculumMetrics.Count > 0)
+            {
+                _curriculumChart.UpdateSeries(
+                    "Progress",
+                    CCurriculum,
+                    curriculumMetrics.Select(m => m.CurriculumProgress!.Value));
+            }
+        }
     }
 
     private void RefreshStats(RunStatus status)
@@ -858,7 +883,7 @@ public partial class RLDashboard : Control
 
     private void SetHeaderStatus(string message)
     {
-        if (_headerStatus is not null) _headerStatus.Text = message;
+        if (_headerStatus is not null) _headerStatus.Text =message.Length <= 100 ? message : message[..100] + "…";
     }
 
     private void ShowLiveBadge()

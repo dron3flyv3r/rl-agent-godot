@@ -7,7 +7,7 @@ namespace RlAgentPlugin.Runtime;
 [GlobalClass]
 public partial class RLAcademy : Node
 {
-    private RLTrainingConfig? _trainingConfig;
+    private RLTrainingConfig? _trainingConfig = new RLTrainingConfig();
 
     [ExportGroup("Configuration")]
     [Export]
@@ -16,21 +16,17 @@ public partial class RLAcademy : Node
         get => _trainingConfig;
         set { _trainingConfig = value; UpdateConfigurationWarnings(); }
     }
-
-    [ExportGroup("Training Run")]
-    [Export] public string RunPrefix { get; set; } = string.Empty;
-    [Export] public float SimulationSpeed { get; set; } = 1.0f;
-    // Number of gradient update steps between checkpoint saves
-    [Export] public int CheckpointInterval { get; set; } = 10;
-    // How many physics ticks to repeat each action before sampling the next one (1 = every tick)
-    [Export] public int ActionRepeat { get; set; } = 1;
     // Global episode length cap used when agents and policy groups do not override it (0 = no cap).
     [Export(PropertyHint.Range, "0,100000,1,or_greater")] public int MaxEpisodeSteps { get; set; } = 0;
-    // Number of parallel scene instances to run during training (vectorised environments)
-    [Export(PropertyHint.Range, "1, 256, 8, or_greater")] public int BatchSize { get; set; } = 1;
+
+    [ExportGroup("Run")]
+    [Export] public RLRunConfig? RunConfig { get; set; }
+
+    [ExportGroup("Curriculum")]
+    [Export] public RLCurriculumConfig? Curriculum { get; set; }
 
     [ExportGroup("Self-Play")]
-    [Export] public Godot.Collections.Array<RLPolicyPairingConfig> SelfPlayPairings { get; set; } = new();
+    [Export] public RLSelfPlayConfig? SelfPlay { get; set; }
 
     [ExportGroup("Inference")]
     [Export] public RLCheckpoint? Checkpoint { get; set; }
@@ -38,16 +34,54 @@ public partial class RLAcademy : Node
     [ExportGroup("Debug")]
     /// <summary>Show the observation/reward/action spy overlay when running outside of training. Press Tab to cycle agents.</summary>
     [Export] public bool EnableSpyOverlay { get; set; } = false;
-    /// <summary>Render all batch environments in a grid during training. Off by default (only env 0 is rendered).</summary>
-    [Export] public bool ShowBatchGrid { get; set; } = false;
+
+    // Delegating properties — not exported; satisfy TrainingBootstrap C# property access.
+    public string RunPrefix           => RunConfig?.RunPrefix           ?? string.Empty;
+    public float  SimulationSpeed     => RunConfig?.SimulationSpeed     ?? 1.0f;
+    public int    BatchSize           => RunConfig?.BatchSize           ?? 1;
+    public int    ActionRepeat        => RunConfig?.ActionRepeat        ?? 1;
+    public int    CheckpointInterval  => RunConfig?.CheckpointInterval  ?? 10;
+    public bool   ShowBatchGrid         => RunConfig?.ShowBatchGrid         ?? false;
+    public bool   AsyncGradientUpdates  => RunConfig?.AsyncGradientUpdates  ?? false;
+    public bool   ParallelPolicyGroups  => RunConfig?.ParallelPolicyGroups  ?? false;
+    public RLCurriculumMode CurriculumMode => Curriculum?.Mode ?? RLCurriculumMode.StepBased;
+    public long   MaxCurriculumSteps    => Curriculum?.MaxSteps             ?? 0;
+    public float  DebugCurriculumProgress => Curriculum?.DebugProgress  ?? 0f;
+
+    public override Variant _Get(StringName property)
+    {
+        return (string)property switch
+        {
+            "RunPrefix"               => RunPrefix,
+            "SimulationSpeed"         => SimulationSpeed,
+            "BatchSize"               => BatchSize,
+            "ActionRepeat"            => ActionRepeat,
+            "CheckpointInterval"      => CheckpointInterval,
+            "ShowBatchGrid"           => ShowBatchGrid,
+            "CurriculumMode"         => (int)CurriculumMode,
+            "MaxCurriculumSteps"      => MaxCurriculumSteps,
+            "DebugCurriculumProgress" => DebugCurriculumProgress,
+            _                         => base._Get(property),
+        };
+    }
 
     public bool InferenceActive { get; private set; }
+    public float CurriculumProgress { get; private set; }
+
+    public void SetCurriculumProgress(float progress)
+    {
+        CurriculumProgress = Mathf.Clamp(progress, 0f, 1f);
+        foreach (var agent in GetAgents())
+            agent.NotifyCurriculumProgress(CurriculumProgress);
+    }
 
     public override string[] _GetConfigurationWarnings()
     {
         var warnings = new List<string>();
-        if (TrainingConfig is null && ResolveTrainerConfig() is null)
+        if (TrainingConfig is null)
             warnings.Add("TrainingConfig is not assigned. Assign an RLTrainingConfig resource.");
+        else if (TrainingConfig.Algorithm is null)
+            warnings.Add("RLTrainingConfig.Algorithm is not assigned. Assign an RLPPOConfig or RLSACConfig resource.");
         return warnings.ToArray();
     }
 
@@ -57,12 +91,18 @@ public partial class RLAcademy : Node
     private readonly Dictionary<IRLAgent, int> _inferenceStepCounters = new();
     private readonly Dictionary<string, string> _observationGroupDisplayNames = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _validatedObservationSizesByGroup = new(StringComparer.Ordinal);
+    private List<IRLAgent> _humanAgents = new();
+    public bool HumanModeActive { get; private set; }
     private double _previousTimeScale = 1.0;
     private int _previousMaxPhysicsStepsPerFrame = 8;
 
     public override void _Ready()
     {
         TryInitializeInference();
+        TryInitializeHumanMode();
+
+        if (!IsInsideTrainingBootstrap() && DebugCurriculumProgress > 0f)
+            SetCurriculumProgress(DebugCurriculumProgress);
 
         // Apply simulation speed when running outside of TrainingBootstrap (which manages it on its own).
         if (!IsInsideTrainingBootstrap())
@@ -92,6 +132,20 @@ public partial class RLAcademy : Node
 
     public override void _PhysicsProcess(double delta)
     {
+        if (HumanModeActive)
+        {
+            foreach (var agent in _humanAgents)
+            {
+                agent.HandleHumanInput();
+                agent.TickStep();
+                var stepReward = agent.ConsumePendingReward();
+                var stepBreakdown = agent.ConsumePendingRewardBreakdown();
+                agent.AccumulateReward(stepReward, stepBreakdown.Count > 0 ? stepBreakdown : null);
+                if (agent.ConsumeDonePending() || agent.HasReachedEpisodeLimit())
+                    agent.ResetEpisode();
+            }
+        }
+
         if (!InferenceActive)
         {
             return;
@@ -189,9 +243,9 @@ public partial class RLAcademy : Node
     }
 
     public List<RLPolicyPairingConfig> GetResolvedSelfPlayPairings()
-    {
-        return new List<RLPolicyPairingConfig>(SelfPlayPairings);
-    }
+        => SelfPlay is not null
+            ? new List<RLPolicyPairingConfig>(SelfPlay.Pairings)
+            : new List<RLPolicyPairingConfig>();
 
     public ObservationSizeInferenceResult InferObservationSizes(RLAgentControlMode? controlMode = null, bool resetEpisodes = true)
     {
@@ -413,6 +467,27 @@ public partial class RLAcademy : Node
         var observation = agent.CollectObservationArray();
         ValidateGroupObservationSize(agent, observation.Length);
         return observation;
+    }
+
+    private void TryInitializeHumanMode()
+    {
+        if (IsInsideTrainingBootstrap()) return;
+
+        _humanAgents = new List<IRLAgent>();
+        foreach (var agent in GetAgents())
+        {
+            if (agent.ControlMode == RLAgentControlMode.Human)
+                _humanAgents.Add(agent);
+        }
+
+        HumanModeActive = _humanAgents.Count > 0;
+        if (!HumanModeActive) return;
+
+        foreach (var agent in _humanAgents)
+        {
+            agent.ResetEpisode();
+            GD.Print($"[RLAcademy] Human mode active for '{agent.AsNode().Name}'.");
+        }
     }
 
     private void ValidateGroupObservationSize(IRLAgent agent, int observationSize)

@@ -1,23 +1,28 @@
 [gd_scene format=3 uid="uid://b7b6n8vwv7x5w"]
 
-[ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/Core/RLAcademy.cs" id="1_cgdt7"]
-[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl_agent_plugin/Resources/Config/RLTrainingConfig.cs" id="2_cfg"]
-[ext_resource type="Script" uid="uid://erru8n4gpbsv" path="res://demo/ReachTargetAgent.cs" id="4_h11wi"]
-[ext_resource type="Script" uid="uid://c4u7ptb63mnta" path="res://demo/ReachTargetPlayer.cs" id="5_6k30s"]
-[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl_agent_plugin/Resources/Config/RLPolicyGroupConfig.cs" id="5_cuwb5"]
+[ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/Core/RLAcademy.cs" id="1_bsb0r"]
+[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl_agent_plugin/Resources/Config/RLTrainingConfig.cs" id="2_38ip2"]
+[ext_resource type="Script" uid="uid://c4u7ptb63mnta" path="res://demo/MultiAgentSelfPlay/Scripts/ReachTargetPlayer.cs" id="3_lghqt"]
+[ext_resource type="Script" uid="uid://erru8n4gpbsv" path="res://demo/SingleAgent/Scripts/ReachTargetAgent.cs" id="4_4cfab"]
+[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl_agent_plugin/Resources/Config/RLPolicyGroupConfig.cs" id="5_hx405"]
+[ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl_agent_plugin/Resources/Config/RLRunConfig.cs" id="6_runcfg"]
+
+[sub_resource type="Resource" id="RunConfig_reach"]
+script = ExtResource("6_runcfg")
+RunPrefix = "ReachTargetDemo"
 
 [sub_resource type="Resource" id="TrainingConfig"]
-script = ExtResource("2_cfg")
+script = ExtResource("2_38ip2")
 RolloutLength = 128
 LearningRate = 0.001
 StatusWriteIntervalSteps = 16
 
 [sub_resource type="Resource" id="Resource_dj21h"]
-script = ExtResource("5_cuwb5")
-metadata/_custom_type_script = "uid://bniwqapplki00"
 resource_name = "reach_target"
+script = ExtResource("5_hx405")
 AgentId = "reach_target"
 MaxEpisodeSteps = 48
+metadata/_custom_type_script = "uid://bniwqapplki00"
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_cuwb5"]
 
@@ -45,9 +50,9 @@ width = 3.0
 default_color = Color(0.352941, 0.537255, 0.682353, 1)
 
 [node name="Academy" type="Node" parent="." unique_id=2119179183]
-script = ExtResource("1_cgdt7")
+script = ExtResource("1_bsb0r")
 TrainingConfig = SubResource("TrainingConfig")
-RunPrefix = "ReachTargetDemo"
+RunConfig = SubResource("RunConfig_reach")
 EnableSpyOverlay = true
 
 [node name="TrackGlow" type="Line2D" parent="." unique_id=102336968]
@@ -82,15 +87,14 @@ polygon = PackedVector2Array(0, -14, 14, 0, 0, 14, -14, 0)
 
 [node name="Player" type="CharacterBody2D" parent="." unique_id=473174080]
 position = Vector2(400, 338)
-script = ExtResource("5_6k30s")
+script = ExtResource("3_lghqt")
 
 [node name="BodyVisual" type="Polygon2D" parent="Player" unique_id=1201743833]
 color = Color(0.34902, 0.854902, 0.980392, 1)
 polygon = PackedVector2Array(-16, -16, 16, -16, 16, 16, -16, 16)
 
 [node name="Agent" type="Node2D" parent="Player" unique_id=527052923]
-script = ExtResource("4_h11wi")
-ControlMode = 2
+script = ExtResource("4_4cfab")
 PolicyGroupConfig = SubResource("Resource_dj21h")
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Player" unique_id=1316757117]

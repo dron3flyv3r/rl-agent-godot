@@ -303,6 +303,24 @@ internal sealed class SacNetwork
 
     // ── Checkpoint ───────────────────────────────────────────────────────────
 
+    /// <summary>Copies all sub-network weights from this into <paramref name="other"/> (identical architecture required).</summary>
+    internal void CopyWeightsTo(SacNetwork other)
+    {
+        for (var i = 0; i < _actorTrunk.Length; i++) other._actorTrunk[i].CopyFrom(_actorTrunk[i]);
+        other._actorHead.CopyFrom(_actorHead);
+        for (var i = 0; i < _q1Trunk.Length; i++) other._q1Trunk[i].CopyFrom(_q1Trunk[i]);
+        other._q1Head.CopyFrom(_q1Head);
+        for (var i = 0; i < _q2Trunk.Length; i++) other._q2Trunk[i].CopyFrom(_q2Trunk[i]);
+        other._q2Head.CopyFrom(_q2Head);
+        for (var i = 0; i < _q1TargetTrunk.Length; i++) other._q1TargetTrunk[i].CopyFrom(_q1TargetTrunk[i]);
+        other._q1TargetHead.CopyFrom(_q1TargetHead);
+        for (var i = 0; i < _q2TargetTrunk.Length; i++) other._q2TargetTrunk[i].CopyFrom(_q2TargetTrunk[i]);
+        other._q2TargetHead.CopyFrom(_q2TargetHead);
+    }
+
+    /// <summary>Overwrites this network's weights from <paramref name="other"/> (identical architecture required).</summary>
+    internal void LoadWeightsFrom(SacNetwork other) => other.CopyWeightsTo(this);
+
     public RLCheckpoint SaveCheckpoint(string groupId, long totalSteps, long episodeCount, long updateCount)
     {
         var weights = new List<float>();

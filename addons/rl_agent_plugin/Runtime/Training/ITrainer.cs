@@ -69,6 +69,43 @@ public sealed class PolicyGroupConfig
     public string MetricsPath { get; init; } = string.Empty;
 }
 
+/// <summary>
+/// Optional extension for trainers that support offloading gradient updates to a background thread.
+/// <para>
+/// Contract: call <see cref="TryScheduleBackgroundUpdate"/> after the rollout buffer is full;
+/// call <see cref="TryPollResult"/> at the start of the next frame to pick up the result.
+/// Do not call <see cref="TryScheduleBackgroundUpdate"/> again until <see cref="TryPollResult"/>
+/// has returned a non-null value (i.e. the previous result has been applied).
+/// </para>
+/// <para>
+/// Only works for trainers whose <c>TryUpdate</c> logic is pure math (no Godot API calls).
+/// Custom <see cref="ITrainer"/> implementations that call Godot scene tree API inside
+/// <c>TryUpdate</c> must NOT implement this interface.
+/// </para>
+/// </summary>
+public interface IAsyncTrainer : ITrainer
+{
+    /// <summary>
+    /// Snapshots the current network weights and queues a background Task to run backprop.
+    /// Returns <c>true</c> if a job was queued, <c>false</c> if the buffer isn't full yet or
+    /// a job is already in flight / awaiting poll.
+    /// </summary>
+    bool TryScheduleBackgroundUpdate(string groupId, long totalSteps, long episodeCount);
+
+    /// <summary>
+    /// Returns training stats if the background job completed since the last poll; <c>null</c>
+    /// otherwise. Applying the trained weights to the live network happens on this call (main thread).
+    /// </summary>
+    TrainerUpdateStats? TryPollResult(string groupId, long totalSteps, long episodeCount);
+
+    /// <summary>
+    /// Blocks until any in-flight background job completes and applies its result. Returns the
+    /// stats, or <c>null</c> if there was nothing pending. Call from <c>_ExitTree</c> for a
+    /// clean shutdown.
+    /// </summary>
+    TrainerUpdateStats? FlushPendingUpdate(string groupId, long totalSteps, long episodeCount);
+}
+
 public interface ITrainer
 {
     PolicyDecision SampleAction(float[] observation);
