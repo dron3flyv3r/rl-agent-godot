@@ -11,14 +11,15 @@ namespace RlAgentPlugin;
 [Tool]
 public partial class RLAgentPluginEditor : EditorPlugin
 {
-    private const string AgentScriptPath = "res://addons/rl_agent_plugin/Runtime/RLAgent2D.cs";
-    private const string Agent3DScriptPath = "res://addons/rl_agent_plugin/Runtime/RLAgent3D.cs";
-    private const string AcademyScriptPath = "res://addons/rl_agent_plugin/Runtime/RLAcademy.cs";
-    private const string DenseLayerDefScriptPath = "res://addons/rl_agent_plugin/Resources/RLDenseLayerDef.cs";
-    private const string DropoutLayerDefScriptPath = "res://addons/rl_agent_plugin/Resources/RLDropoutLayerDef.cs";
-    private const string FlattenLayerDefScriptPath = "res://addons/rl_agent_plugin/Resources/RLFlattenLayerDef.cs";
-    private const string LayerNormDefScriptPath = "res://addons/rl_agent_plugin/Resources/RLLayerNormDef.cs";
+    private const string AgentScriptPath = "res://addons/rl_agent_plugin/Runtime/Agents/RLAgent2D.cs";
+    private const string Agent3DScriptPath = "res://addons/rl_agent_plugin/Runtime/Agents/RLAgent3D.cs";
+    private const string AcademyScriptPath = "res://addons/rl_agent_plugin/Runtime/Core/RLAcademy.cs";
+    private const string DenseLayerDefScriptPath = "res://addons/rl_agent_plugin/Resources/Models/RLDenseLayerDef.cs";
+    private const string DropoutLayerDefScriptPath = "res://addons/rl_agent_plugin/Resources/Models/RLDropoutLayerDef.cs";
+    private const string FlattenLayerDefScriptPath = "res://addons/rl_agent_plugin/Resources/Models/RLFlattenLayerDef.cs";
+    private const string LayerNormDefScriptPath = "res://addons/rl_agent_plugin/Resources/Models/RLLayerNormDef.cs";
     private const string PluginIconPath = "res://icon.svg";
+    private const int QuickTestEpisodeLimit = 5;
     private static readonly string[] RequiredGlobalScriptClasses =
     {
         nameof(RLPolicyPairingConfig),
@@ -44,6 +45,8 @@ public partial class RLAgentPluginEditor : EditorPlugin
     private Button? _runInferenceButton;
     private TrainingSceneValidation? _lastValidation;
     private bool _launchedTrainingRun;
+    private bool _launchedQuickTestRun;
+    private string _activeStatusPath = string.Empty;
     private string _lastAutoScenePath = string.Empty;
     private string _lastValidationSignature = string.Empty;
 
@@ -56,6 +59,8 @@ public partial class RLAgentPluginEditor : EditorPlugin
         _setupDock = new RLSetupDock();
         _setupDock.StartTrainingRequested += OnStartTrainingRequested;
         _setupDock.StopTrainingRequested += OnStopTrainingRequested;
+        _setupDock.QuickTestRequested += OnQuickTestRequested;
+        _setupDock.ValidateSceneRequested += OnValidateSceneRequested;
 
         _setupEditorDock = new EditorDock
         {
@@ -163,23 +168,51 @@ public partial class RLAgentPluginEditor : EditorPlugin
         }
 
         var isPlaying = EditorInterface.Singleton.IsPlayingScene();
+        var currentScenePath = ResolveTrainingScenePath();
         if (!isPlaying)
         {
+            if (_launchedQuickTestRun)
+            {
+                _setupDock.SetLaunchStatus(ReadCompletedQuickTestStatus(_activeStatusPath));
+                _launchedQuickTestRun = false;
+                _activeStatusPath = string.Empty;
+            }
+
             _launchedTrainingRun = false;
         }
 
-        if (_startTrainingButton is not null)
-        {
-            var validationBlocked = _lastValidation is { IsValid: false };
-            _startTrainingButton.Disabled = _launchedTrainingRun || validationBlocked;
-            _startTrainingButton.TooltipText = validationBlocked && _lastValidation!.Errors.Count > 0
+        var hasScenePath = !string.IsNullOrWhiteSpace(currentScenePath);
+        var validationBlocked = _lastValidation is { IsValid: false };
+        var launchInProgress = _launchedTrainingRun || _launchedQuickTestRun;
+        var startTrainingTooltip = !hasScenePath
+            ? "Open a scene or set a main scene first."
+            : validationBlocked && _lastValidation!.Errors.Count > 0
                 ? _lastValidation.Errors[0]
                 : "Launch the configured training run.";
+        var quickTestTooltip = !hasScenePath
+            ? "Open a scene or set a main scene first."
+            : validationBlocked && _lastValidation!.Errors.Count > 0
+                ? _lastValidation.Errors[0]
+                : $"Run a short smoke test capped at {QuickTestEpisodeLimit} episodes.";
+        var stopTooltip = launchInProgress
+            ? "Stop the active RL launch."
+            : "No RL launch is currently running.";
+        var validateTooltip = !hasScenePath
+            ? "Open a scene or set a main scene first."
+            : isPlaying
+            ? "Scene validation is disabled while a launch is running."
+            : "Run scene validation now.";
+
+        if (_startTrainingButton is not null)
+        {
+            _startTrainingButton.Disabled = !hasScenePath || launchInProgress || validationBlocked;
+            _startTrainingButton.TooltipText = startTrainingTooltip;
         }
 
         if (_stopTrainingButton is not null)
         {
-            _stopTrainingButton.Disabled = !_launchedTrainingRun;
+            _stopTrainingButton.Disabled = !launchInProgress;
+            _stopTrainingButton.TooltipText = stopTooltip;
         }
 
         if (_runInferenceButton is not null)
@@ -192,8 +225,17 @@ public partial class RLAgentPluginEditor : EditorPlugin
                 : "Launch the scene with trained agents running in inference mode.";
         }
 
+        _setupDock.SetActionStates(
+            canStartTraining: hasScenePath && !launchInProgress && !validationBlocked,
+            startTrainingTooltip: startTrainingTooltip,
+            canStop: launchInProgress,
+            stopTooltip: stopTooltip,
+            canQuickTest: hasScenePath && !launchInProgress && !validationBlocked,
+            quickTestTooltip: quickTestTooltip,
+            canValidateScene: hasScenePath && !isPlaying,
+            validateSceneTooltip: validateTooltip);
+
         // Auto-refresh validation when the edited scene changes.
-        var currentScenePath = ResolveTrainingScenePath();
         if (currentScenePath != _lastAutoScenePath)
         {
             _lastAutoScenePath = currentScenePath;
@@ -303,8 +345,11 @@ public partial class RLAgentPluginEditor : EditorPlugin
         var scenePath = ResolveTrainingScenePath();
         if (string.IsNullOrWhiteSpace(scenePath))
         {
+            _lastValidation = null;
+            _lastValidationSignature = string.Empty;
             _setupDock.SetScenePath(string.Empty);
             _setupDock.SetValidationSummary("No active scene. Open a scene or set a main scene in Project Settings.");
+            _setupDock.SetConfigSummary(string.Empty, string.Empty, string.Empty);
             return;
         }
 
@@ -367,11 +412,89 @@ public partial class RLAgentPluginEditor : EditorPlugin
         // Write initial meta.json so the dashboard can show policy-group names on export.
         WriteRunMeta(manifest.RunId, validation.ExportNames, validation.ExportGroups);
 
-        var bootstrapScene = "res://addons/rl_agent_plugin/Scenes/TrainingBootstrap.tscn";
+        var bootstrapScene = "res://addons/rl_agent_plugin/Scenes/Bootstrap/TrainingBootstrap.tscn";
         EditorInterface.Singleton.PlayCustomScene(bootstrapScene);
         _launchedTrainingRun = true;
+        _launchedQuickTestRun = false;
+        _activeStatusPath = manifest.StatusPath;
 
         // Notify dashboard immediately so it can auto-select the run and show LIVE badge.
+        _dashboard?.OnTrainingStarted(manifest.RunId);
+    }
+
+    private void OnQuickTestRequested()
+    {
+        if (_setupDock is null)
+        {
+            return;
+        }
+
+        var scenePath = ResolveTrainingScenePath();
+        if (string.IsNullOrWhiteSpace(scenePath))
+        {
+            _setupDock.SetLaunchStatus("No active scene or main scene configured.");
+            return;
+        }
+
+        var validation = ValidateSceneSafely(scenePath, "quick test launch");
+        UpdateValidationUi(validation);
+        if (!validation.IsValid)
+        {
+            _setupDock.SetLaunchStatus("Quick test blocked by scene validation errors.");
+            return;
+        }
+
+        if (validation.HasSelfPlayPairings)
+        {
+            _setupDock.SetLaunchStatus(
+                "Quick test does not support self-play scenes yet because it forces BatchSize = 1. " +
+                "Use Start Training for self-play setups.");
+            return;
+        }
+
+        var manifest = TrainingLaunchManifest.CreateDefault();
+        var runPrefixBase = SanitizeRunPrefix(validation.RunPrefix);
+        var runPrefix = string.IsNullOrWhiteSpace(runPrefixBase)
+            ? "quick_test"
+            : $"{runPrefixBase}_quick_test";
+        manifest.ScenePath = scenePath;
+        manifest.AcademyNodePath = validation.AcademyPath;
+        manifest.RunId = $"{runPrefix}_{Time.GetUnixTimeFromSystem()}";
+        manifest.RunDirectory = $"res://RL-Agent-Training/runs/{manifest.RunId}";
+        manifest.CheckpointPath = $"{manifest.RunDirectory}/{runPrefix}_checkpoint.json";
+        manifest.TrainingConfigPath = validation.TrainingConfigPath;
+        manifest.TrainerConfigPath = validation.TrainerConfigPath;
+        manifest.NetworkConfigPath = validation.NetworkConfigPath;
+        manifest.MetricsPath = $"{manifest.RunDirectory}/metrics.jsonl";
+        manifest.StatusPath = $"{manifest.RunDirectory}/status.json";
+        manifest.CheckpointInterval = validation.CheckpointInterval;
+        manifest.SimulationSpeed = 1.0f;
+        manifest.ActionRepeat = validation.ActionRepeat;
+        manifest.BatchSize = 1;
+        manifest.QuickTestMode = true;
+        manifest.QuickTestEpisodeLimit = QuickTestEpisodeLimit;
+        manifest.QuickTestShowSpyOverlay = validation.EnableSpyOverlay;
+
+        var writeError = manifest.SaveToUserStorage();
+        if (writeError != Error.Ok)
+        {
+            _setupDock.SetLaunchStatus($"Failed to write quick-test manifest: {writeError}");
+            return;
+        }
+
+        _activeStatusPath = manifest.StatusPath;
+        var overlayNote = manifest.QuickTestShowSpyOverlay
+            ? " Spy overlay enabled."
+            : " Spy overlay disabled on RLAcademy.";
+        _setupDock.SetLaunchStatus(
+            $"Launching quick test: {QuickTestEpisodeLimit} episodes, batch=1, speed=1.0.{overlayNote}");
+
+        WriteRunMeta(manifest.RunId, validation.ExportNames, validation.ExportGroups);
+
+        var bootstrapScene = "res://addons/rl_agent_plugin/Scenes/Bootstrap/TrainingBootstrap.tscn";
+        EditorInterface.Singleton.PlayCustomScene(bootstrapScene);
+        _launchedQuickTestRun = true;
+        _launchedTrainingRun = false;
         _dashboard?.OnTrainingStarted(manifest.RunId);
     }
 
@@ -422,8 +545,30 @@ public partial class RLAgentPluginEditor : EditorPlugin
             : $" using latest checkpoint";
         _setupDock.SetLaunchStatus($"Launching inference mode{checkpointNote}.");
 
-        var inferenceBootstrapScene = "res://addons/rl_agent_plugin/Scenes/InferenceBootstrap.tscn";
+        var inferenceBootstrapScene = "res://addons/rl_agent_plugin/Scenes/Bootstrap/InferenceBootstrap.tscn";
         EditorInterface.Singleton.PlayCustomScene(inferenceBootstrapScene);
+    }
+
+    private void OnValidateSceneRequested()
+    {
+        if (_setupDock is null)
+        {
+            return;
+        }
+
+        var scenePath = ResolveTrainingScenePath();
+        if (string.IsNullOrWhiteSpace(scenePath))
+        {
+            _setupDock.SetLaunchStatus("No active scene or main scene configured.");
+            return;
+        }
+
+        var validation = ValidateSceneSafely(scenePath, "manual validation");
+        _lastValidationSignature = BuildValidationSignature(EditorInterface.Singleton.GetEditedSceneRoot());
+        UpdateValidationUi(validation);
+        _setupDock.SetLaunchStatus(validation.IsValid
+            ? "Scene validation passed."
+            : $"Scene validation failed: {validation.Errors[0]}");
     }
 
     private static void WriteRunMeta(string runId, IReadOnlyList<string> agentNames, IReadOnlyList<string> agentGroups)
@@ -458,14 +603,17 @@ public partial class RLAgentPluginEditor : EditorPlugin
 
     private void OnStopTrainingRequested()
     {
-        if (!_launchedTrainingRun)
+        if (!_launchedTrainingRun && !_launchedQuickTestRun)
         {
             return;
         }
 
         EditorInterface.Singleton.StopPlayingScene();
+        var stoppedQuickTest = _launchedQuickTestRun;
         _launchedTrainingRun = false;
-        _setupDock?.SetLaunchStatus("Training run stopped.");
+        _launchedQuickTestRun = false;
+        _activeStatusPath = string.Empty;
+        _setupDock?.SetLaunchStatus(stoppedQuickTest ? "Quick test stopped." : "Training run stopped.");
     }
 
     private void UpdateValidationUi(TrainingSceneValidation validation)
@@ -595,6 +743,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
                 validation.SimulationSpeed = ReadFloatProperty(academy, "SimulationSpeed", 1.0f);
                 validation.ActionRepeat = ReadIntProperty(academy, "ActionRepeat", 1);
                 validation.BatchSize = ReadIntProperty(academy, "BatchSize", 1);
+                validation.EnableSpyOverlay = ReadBoolProperty(academy, "EnableSpyOverlay");
 
                 if (trainingConfigRes is null && trainerConfigRes is null)
                 {
@@ -731,6 +880,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
                 }
 
                 var configuredPairings = typedAcademy?.GetResolvedSelfPlayPairings() ?? new List<RLPolicyPairingConfig>();
+                validation.HasSelfPlayPairings = configuredPairings.Count > 0;
                 var requiredBatchCopies = ValidateSelfPlayPairings(configuredPairings, groupBindings, groupSummaryByBindingKey, validation);
                 if (validation.BatchSize < requiredBatchCopies)
                 {
@@ -1080,6 +1230,12 @@ public partial class RLAgentPluginEditor : EditorPlugin
         return variant.VariantType == Variant.Type.Int ? (int)variant : defaultValue;
     }
 
+    private static bool ReadBoolProperty(Node node, string propertyName)
+    {
+        var variant = node.Get(propertyName);
+        return variant.VariantType == Variant.Type.Bool && (bool)variant;
+    }
+
     private static float ReadFloatProperty(Node node, string propertyName, float defaultValue)
     {
         var variant = node.Get(propertyName);
@@ -1167,6 +1323,8 @@ public partial class RLAgentPluginEditor : EditorPlugin
                 builder.Append(ReadIntProperty(node, "BatchSize", 1));
                 builder.Append('|');
                 builder.Append(ReadFloatProperty(node, "SimulationSpeed", 1.0f));
+                builder.Append('|');
+                builder.Append(ReadBoolProperty(node, "EnableSpyOverlay"));
                 builder.Append('|');
                 builder.Append(ReadResourceProperty(node, "TrainingConfig")?.ResourcePath ?? string.Empty);
                 builder.Append('|');
@@ -1292,6 +1450,41 @@ public partial class RLAgentPluginEditor : EditorPlugin
             var message = $"{operation}: {error}";
             GD.PushError(message);
             GD.PrintErr(message);
+        }
+    }
+
+    private static string ReadCompletedQuickTestStatus(string statusPath)
+    {
+        if (string.IsNullOrWhiteSpace(statusPath))
+        {
+            return "Quick test finished.";
+        }
+
+        var absolutePath = ProjectSettings.GlobalizePath(statusPath);
+        if (!System.IO.File.Exists(absolutePath))
+        {
+            return "Quick test finished, but no status file was written.";
+        }
+
+        try
+        {
+            var content = System.IO.File.ReadAllText(absolutePath);
+            var variant = Json.ParseString(content);
+            if (variant.VariantType != Variant.Type.Dictionary)
+            {
+                return "Quick test finished, but the status summary could not be read.";
+            }
+
+            var status = variant.AsGodotDictionary();
+            var message = status.ContainsKey("message") ? status["message"].ToString() : string.Empty;
+            return string.IsNullOrWhiteSpace(message)
+                ? "Quick test finished."
+                : message;
+        }
+        catch (Exception exception)
+        {
+            GD.PushWarning($"[RLAgentPluginEditor] Failed to read quick-test status '{statusPath}': {exception.Message}");
+            return "Quick test finished, but the summary could not be read.";
         }
     }
 

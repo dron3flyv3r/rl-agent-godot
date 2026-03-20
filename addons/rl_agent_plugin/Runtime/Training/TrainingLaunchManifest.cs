@@ -21,6 +21,9 @@ public sealed class TrainingLaunchManifest
     public float SimulationSpeed { get; set; } = 1.0f;
     public int ActionRepeat { get; set; } = 1;
     public int BatchSize { get; set; } = 1;
+    public bool QuickTestMode { get; set; }
+    public int QuickTestEpisodeLimit { get; set; } = 5;
+    public bool QuickTestShowSpyOverlay { get; set; }
 
     public static TrainingLaunchManifest CreateDefault() => new();
 
@@ -87,6 +90,9 @@ public sealed class TrainingLaunchManifest
             SimulationSpeed = ReadFloat(data, nameof(SimulationSpeed), 1.0f),
             ActionRepeat = ReadInt(data, nameof(ActionRepeat), 1),
             BatchSize = ReadInt(data, nameof(BatchSize), 1),
+            QuickTestMode = ReadBool(data, nameof(QuickTestMode)),
+            QuickTestEpisodeLimit = ReadInt(data, nameof(QuickTestEpisodeLimit), 5),
+            QuickTestShowSpyOverlay = ReadBool(data, nameof(QuickTestShowSpyOverlay)),
         };
     }
 
@@ -108,6 +114,9 @@ public sealed class TrainingLaunchManifest
             { nameof(SimulationSpeed), SimulationSpeed },
             { nameof(ActionRepeat), ActionRepeat },
             { nameof(BatchSize), BatchSize },
+            { nameof(QuickTestMode), QuickTestMode },
+            { nameof(QuickTestEpisodeLimit), QuickTestEpisodeLimit },
+            { nameof(QuickTestShowSpyOverlay), QuickTestShowSpyOverlay },
         };
     }
 
@@ -138,6 +147,17 @@ public sealed class TrainingLaunchManifest
 
         var value = dictionary[key];
         return value.VariantType == Variant.Type.Int ? (int)value : defaultValue;
+    }
+
+    private static bool ReadBool(Godot.Collections.Dictionary dictionary, string key)
+    {
+        if (!dictionary.ContainsKey(key))
+        {
+            return false;
+        }
+
+        var value = dictionary[key];
+        return value.VariantType == Variant.Type.Bool && (bool)value;
     }
 
     private static float ReadFloat(Godot.Collections.Dictionary dictionary, string key, float defaultValue)

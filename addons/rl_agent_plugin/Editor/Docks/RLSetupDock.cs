@@ -10,6 +10,10 @@ public partial class RLSetupDock : VBoxContainer
     private readonly Label _validationDetailLabel;
     private readonly Label _configLabel;
     private readonly Label _launchStatusLabel;
+    private readonly Button _startButton;
+    private readonly Button _stopButton;
+    private readonly Button _quickTestButton;
+    private readonly Button _validateSceneButton;
 
     public RLSetupDock()
     {
@@ -89,24 +93,50 @@ public partial class RLSetupDock : VBoxContainer
         buttonRow.AddThemeConstantOverride("separation", 4);
         vbox.AddChild(buttonRow);
 
-        var startButton = new Button
+        _startButton = new Button
         {
             Text = "▶  Start Training",
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
             TooltipText = "Launch a training run using the active or main scene",
             CustomMinimumSize = new Vector2(0f, 32f),
         };
-        startButton.Pressed += () => StartTrainingRequested?.Invoke();
-        buttonRow.AddChild(startButton);
+        _startButton.Pressed += () => StartTrainingRequested?.Invoke();
+        buttonRow.AddChild(_startButton);
 
-        var stopButton = new Button
+        _stopButton = new Button
         {
             Text = "■  Stop",
             TooltipText = "Stop the active training run",
             CustomMinimumSize = new Vector2(0f, 32f),
         };
-        stopButton.Pressed += () => StopTrainingRequested?.Invoke();
-        buttonRow.AddChild(stopButton);
+        _stopButton.Pressed += () => StopTrainingRequested?.Invoke();
+        buttonRow.AddChild(_stopButton);
+
+        vbox.AddChild(MakeSpacer(4));
+
+        var utilityRow = new HBoxContainer();
+        utilityRow.AddThemeConstantOverride("separation", 4);
+        vbox.AddChild(utilityRow);
+
+        _quickTestButton = new Button
+        {
+            Text = "Quick Test",
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            TooltipText = "Run a short smoke test with BatchSize forced to 1.",
+            CustomMinimumSize = new Vector2(0f, 30f),
+        };
+        _quickTestButton.Pressed += () => QuickTestRequested?.Invoke();
+        utilityRow.AddChild(_quickTestButton);
+
+        _validateSceneButton = new Button
+        {
+            Text = "Validate Scene",
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            TooltipText = "Run scene validation now.",
+            CustomMinimumSize = new Vector2(0f, 30f),
+        };
+        _validateSceneButton.Pressed += () => ValidateSceneRequested?.Invoke();
+        utilityRow.AddChild(_validateSceneButton);
 
         vbox.AddChild(MakeSpacer(4));
 
@@ -124,6 +154,8 @@ public partial class RLSetupDock : VBoxContainer
 
     public event System.Action? StartTrainingRequested;
     public event System.Action? StopTrainingRequested;
+    public event System.Action? QuickTestRequested;
+    public event System.Action? ValidateSceneRequested;
 
     public void SetScenePath(string scenePath)
     {
@@ -178,6 +210,29 @@ public partial class RLSetupDock : VBoxContainer
         {
             _launchStatusLabel.RemoveThemeColorOverride("font_color");
         }
+    }
+
+    public void SetActionStates(
+        bool canStartTraining,
+        string startTrainingTooltip,
+        bool canStop,
+        string stopTooltip,
+        bool canQuickTest,
+        string quickTestTooltip,
+        bool canValidateScene,
+        string validateSceneTooltip)
+    {
+        _startButton.Disabled = !canStartTraining;
+        _startButton.TooltipText = startTrainingTooltip;
+
+        _stopButton.Disabled = !canStop;
+        _stopButton.TooltipText = stopTooltip;
+
+        _quickTestButton.Disabled = !canQuickTest;
+        _quickTestButton.TooltipText = quickTestTooltip;
+
+        _validateSceneButton.Disabled = !canValidateScene;
+        _validateSceneButton.TooltipText = validateSceneTooltip;
     }
 
     private static Label MakeSectionHeader(string text)

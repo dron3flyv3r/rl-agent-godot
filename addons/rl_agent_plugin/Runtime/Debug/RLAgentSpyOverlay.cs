@@ -7,7 +7,8 @@ namespace RlAgentPlugin.Runtime;
 /// In-game debug overlay that shows observations, actions, and reward signals
 /// for a selected agent. Created by RLAcademy when EnableSpyOverlay is true.
 ///
-/// Only Human-mode and Inference-mode agents are listed.
+/// Human-mode and Inference-mode agents are listed by default. Quick test mode
+/// can opt into Train-mode agents as well.
 /// Press Tab / Shift+Tab to cycle through agents.
 /// </summary>
 public partial class RLAgentSpyOverlay : CanvasLayer
@@ -16,10 +17,12 @@ public partial class RLAgentSpyOverlay : CanvasLayer
     private readonly List<IRLAgent> _agents = new();
     private int _pinnedIndex;
     private SpyDrawPanel _panel = null!;
+    private bool _includeTrainAgents;
 
-    internal void Initialize(RLAcademy academy)
+    internal void Initialize(RLAcademy academy, bool includeTrainAgents = false)
     {
         _academy = academy;
+        _includeTrainAgents = includeTrainAgents;
         Layer = 128;
     }
 
@@ -36,7 +39,8 @@ public partial class RLAgentSpyOverlay : CanvasLayer
         _agents.Clear();
         foreach (var agent in _academy.GetAgents())
         {
-            if (agent.ControlMode is RLAgentControlMode.Human or RLAgentControlMode.Inference)
+            if (agent.ControlMode is RLAgentControlMode.Human or RLAgentControlMode.Inference
+                || (_includeTrainAgents && agent.ControlMode == RLAgentControlMode.Train))
                 _agents.Add(agent);
         }
 
@@ -96,7 +100,12 @@ internal sealed partial class SpyDrawPanel : Control
         _hasSnapshot = true;
 
         // ── Header
-        var modeStr = agent.ControlMode == RLAgentControlMode.Human ? "Human" : "Inference";
+        var modeStr = agent.ControlMode switch
+        {
+            RLAgentControlMode.Human => "Human",
+            RLAgentControlMode.Train => "Train",
+            _ => "Inference",
+        };
         var agentSuffix = total > 1 ? $"  [{index + 1}/{total}]" : "";
         _lines.Add(($"[RLSpy]  {agent.AsNode().Name}  ({modeStr}){agentSuffix}", HeaderColor));
         _lines.Add(($"Steps: {agent.EpisodeSteps}   Episode Reward: {agent.EpisodeReward:F3}", WhiteColor));
