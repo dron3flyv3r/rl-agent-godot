@@ -5,7 +5,7 @@ namespace RlAgentPlugin.Demo;
 public partial class WallClimbArenaController : Node3D
 {
     [Export] public float WallHeightMin { get; set; } = 0f;
-    [Export] public float WallHeightMax { get; set; } = 3f;
+    [Export] public float WallHeightMax { get; set; } = 1.5f;
 
     // Spawn positions
     private static readonly Vector3 PlayerSpawn = new(-3f, 0.5f, 0f);

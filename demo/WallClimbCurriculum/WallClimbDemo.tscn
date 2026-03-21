@@ -16,12 +16,15 @@
 script = ExtResource("7_runcfg")
 RunPrefix = "WallClimbCurriculum"
 SimulationSpeed = 4.0
-BatchSize = 64
+BatchSize = 32
 AsyncGradientUpdates = true
 
 [sub_resource type="Resource" id="Curriculum_wallclimb"]
 script = ExtResource("8_curcfg")
+Mode = 1
 MaxSteps = 400
+SuccessWindowEpisodes = 50
+SuccessRewardThreshold = 0.8
 
 [sub_resource type="BoxMesh" id="PlatformMesh"]
 size = Vector3(10, 0.2, 10)
@@ -99,7 +102,7 @@ metadata/_custom_type_script = "uid://covgl5skelf7g"
 resource_name = "wall_climb"
 script = ExtResource("3_pgcfg")
 AgentId = "wall_climb"
-InferenceModelPath = "res://demo/WallClimbCurriculum/models/agent.rlmodel"
+InferenceModelPath = "res://demo/WallClimbCurriculum/models/wall_climb.rlmodel"
 NetworkGraph = SubResource("Resource_3khbc")
 metadata/_custom_type_script = "uid://bniwqapplki00"
 
@@ -119,7 +122,6 @@ script = ExtResource("1_rlacad")
 MaxEpisodeSteps = 1000
 RunConfig = SubResource("RunConfig_wallclimb")
 Curriculum = SubResource("Curriculum_wallclimb")
-EnableSpyOverlay = true
 
 [node name="Arena" type="Node3D" parent="." unique_id=1773525197]
 script = ExtResource("4_arena")
@@ -200,81 +202,81 @@ DetectionMask = 2
 IncludeHitClass = true
 metadata/_custom_type_script = "uid://dqngqwg7thrn6"
 
-[node name="__rays" type="Node3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D" unique_id=90299534]
+[node name="__rays" type="Node3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D" unique_id=741200241]
 
-[node name="@RayCast3D@5523167" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1946419794]
+[node name="@RayCast3D@23622" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1618062236]
 visible = false
 target_position = Vector3(8.660254, 0, 5.0000005)
 collision_mask = 3
 debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
 
-[node name="@RayCast3D@5523168" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=393713081]
+[node name="@RayCast3D@23623" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1572374238]
 visible = false
 target_position = Vector3(9.848078, 0, 1.7364819)
 collision_mask = 3
 debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
 
-[node name="@RayCast3D@5523169" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1114281354]
+[node name="@RayCast3D@23624" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=429114943]
 visible = false
 target_position = Vector3(9.848078, 0, -1.7364823)
 collision_mask = 3
 debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
 
-[node name="@RayCast3D@5523170" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1872005535]
+[node name="@RayCast3D@23625" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1278159460]
 visible = false
 target_position = Vector3(8.6602545, 0, -4.9999995)
 collision_mask = 3
 debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
 
-[node name="@RayCast3D@5523171" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1825007746]
+[node name="@RayCast3D@23626" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=584629987]
 visible = false
 target_position = Vector3(6.4278755, 0, -7.6604443)
 collision_mask = 3
 debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
 
-[node name="@RayCast3D@5523172" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=2084475210]
+[node name="@RayCast3D@23627" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1017187262]
 visible = false
 target_position = Vector3(3.4202018, 0, -9.396926)
 collision_mask = 3
 debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
 
-[node name="@RayCast3D@5523173" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=922988982]
+[node name="@RayCast3D@23628" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=279479174]
 visible = false
 target_position = Vector3(0, 0, -10)
 collision_mask = 3
 debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
 
-[node name="@RayCast3D@5523174" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=506110579]
+[node name="@RayCast3D@23629" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=786857408]
 visible = false
 target_position = Vector3(-3.4202006, 0, -9.396926)
 collision_mask = 3
 debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
 
-[node name="@RayCast3D@5523175" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1485723314]
+[node name="@RayCast3D@23630" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1255825482]
 visible = false
 target_position = Vector3(-6.427877, 0, -7.660444)
 collision_mask = 3
 debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
 
-[node name="@RayCast3D@5523176" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=913226802]
+[node name="@RayCast3D@23631" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1673739608]
 visible = false
 target_position = Vector3(-8.6602545, 0, -4.9999995)
 collision_mask = 3
 debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
 
-[node name="@RayCast3D@5523177" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=582433148]
+[node name="@RayCast3D@23632" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1777685628]
 visible = false
 target_position = Vector3(-9.848078, 0, -1.7364823)
 collision_mask = 3
 debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
 
-[node name="@RayCast3D@5523178" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=1026284358]
+[node name="@RayCast3D@23633" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=469430989]
 visible = false
 target_position = Vector3(-9.848078, 0, 1.736483)
 collision_mask = 3
 debug_shape_custom_color = Color(0.2, 1, 0.2, 1)
 
-[node name="@RayCast3D@5523179" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=2135426206]
+[node name="@RayCast3D@23634" type="RayCast3D" parent="Arena/WallClimbPlayer/WallClimbAgent/RLRaycastSensor3D/__rays" unique_id=2025282013]
 visible = false
 target_position = Vector3(-8.660254, 0, 5.0000005)
 collision_mask = 3

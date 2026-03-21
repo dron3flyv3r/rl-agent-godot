@@ -1536,13 +1536,17 @@ public partial class TrainingBootstrap : Node
     private static void WriteCheckpointSidecar(RLCheckpoint checkpoint, string checkpointResPath)
     {
         var sidecarResPath = checkpointResPath.Replace(".json", ".meta.json", StringComparison.Ordinal);
+        var training = new Godot.Collections.Dictionary
+        {
+            { "total_steps",   checkpoint.TotalSteps   },
+            { "episode_count", checkpoint.EpisodeCount },
+            { "update_count",  checkpoint.UpdateCount  },
+        };
         var data = new Godot.Collections.Dictionary
         {
             { "format_version", checkpoint.FormatVersion },
-            { "run_id",         checkpoint.RunId },
-            { "total_steps",    checkpoint.TotalSteps },
-            { "episode_count",  checkpoint.EpisodeCount },
-            { "update_count",   checkpoint.UpdateCount },
+            { "run_id",         checkpoint.RunId         },
+            { "training",       training                 },
             { "meta",           checkpoint.CreateMetadataDictionary() },
         };
         var absPath = ProjectSettings.GlobalizePath(sidecarResPath);
