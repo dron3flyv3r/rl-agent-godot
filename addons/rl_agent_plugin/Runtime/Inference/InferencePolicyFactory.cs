@@ -58,24 +58,36 @@ public static class InferencePolicyFactory
     /// </summary>
     private static RLNetworkGraph ReconstructGraph(RLCheckpoint checkpoint, RLNetworkGraph? fallbackGraph)
     {
-        if (checkpoint.GraphLayerSizes.Length > 0)
+        if (checkpoint.NetworkLayers.Count > 0)
         {
             var layers = new Array<Resource>();
-            for (var i = 0; i < checkpoint.GraphLayerSizes.Length; i++)
+            foreach (var layer in checkpoint.NetworkLayers)
             {
-                layers.Add(new RLDenseLayerDef
+                switch (layer.Type)
                 {
-                    Size = checkpoint.GraphLayerSizes[i],
-                    Activation = checkpoint.GraphLayerActivations.Length > i
-                        ? (RLActivationKind)checkpoint.GraphLayerActivations[i]
-                        : RLActivationKind.Tanh,
-                });
+                    case "dense":
+                        layers.Add(new RLDenseLayerDef
+                        {
+                            Size       = layer.Size,
+                            Activation = ActivationFromString(layer.Activation),
+                        });
+                        break;
+                    case "dropout":
+                        layers.Add(new RLDropoutLayerDef { Rate = layer.Rate });
+                        break;
+                    case "layer_norm":
+                        layers.Add(new RLLayerNormDef());
+                        break;
+                    case "flatten":
+                        layers.Add(new RLFlattenLayerDef());
+                        break;
+                }
             }
 
             return new RLNetworkGraph
             {
                 TrunkLayers = layers,
-                Optimizer = (RLOptimizerKind)checkpoint.GraphOptimizer,
+                Optimizer   = OptimizerFromString(checkpoint.NetworkOptimizer),
             };
         }
 
@@ -83,4 +95,17 @@ public static class InferencePolicyFactory
 
         return new RLNetworkGraph();
     }
+
+    private static RLActivationKind ActivationFromString(string activation) => activation switch
+    {
+        "relu" => RLActivationKind.Relu,
+        _      => RLActivationKind.Tanh,
+    };
+
+    private static RLOptimizerKind OptimizerFromString(string optimizer) => optimizer switch
+    {
+        "sgd"  => RLOptimizerKind.Sgd,
+        "none" => RLOptimizerKind.None,
+        _      => RLOptimizerKind.Adam,
+    };
 }

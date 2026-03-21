@@ -165,11 +165,24 @@ public static class CheckpointRegistry
             var parsed  = Json.ParseString(content);
             if (parsed.VariantType != Variant.Type.Dictionary) return null;
 
-            var d            = parsed.AsGodotDictionary();
-            var groupId      = ExtractGroupIdFromPath(absPath);
-            var updateCount  = d.ContainsKey("update_count")  ? d["update_count"].AsInt64()  : 0L;
-            var totalSteps   = d.ContainsKey("total_steps")   ? d["total_steps"].AsInt64()   : 0L;
-            var episodeCount = d.ContainsKey("episode_count") ? d["episode_count"].AsInt64() : 0L;
+            var d       = parsed.AsGodotDictionary();
+            var groupId = ExtractGroupIdFromPath(absPath);
+
+            // v4: training sub-object; v3: flat root fields
+            long updateCount, totalSteps, episodeCount;
+            if (d.ContainsKey("training") && d["training"].VariantType == Variant.Type.Dictionary)
+            {
+                var t        = d["training"].AsGodotDictionary();
+                totalSteps   = t.ContainsKey("total_steps")   ? t["total_steps"].AsInt64()   : 0L;
+                episodeCount = t.ContainsKey("episode_count") ? t["episode_count"].AsInt64() : 0L;
+                updateCount  = t.ContainsKey("update_count")  ? t["update_count"].AsInt64()  : 0L;
+            }
+            else
+            {
+                totalSteps   = d.ContainsKey("total_steps")   ? d["total_steps"].AsInt64()   : 0L;
+                episodeCount = d.ContainsKey("episode_count") ? d["episode_count"].AsInt64() : 0L;
+                updateCount  = d.ContainsKey("update_count")  ? d["update_count"].AsInt64()  : 0L;
+            }
             var algorithm    = RLCheckpoint.PpoAlgorithm;
             var reward       = 0f;
 

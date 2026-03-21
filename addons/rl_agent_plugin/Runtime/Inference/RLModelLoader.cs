@@ -57,7 +57,7 @@ public static class RLModelLoader
             }
 
             var version = reader.ReadUInt16();
-            if (version != 1 && version != RLCheckpoint.CurrentFormatVersion)
+            if (version < 1 || version > RLCheckpoint.CurrentFormatVersion)
             {
                 GD.PushError($"[RLModelLoader] Unsupported .rlmodel version {version} in {absPath}.");
                 return null;
@@ -68,7 +68,7 @@ public static class RLModelLoader
             var layerCount = reader.ReadInt32();
 
             // ── Layers ────────────────────────────────────────────────────────
-            var usesTypedLayerShapes = version >= RLCheckpoint.CurrentFormatVersion;
+            var usesTypedLayerShapes = version >= 3;
             var shapes  = new List<int>(layerCount * (usesTypedLayerShapes ? 4 : 3));
             var weights = new List<float>();
 
