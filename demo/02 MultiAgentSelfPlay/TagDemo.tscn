@@ -1,18 +1,32 @@
 [gd_scene format=3 uid="uid://4x0lwgom1myl"]
 
-[ext_resource type="Script" uid="uid://6k7h4e3y50oa" path="res://demo/MultiAgentSelfPlay/Scripts/TagArenaController.cs" id="1_lmqxp"]
+[ext_resource type="Script" uid="uid://6k7h4e3y50oa" path="res://demo/02 MultiAgentSelfPlay/Scripts/TagArenaController.cs" id="1_lmqxp"]
 [ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/Core/RLAcademy.cs" id="2_d577h"]
 [ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl_agent_plugin/Resources/Config/RLTrainingConfig.cs" id="3_650tm"]
+[ext_resource type="Script" uid="uid://ire111rjxew5" path="res://addons/rl_agent_plugin/Resources/Config/RLPPOConfig.cs" id="3_x3qrm"]
 [ext_resource type="Script" uid="uid://bl3qlpw5eopg4" path="res://addons/rl_agent_plugin/Resources/Config/RLPolicyPairingConfig.cs" id="4_rb47y"]
-[ext_resource type="Resource" uid="uid://borlltwsvuyg7" path="res://demo/MultiAgentSelfPlay/Policies/chasers.tres" id="5_fc5f6"]
-[ext_resource type="Resource" uid="uid://b3ipgpbt331i1" path="res://demo/MultiAgentSelfPlay/Policies/runners.tres" id="6_6walo"]
-[ext_resource type="Script" uid="uid://bdrwoeuh2mcbl" path="res://demo/MultiAgentSelfPlay/Scripts/TagPlayer.cs" id="7_3gkkj"]
-[ext_resource type="Script" uid="uid://cyyxb04k8uacu" path="res://demo/MultiAgentSelfPlay/Scripts/TagAgent.cs" id="8_h1ebu"]
+[ext_resource type="Resource" uid="uid://borlltwsvuyg7" path="res://demo/02 MultiAgentSelfPlay/Policies/chasers.tres" id="5_fc5f6"]
+[ext_resource type="Resource" uid="uid://b3ipgpbt331i1" path="res://demo/02 MultiAgentSelfPlay/Policies/runners.tres" id="6_6walo"]
+[ext_resource type="Script" uid="uid://bdrwoeuh2mcbl" path="res://demo/02 MultiAgentSelfPlay/Scripts/TagPlayer.cs" id="7_3gkkj"]
+[ext_resource type="Script" uid="uid://cyyxb04k8uacu" path="res://demo/02 MultiAgentSelfPlay/Scripts/TagAgent.cs" id="8_h1ebu"]
 [ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl_agent_plugin/Resources/Config/RLRunConfig.cs" id="9_runcfg"]
 [ext_resource type="Script" uid="uid://dsmgeg1rldr87" path="res://addons/rl_agent_plugin/Resources/Config/RLSelfPlayConfig.cs" id="10_selfplay"]
 
+[sub_resource type="Resource" id="Resource_ruj3f"]
+script = ExtResource("3_x3qrm")
+
 [sub_resource type="Resource" id="TrainingConfig"]
 script = ExtResource("3_650tm")
+Algorithm = SubResource("Resource_ruj3f")
+
+[sub_resource type="Resource" id="RunConfig_tag"]
+script = ExtResource("9_runcfg")
+RunPrefix = "TagDemo"
+SimulationSpeed = 4.0
+BatchSize = 16
+ActionRepeat = 2
+CheckpointInterval = 20
+AsyncGradientUpdates = true
 
 [sub_resource type="Resource" id="Resource_pairing"]
 script = ExtResource("4_rb47y")
@@ -20,16 +34,9 @@ PairingId = "chasers_vs_runners"
 GroupA = ExtResource("5_fc5f6")
 GroupB = ExtResource("6_6walo")
 
-[sub_resource type="Resource" id="RunConfig_tag"]
-script = ExtResource("9_runcfg")
-RunPrefix = "TagDemo"
-SimulationSpeed = 12.0
-ActionRepeat = 2
-BatchSize = 8
-
 [sub_resource type="Resource" id="SelfPlay_tag"]
 script = ExtResource("10_selfplay")
-Pairings = Array[RLPolicyPairingConfig]([SubResource("Resource_pairing")])
+Pairings = Array[ExtResource("4_rb47y")]([SubResource("Resource_pairing")])
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_q38m4"]
 radius = 14.0
@@ -80,8 +87,8 @@ default_color = Color(0.34902, 0.596078, 0.423529, 1)
 [node name="Academy" type="Node" parent="." unique_id=1794390983]
 script = ExtResource("2_d577h")
 TrainingConfig = SubResource("TrainingConfig")
-RunConfig = SubResource("RunConfig_tag")
 MaxEpisodeSteps = 600
+RunConfig = SubResource("RunConfig_tag")
 SelfPlay = SubResource("SelfPlay_tag")
 EnableSpyOverlay = true
 

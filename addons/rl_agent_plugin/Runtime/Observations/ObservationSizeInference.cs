@@ -14,6 +14,12 @@ public static class ObservationSizeInference
         foreach (var agent in agents)
         {
             var binding = RLPolicyGroupBindingResolver.Resolve(sceneRoot, agent.AsNode());
+            if (binding == null)
+            {
+                result.Errors.Add($"Agent '{sceneRoot.GetPathTo(agent.AsNode())}': failed to resolve policy group binding.");
+                continue;
+            }
+
             result.AgentBindings[agent] = binding;
 
             if (!TryInferAgentObservationSize(agent, out var observationSize, out var error, resetEpisodes))

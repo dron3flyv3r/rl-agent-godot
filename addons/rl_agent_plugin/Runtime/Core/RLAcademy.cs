@@ -93,8 +93,6 @@ public partial class RLAcademy : Node
     private readonly Dictionary<string, int> _validatedObservationSizesByGroup = new(StringComparer.Ordinal);
     private List<IRLAgent> _humanAgents = new();
     public bool HumanModeActive { get; private set; }
-    private double _previousTimeScale = 1.0;
-    private int _previousMaxPhysicsStepsPerFrame = 8;
 
     public override void _Ready()
     {
@@ -104,29 +102,11 @@ public partial class RLAcademy : Node
         if (!IsInsideTrainingBootstrap() && DebugCurriculumProgress > 0f)
             SetCurriculumProgress(DebugCurriculumProgress);
 
-        // Apply simulation speed when running outside of TrainingBootstrap (which manages it on its own).
-        if (!IsInsideTrainingBootstrap())
+        if (!IsInsideTrainingBootstrap() && EnableSpyOverlay)
         {
-            _previousTimeScale = Engine.TimeScale;
-            _previousMaxPhysicsStepsPerFrame = Engine.MaxPhysicsStepsPerFrame;
-            Engine.TimeScale = Math.Max(0.1f, SimulationSpeed);
-            Engine.MaxPhysicsStepsPerFrame = Math.Max(8, (int)Math.Ceiling(SimulationSpeed) + 1);
-
-            if (EnableSpyOverlay)
-            {
-                _spyOverlay = new RLAgentSpyOverlay();
-                _spyOverlay.Initialize(this);
-                AddChild(_spyOverlay);
-            }
-        }
-    }
-
-    public override void _ExitTree()
-    {
-        if (!IsInsideTrainingBootstrap())
-        {
-            Engine.TimeScale = _previousTimeScale;
-            Engine.MaxPhysicsStepsPerFrame = _previousMaxPhysicsStepsPerFrame;
+            _spyOverlay = new RLAgentSpyOverlay();
+            _spyOverlay.Initialize(this);
+            AddChild(_spyOverlay);
         }
     }
 

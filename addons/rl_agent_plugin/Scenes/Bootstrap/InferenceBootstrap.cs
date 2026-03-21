@@ -14,6 +14,10 @@ namespace RlAgentPlugin;
 /// </summary>
 public partial class InferenceBootstrap : Node
 {
+    private double _previousTimeScale = 1.0;
+    private int _previousPhysicsTicksPerSecond = 60;
+    private int _previousMaxPhysicsStepsPerFrame = 8;
+
     public override void _Ready()
     {
         var manifest = InferenceLaunchManifest.LoadFromUserStorage();
@@ -77,8 +81,24 @@ public partial class InferenceBootstrap : Node
             GD.Print($"[InferenceBootstrap] Switched {overridden} agent(s) to Inference mode.");
         }
 
+        _previousTimeScale = Engine.TimeScale;
+        _previousPhysicsTicksPerSecond = Engine.PhysicsTicksPerSecond;
+        _previousMaxPhysicsStepsPerFrame = Engine.MaxPhysicsStepsPerFrame;
+
         // Add directly as a child — ResolveSceneRoot() stops at InferenceBootstrap.
         AddChild(instance);
+
+        // Inference should run at the project's normal speed, independent of training settings.
+        Engine.TimeScale = 1.0;
+        Engine.PhysicsTicksPerSecond = _previousPhysicsTicksPerSecond;
+        Engine.MaxPhysicsStepsPerFrame = _previousMaxPhysicsStepsPerFrame;
+    }
+
+    public override void _ExitTree()
+    {
+        Engine.TimeScale = _previousTimeScale;
+        Engine.PhysicsTicksPerSecond = _previousPhysicsTicksPerSecond;
+        Engine.MaxPhysicsStepsPerFrame = _previousMaxPhysicsStepsPerFrame;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

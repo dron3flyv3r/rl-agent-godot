@@ -522,7 +522,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
         {
             ScenePath       = scenePath,
             AcademyNodePath = validation.AcademyPath,
-            SimulationSpeed = validation.SimulationSpeed,
+            SimulationSpeed = 1.0f,
             ActionRepeat    = validation.ActionRepeat,
         };
 
@@ -728,16 +728,17 @@ public partial class RLAgentPluginEditor : EditorPlugin
                 var trainingConfigRes = ReadResourceProperty(academy, "TrainingConfig");
                 var trainerConfigRes = ReadResourceProperty(academy, "TrainerConfig");
                 var checkpoint = ReadResourceProperty(academy, "Checkpoint");
+                var runConfig = ReadResourceProperty(academy, "RunConfig");
 
                 validation.TrainingConfigPath = trainingConfigRes?.ResourcePath ?? string.Empty;
                 validation.TrainerConfigPath = trainerConfigRes?.ResourcePath ?? validation.TrainingConfigPath;
                 validation.NetworkConfigPath = validation.TrainingConfigPath;
                 validation.CheckpointPath = checkpoint?.ResourcePath ?? string.Empty;
-                validation.RunPrefix = ReadStringProperty(academy, "RunPrefix");
-                validation.CheckpointInterval = ReadIntProperty(academy, "CheckpointInterval", 10);
-                validation.SimulationSpeed = ReadFloatProperty(academy, "SimulationSpeed", 1.0f);
-                validation.ActionRepeat = ReadIntProperty(academy, "ActionRepeat", 1);
-                validation.BatchSize = ReadIntProperty(academy, "BatchSize", 1);
+                validation.RunPrefix = ReadStringProperty(runConfig, "RunPrefix");
+                validation.CheckpointInterval = ReadIntProperty(runConfig, "CheckpointInterval", 10);
+                validation.SimulationSpeed = ReadFloatProperty(runConfig, "SimulationSpeed", 1.0f);
+                validation.ActionRepeat = ReadIntProperty(runConfig, "ActionRepeat", 1);
+                validation.BatchSize = ReadIntProperty(runConfig, "BatchSize", 1);
                 validation.EnableSpyOverlay = ReadBoolProperty(academy, "EnableSpyOverlay");
                 validation.HasCurriculum = ReadResourceProperty(academy, "Curriculum") is not null;
 
@@ -1212,20 +1213,32 @@ public partial class RLAgentPluginEditor : EditorPlugin
     }
 
     private static int ReadIntProperty(Node node, string propertyName, int defaultValue)
+        => ReadIntProperty((GodotObject)node, propertyName, defaultValue);
+
+    private static int ReadIntProperty(GodotObject? obj, string propertyName, int defaultValue)
     {
-        var variant = node.Get(propertyName);
+        if (obj is null) return defaultValue;
+        var variant = obj.Get(propertyName);
         return variant.VariantType == Variant.Type.Int ? (int)variant : defaultValue;
     }
 
     private static bool ReadBoolProperty(Node node, string propertyName)
+        => ReadBoolProperty((GodotObject)node, propertyName);
+
+    private static bool ReadBoolProperty(GodotObject? obj, string propertyName)
     {
-        var variant = node.Get(propertyName);
+        if (obj is null) return false;
+        var variant = obj.Get(propertyName);
         return variant.VariantType == Variant.Type.Bool && (bool)variant;
     }
 
     private static float ReadFloatProperty(Node node, string propertyName, float defaultValue)
+        => ReadFloatProperty((GodotObject)node, propertyName, defaultValue);
+
+    private static float ReadFloatProperty(GodotObject? obj, string propertyName, float defaultValue)
     {
-        var variant = node.Get(propertyName);
+        if (obj is null) return defaultValue;
+        var variant = obj.Get(propertyName);
         return variant.VariantType switch
         {
             Variant.Type.Float => (float)(double)variant,
@@ -1296,20 +1309,21 @@ public partial class RLAgentPluginEditor : EditorPlugin
             if (IsAcademyNode(node))
             {
                 var typedAcademy = node as RLAcademy;
+                var runConfig = ReadResourceProperty(node, "RunConfig");
                 builder.Append("academy|");
                 builder.Append(node.GetPath());
                 builder.Append('|');
-                builder.Append(ReadStringProperty(node, "RunPrefix"));
+                builder.Append(ReadStringProperty(runConfig, "RunPrefix"));
                 builder.Append('|');
-                builder.Append(ReadIntProperty(node, "CheckpointInterval", 10));
+                builder.Append(ReadIntProperty(runConfig, "CheckpointInterval", 10));
                 builder.Append('|');
-                builder.Append(ReadIntProperty(node, "ActionRepeat", 1));
+                builder.Append(ReadIntProperty(runConfig, "ActionRepeat", 1));
                 builder.Append('|');
                 builder.Append(ReadIntProperty(node, "MaxEpisodeSteps", 0));
                 builder.Append('|');
-                builder.Append(ReadIntProperty(node, "BatchSize", 1));
+                builder.Append(ReadIntProperty(runConfig, "BatchSize", 1));
                 builder.Append('|');
-                builder.Append(ReadFloatProperty(node, "SimulationSpeed", 1.0f));
+                builder.Append(ReadFloatProperty(runConfig, "SimulationSpeed", 1.0f));
                 builder.Append('|');
                 builder.Append(ReadBoolProperty(node, "EnableSpyOverlay"));
                 builder.Append('|');
