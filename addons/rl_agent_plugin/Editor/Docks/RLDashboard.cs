@@ -883,7 +883,7 @@ public partial class RLDashboard : Control
 
     private void SetHeaderStatus(string message)
     {
-        if (_headerStatus is not null) _headerStatus.Text =message.Length <= 100 ? message : message[..100] + "…";
+        if (_headerStatus is not null) _headerStatus.Text =message.Length <= 60 ? message : message[..60] + "…";
     }
 
     private void ShowLiveBadge()

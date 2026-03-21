@@ -2,9 +2,9 @@
 
 [ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/Core/RLAcademy.cs" id="1_rlacad"]
 [ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl_agent_plugin/Resources/Config/RLPolicyGroupConfig.cs" id="3_pgcfg"]
-[ext_resource type="Script" uid="uid://bdtmbmcdx2pf" path="res://demo/WallClimbCurriculum/Scripts/WallClimbArenaController.cs" id="4_arena"]
-[ext_resource type="Script" uid="uid://b7t8gl7dj6bkm" path="res://demo/WallClimbCurriculum/Scripts/WallClimbPlayer.cs" id="5_player"]
-[ext_resource type="Script" uid="uid://ckm73lgraynm5" path="res://demo/WallClimbCurriculum/Scripts/WallClimbAgent.cs" id="6_agent"]
+[ext_resource type="Script" uid="uid://bdtmbmcdx2pf" path="res://demo/03 WallClimbCurriculum/Scripts/WallClimbArenaController.cs" id="4_arena"]
+[ext_resource type="Script" uid="uid://b7t8gl7dj6bkm" path="res://demo/03 WallClimbCurriculum/Scripts/WallClimbPlayer.cs" id="5_player"]
+[ext_resource type="Script" uid="uid://ckm73lgraynm5" path="res://demo/03 WallClimbCurriculum/Scripts/WallClimbAgent.cs" id="6_agent"]
 [ext_resource type="Script" uid="uid://oouep3l8683y" path="res://addons/rl_agent_plugin/Resources/Models/RLDenseLayerDef.cs" id="7_agi8e"]
 [ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl_agent_plugin/Resources/Config/RLRunConfig.cs" id="7_runcfg"]
 [ext_resource type="Script" uid="uid://n4fexef4ftko" path="res://addons/rl_agent_plugin/Resources/Models/RLDropoutLayerDef.cs" id="8_8hnum"]

@@ -50,6 +50,7 @@ public partial class TrainingBootstrap : Node
     private RLTrainingConfig? _trainingConfig;
     private RLTrainerConfig?  _trainerConfig;
     private double _previousTimeScale = 1.0;
+    private int _previousPhysicsTicksPerSecond = 60;
     private int _previousMaxPhysicsStepsPerFrame = 8;
     private int _checkpointInterval = 10;
     private int _actionRepeat = 1;
@@ -163,22 +164,30 @@ public partial class TrainingBootstrap : Node
         }
 
         _previousTimeScale = Engine.TimeScale;
+        _previousPhysicsTicksPerSecond = Engine.PhysicsTicksPerSecond;
         _previousMaxPhysicsStepsPerFrame = Engine.MaxPhysicsStepsPerFrame;
         var simulationSpeed = _quickTestMode
             ? 1.0
-            : Math.Max(0.1f, firstAcademy.SimulationSpeed);
+            : Math.Max(0.1f, _manifest.SimulationSpeed);
+        var scaledPhysicsTicksPerSecond = Math.Max(
+            1,
+            (int)Math.Ceiling(_previousPhysicsTicksPerSecond * simulationSpeed));
         Engine.TimeScale = simulationSpeed;
-        Engine.MaxPhysicsStepsPerFrame = Math.Max(8, (int)Math.Ceiling(simulationSpeed) + 1);
+        Engine.PhysicsTicksPerSecond = scaledPhysicsTicksPerSecond;
+        Engine.MaxPhysicsStepsPerFrame = Math.Max(_previousMaxPhysicsStepsPerFrame, scaledPhysicsTicksPerSecond);
+        GD.Print(
+            $"[RL] Training speed applied: simulation_speed={simulationSpeed:0.###}, " +
+            $"physics_ticks_per_second={Engine.PhysicsTicksPerSecond}, " +
+            $"max_physics_steps_per_frame={Engine.MaxPhysicsStepsPerFrame}");
 
         var manifestBatchSize = _quickTestMode ? 1 : _manifest.BatchSize;
         if (manifestBatchSize != _batchSize
             || _manifest.CheckpointInterval != _checkpointInterval
-            || _manifest.ActionRepeat != _actionRepeat
-            || Math.Abs(_manifest.SimulationSpeed - simulationSpeed) > 0.001f)
+            || _manifest.ActionRepeat != _actionRepeat)
         {
             GD.PushWarning(
                 $"[RL] Training manifest settings differed from scene academy settings. " +
-                $"Using scene values: batch={_batchSize}, checkpoint_interval={_checkpointInterval}, action_repeat={_actionRepeat}, simulation_speed={simulationSpeed:0.###}.");
+                $"Using scene values: batch={_batchSize}, checkpoint_interval={_checkpointInterval}, action_repeat={_actionRepeat}.");
         }
 
         RLTrainingConfig? trainingConfig = null;
@@ -591,6 +600,7 @@ public partial class TrainingBootstrap : Node
     public override void _ExitTree()
     {
         Engine.TimeScale = _previousTimeScale;
+        Engine.PhysicsTicksPerSecond = _previousPhysicsTicksPerSecond;
         Engine.MaxPhysicsStepsPerFrame = _previousMaxPhysicsStepsPerFrame;
 
         if (_manifest is null)
