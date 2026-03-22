@@ -11,17 +11,22 @@ public partial class WallClimbAgent : RLAgent3D
     private WallClimbPlayer? _player;
     private WallClimbArenaController? _arena;
     private RLRaycastSensor3D? _sensor;
+    private RigidBody3D? _pushBox;
 
-    private const float PosNorm = 10f;
-    private const float VelNorm = 10f;
+    // Arena is roughly ±5 in X/Z, 0–4 in Y.
+    // Positions use asymmetric Y bounds (never below 0) but symmetric X/Z.
+    private const float PosXZ  = 5f;   // half-extent of arena in X and Z
+    private const float PosYMax = 5f;   // max expected height
+    private const float VelNorm = 6f;   // max expected speed in any axis
     private const float WallHeightNorm = 3.5f;
 
     public override void _Ready()
     {
         base._Ready();
-        _player = GetParent() as WallClimbPlayer;
-        _arena = _player?.GetParent() as WallClimbArenaController;
-        _sensor = GetNodeOrNull<RLRaycastSensor3D>("RLRaycastSensor3D");
+        _player   = GetParent() as WallClimbPlayer;
+        _arena    = _player?.GetParent() as WallClimbArenaController;
+        _sensor   = GetNodeOrNull<RLRaycastSensor3D>("RLRaycastSensor3D");
+        _pushBox  = _arena?.GetNodeOrNull<RigidBody3D>("PushBox");
     }
 
     public override void DefineActions(ActionSpaceBuilder builder)
@@ -55,41 +60,49 @@ public partial class WallClimbAgent : RLAgent3D
 
     public override void CollectObservations(ObservationBuffer obs)
     {
-        _sensor ??= GetNodeOrNull<RLRaycastSensor3D>("RLRaycastSensor3D");
+        _sensor  ??= GetNodeOrNull<RLRaycastSensor3D>("RLRaycastSensor3D");
+        _pushBox ??= _arena?.GetNodeOrNull<RigidBody3D>("PushBox");
         if (_player is null || _arena is null) return;
 
         var playerPos = _player.GlobalPosition;
         var playerVel = _player.PlayerVelocity;
+        var boxPos    = _pushBox?.GlobalPosition ?? Vector3.Zero;
+        var boxVel    = _pushBox?.LinearVelocity ?? Vector3.Zero;
+        var goalPos   = _arena.GoalWorldPosition;
 
-        var pushBox = _arena.GetNodeOrNull<RigidBody3D>("PushBox");
-        var boxPos = pushBox?.GlobalPosition ?? Vector3.Zero;
-        var boxVel = pushBox?.LinearVelocity ?? Vector3.Zero;
-        var goalPos = _arena.GoalWorldPosition;
-        var posNorm = new Vector3(PosNorm, PosNorm, PosNorm);
+        // Symmetric bounds: arena is ±PosXZ in X/Z, 0–PosYMax in Y.
+        var posMin = new Vector3(-PosXZ, 0f,    -PosXZ);
+        var posMax = new Vector3( PosXZ, PosYMax, PosXZ);
+        // Relative vectors can span twice the arena in any axis.
+        var relMin = new Vector3(-PosXZ * 2f, -PosYMax, -PosXZ * 2f);
+        var relMax = new Vector3( PosXZ * 2f,  PosYMax,  PosXZ * 2f);
+        // Velocity is signed.
+        var velMin = new Vector3(-VelNorm, -VelNorm, -VelNorm);
+        var velMax = new Vector3( VelNorm,  VelNorm,  VelNorm);
 
-        // player position (normalized)
-        obs.AddNormalized(playerPos, Vector3.Zero, posNorm);
+        // [0-2] Player position
+        obs.AddNormalized(playerPos, posMin, posMax);
 
-
-        // is_on_floor
+        // [3] Is grounded
         obs.Add(_player.IsGrounded ? 1f : 0f);
 
-        // box position (normalized)
-        obs.AddNormalized(boxPos, Vector3.Zero, posNorm);
+        // [4-6] Box position
+        obs.AddNormalized(boxPos, posMin, posMax);
 
-        // box linear velocity (normalized)
-        obs.AddNormalized(boxVel, Vector3.Zero, new Vector3(VelNorm, VelNorm, VelNorm));
+        // [7-9] Box velocity (signed)
+        obs.AddNormalized(boxVel, velMin, velMax);
 
-        // player velocity (normalized)
-        obs.AddNormalized(playerVel, Vector3.Zero, new Vector3(VelNorm, VelNorm, VelNorm));
+        // [10-12] Player velocity (signed)
+        obs.AddNormalized(playerVel, velMin, velMax);
 
-        // vector player → box
-        var playerToBox = boxPos - playerPos;
-        obs.AddNormalized(playerToBox, Vector3.Zero, posNorm);
+        // [13-15] Vector player → box (signed relative)
+        obs.AddNormalized(boxPos - playerPos, relMin, relMax);
 
-        // vector player → goal
-        var playerToGoal = goalPos - playerPos;
-        obs.AddNormalized(playerToGoal, Vector3.Zero, posNorm);
+        // [16-18] Vector player → goal (signed relative)
+        obs.AddNormalized(goalPos - playerPos, relMin, relMax);
+
+        // [19] Normalised wall height — tells the agent how tall the obstacle is
+        obs.AddNormalized(_arena.CurrentWallHeight, 0f, WallHeightNorm);
 
         // raycast sensor — per ray: [dist, hit_flag] when IncludeHitClass, else [dist]
         // if (_sensor is not null)
@@ -128,9 +141,10 @@ public partial class WallClimbAgent : RLAgent3D
 
     public override void OnEpisodeBegin()
     {
-        _player ??= GetParent() as WallClimbPlayer;
-        _arena ??= _player?.GetParent() as WallClimbArenaController;
-        _sensor ??= GetNodeOrNull<RLRaycastSensor3D>("RLRaycastSensor3D");
+        _player  ??= GetParent() as WallClimbPlayer;
+        _arena   ??= _player?.GetParent() as WallClimbArenaController;
+        _sensor  ??= GetNodeOrNull<RLRaycastSensor3D>("RLRaycastSensor3D");
+        _pushBox ??= _arena?.GetNodeOrNull<RigidBody3D>("PushBox");
         _arena?.HandleAgentEpisodeBegin();
     }
 

@@ -1,0 +1,126 @@
+[gd_scene format=3 uid="uid://coukl5mxo6pw2"]
+
+[ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/Core/RLAcademy.cs" id="1_rlacad"]
+[ext_resource type="Script" uid="uid://ire111rjxew5" path="res://addons/rl_agent_plugin/Resources/Config/RLPPOConfig.cs" id="2_ppocfg"]
+[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl_agent_plugin/Resources/Config/RLPolicyGroupConfig.cs" id="3_pgcfg"]
+[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl_agent_plugin/Resources/Config/RLTrainingConfig.cs" id="4_trcfg"]
+[ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl_agent_plugin/Resources/Config/RLRunConfig.cs" id="5_runcfg"]
+[ext_resource type="Script" uid="uid://do7qa2y5uje2v" path="res://demo/04 MoveToTarget3D/Scripts/MoveToTarget3DPlayer.cs" id="6_player"]
+[ext_resource type="Script" uid="uid://w0fm3b0ljdgi" path="res://demo/04 MoveToTarget3D/Scripts/MoveToTarget3DAgent.cs" id="7_agent"]
+
+[sub_resource type="Resource" id="PpoConfig"]
+script = ExtResource("2_ppocfg")
+RolloutLength = 512
+MiniBatchSize = 128
+LearningRate = 0.0003
+Gamma = 0.95
+metadata/_custom_type_script = "uid://ire111rjxew5"
+
+[sub_resource type="Resource" id="TrainingConfig"]
+script = ExtResource("4_trcfg")
+Algorithm = SubResource("PpoConfig")
+
+[sub_resource type="Resource" id="RunConfig"]
+script = ExtResource("5_runcfg")
+RunPrefix = "MoveToTarget3D"
+SimulationSpeed = 4.0
+BatchSize = 4
+ActionRepeat = 2
+CheckpointInterval = 50
+
+[sub_resource type="BoxMesh" id="PlatformMesh"]
+size = Vector3(10, 0.2, 10)
+
+[sub_resource type="StandardMaterial3D" id="PlatformMat"]
+albedo_color = Color(0.35, 0.55, 0.35, 1)
+
+[sub_resource type="BoxShape3D" id="PlatformShape"]
+size = Vector3(10, 0.2, 10)
+
+[sub_resource type="SphereMesh" id="TargetMesh"]
+radius = 0.3
+height = 0.6
+
+[sub_resource type="StandardMaterial3D" id="TargetMat"]
+albedo_color = Color(1, 0.15, 0.15, 1)
+emission_enabled = true
+emission = Color(1, 0.15, 0.15, 1)
+emission_energy_multiplier = 1.5
+
+[sub_resource type="CapsuleMesh" id="PlayerMesh"]
+radius = 0.3
+height = 0.8
+
+[sub_resource type="StandardMaterial3D" id="PlayerMat"]
+albedo_color = Color(0.2, 0.4, 1, 1)
+
+[sub_resource type="CapsuleShape3D" id="PlayerShape"]
+radius = 0.3
+height = 0.8
+
+[sub_resource type="Resource" id="PolicyGroupConfig"]
+resource_name = "mtt3d"
+script = ExtResource("3_pgcfg")
+AgentId = "mtt3d"
+InferenceModelPath = "res://demo/04 MoveToTarget3D/model/mtt3d.rlmodel"
+
+[sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
+
+[sub_resource type="Sky" id="Sky"]
+sky_material = SubResource("SkyMat")
+
+[sub_resource type="Environment" id="Env"]
+background_mode = 2
+sky = SubResource("Sky")
+
+[node name="MoveToTarget3D" type="Node3D" unique_id=829468454]
+
+[node name="Academy" type="Node" parent="." unique_id=1737278100]
+script = ExtResource("1_rlacad")
+TrainingConfig = SubResource("TrainingConfig")
+MaxEpisodeSteps = 500
+RunConfig = SubResource("RunConfig")
+EnableSpyOverlay = true
+
+[node name="Arena" type="Node3D" parent="." unique_id=1847465851]
+
+[node name="Platform" type="StaticBody3D" parent="Arena" unique_id=438943808]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="Arena/Platform" unique_id=1181839741]
+mesh = SubResource("PlatformMesh")
+surface_material_override/0 = SubResource("PlatformMat")
+
+[node name="Collision" type="CollisionShape3D" parent="Arena/Platform" unique_id=1755237522]
+shape = SubResource("PlatformShape")
+
+[node name="TargetMarker" type="MeshInstance3D" parent="Arena" unique_id=689993769]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0.1, 3)
+mesh = SubResource("TargetMesh")
+surface_material_override/0 = SubResource("TargetMat")
+
+[node name="Player" type="CharacterBody3D" parent="Arena" unique_id=68324813]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+script = ExtResource("6_player")
+
+[node name="Mesh" type="MeshInstance3D" parent="Arena/Player" unique_id=3645895]
+mesh = SubResource("PlayerMesh")
+surface_material_override/0 = SubResource("PlayerMat")
+
+[node name="Collision" type="CollisionShape3D" parent="Arena/Player" unique_id=2071788476]
+shape = SubResource("PlayerShape")
+
+[node name="MoveToTarget3DAgent" type="Node3D" parent="Arena/Player" unique_id=2068850462]
+script = ExtResource("7_agent")
+PolicyGroupConfig = SubResource("PolicyGroupConfig")
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1096437881]
+transform = Transform3D(1, 0, 0, 0, 0.7071068, 0.7071068, 0, -0.7071068, 0.7071068, 0, 9, 9)
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1473751443]
+transform = Transform3D(0.8332012, -0.3910088, 0.3910088, 0, 0.7071068, 0.7071068, -0.55297, -0.5891623, 0.5891623, 0, 10, 10)
+light_energy = 1.2
+shadow_enabled = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1918978378]
+environment = SubResource("Env")

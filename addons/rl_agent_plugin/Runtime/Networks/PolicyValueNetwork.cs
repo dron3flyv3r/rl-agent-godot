@@ -10,13 +10,29 @@ internal sealed class PolicyValueNetwork
     private readonly NetworkLayer[] _trunkLayers;
     private readonly DenseLayer _policyHead;
     private readonly DenseLayer _valueHead;
+    private readonly int _continuousActionDims;
 
+    /// <summary>Discrete-action constructor (existing behaviour).</summary>
     public PolicyValueNetwork(int observationSize, int actionCount, RLNetworkGraph graph)
+        : this(observationSize, actionCount, 0, graph) { }
+
+    /// <summary>
+    /// Unified constructor.
+    /// Pass <paramref name="continuousActionDims"/> &gt; 0 for a continuous Gaussian policy
+    /// (policy head outputs [mean_0..D-1, logStd_0..D-1]).
+    /// Pass <paramref name="actionCount"/> &gt; 0 for a discrete softmax policy.
+    /// Exactly one of the two should be non-zero.
+    /// </summary>
+    public PolicyValueNetwork(int observationSize, int actionCount, int continuousActionDims, RLNetworkGraph graph)
     {
+        _continuousActionDims = continuousActionDims;
         _trunkLayers = graph.BuildTrunkLayers(observationSize);
         var lastSize = graph.OutputSize(observationSize);
-        _policyHead = new DenseLayer(lastSize, actionCount, null, graph.Optimizer);
-        _valueHead  = new DenseLayer(lastSize, 1,           null, graph.Optimizer);
+        // Continuous: [mean_0..D-1, logStd_0..D-1] = 2*D outputs
+        // Discrete:   actionCount logits
+        var policyOutSize = continuousActionDims > 0 ? continuousActionDims * 2 : actionCount;
+        _policyHead = new DenseLayer(lastSize, policyOutSize, null, graph.Optimizer);
+        _valueHead  = new DenseLayer(lastSize, 1,             null, graph.Optimizer);
     }
 
     public NetworkInference Infer(float[] observation)
@@ -49,33 +65,77 @@ internal sealed class PolicyValueNetwork
     public void ApplyGradients(TrainingSample sample, RLTrainerConfig config)
     {
         var inference = Infer(sample.Observation);
-        var probs = Softmax(inference.Logits);
-        var actionProbability = Math.Clamp(probs[sample.Action], 1e-6f, 1.0f);
-        var ratio = Mathf.Exp(Mathf.Log(actionProbability) - sample.OldLogProbability);
-        var unclippedObjective = ratio * sample.Advantage;
-        var clippedRatio = Math.Clamp(ratio, 1.0f - config.ClipEpsilon, 1.0f + config.ClipEpsilon);
-        var clippedObjective = clippedRatio * sample.Advantage;
+        float[] logitsGradient;
 
-        var logitsGradient = new float[probs.Length];
-        if (unclippedObjective <= clippedObjective)
+        if (_continuousActionDims > 0)
         {
-            for (var index = 0; index < probs.Length; index++)
-                logitsGradient[index] = ratio * probs[index] * sample.Advantage;
-            logitsGradient[sample.Action] -= ratio * sample.Advantage;
-        }
-
-        if (config.EntropyCoefficient > 0f)
-        {
-            var entropy = 0f;
-            foreach (var p in probs)
+            var D = _continuousActionDims;
+            var actorOut = inference.Logits;
+            var newLogProb = 0f;
+            var eps = new float[D];
+            var std = new float[D];
+            for (var d = 0; d < D; d++)
             {
-                if (p > 1e-6f) entropy -= p * Mathf.Log(p);
+                var a    = sample.ContinuousActions[d];
+                var u    = Atanh(a);
+                var lStd = Math.Clamp(actorOut[D + d], -20f, 2f);
+                std[d]   = MathF.Exp(lStd);
+                eps[d]   = (u - actorOut[d]) / std[d];
+                newLogProb += -0.5f * eps[d] * eps[d] - lStd
+                              - 0.5f * MathF.Log(2f * MathF.PI)
+                              - MathF.Log(1f - a * a + 1e-6f);
+            }
+            var ratio          = MathF.Exp(newLogProb - sample.OldLogProbability);
+            var clippedRatio   = Math.Clamp(ratio, 1f - config.ClipEpsilon, 1f + config.ClipEpsilon);
+            var unclipped      = ratio * sample.Advantage;
+            var clipped        = clippedRatio * sample.Advantage;
+            logitsGradient = new float[D * 2];
+            if (unclipped <= clipped)
+            {
+                var policyScale = ratio * sample.Advantage;
+                for (var d = 0; d < D; d++)
+                {
+                    logitsGradient[d]     = -policyScale * (eps[d] / std[d]);
+                    logitsGradient[D + d] = -policyScale * (eps[d] * eps[d] - 1f)
+                                            - config.EntropyCoefficient;
+                }
+            }
+            else if (config.EntropyCoefficient > 0f)
+            {
+                for (var d = 0; d < D; d++)
+                    logitsGradient[D + d] = -config.EntropyCoefficient;
+            }
+        }
+        else
+        {
+            var probs = Softmax(inference.Logits);
+            var actionProbability = Math.Clamp(probs[sample.Action], 1e-6f, 1.0f);
+            var ratio = Mathf.Exp(Mathf.Log(actionProbability) - sample.OldLogProbability);
+            var unclippedObjective = ratio * sample.Advantage;
+            var clippedRatio = Math.Clamp(ratio, 1.0f - config.ClipEpsilon, 1.0f + config.ClipEpsilon);
+            var clippedObjective = clippedRatio * sample.Advantage;
+
+            logitsGradient = new float[probs.Length];
+            if (unclippedObjective <= clippedObjective)
+            {
+                for (var index = 0; index < probs.Length; index++)
+                    logitsGradient[index] = ratio * probs[index] * sample.Advantage;
+                logitsGradient[sample.Action] -= ratio * sample.Advantage;
             }
 
-            for (var j = 0; j < logitsGradient.Length; j++)
+            if (config.EntropyCoefficient > 0f)
             {
-                var logPj = probs[j] > 1e-6f ? Mathf.Log(probs[j]) : Mathf.Log(1e-6f);
-                logitsGradient[j] += config.EntropyCoefficient * probs[j] * (entropy + logPj);
+                var entropy = 0f;
+                foreach (var p in probs)
+                {
+                    if (p > 1e-6f) entropy -= p * Mathf.Log(p);
+                }
+
+                for (var j = 0; j < logitsGradient.Length; j++)
+                {
+                    var logPj = probs[j] > 1e-6f ? Mathf.Log(probs[j]) : Mathf.Log(1e-6f);
+                    logitsGradient[j] += config.EntropyCoefficient * probs[j] * (entropy + logPj);
+                }
             }
         }
 
@@ -114,38 +174,100 @@ internal sealed class PolicyValueNetwork
         foreach (var sample in samples)
         {
             var inference = Infer(sample.Observation);
-            var probs = Softmax(inference.Logits);
-            var actionProbability = Math.Clamp(probs[sample.Action], 1e-6f, 1.0f);
-            var logProbability = Mathf.Log(actionProbability);
-            var ratio = Mathf.Exp(logProbability - sample.OldLogProbability);
-            var clippedRatio = Math.Clamp(ratio, 1.0f - config.ClipEpsilon, 1.0f + config.ClipEpsilon);
-            var unclippedObjective = ratio * sample.Advantage;
-            var clippedObjective = clippedRatio * sample.Advantage;
-            totalPolicyLoss += -Math.Min(unclippedObjective, clippedObjective);
+            float[] logitsGradient;
 
-            if (Mathf.Abs(ratio - 1.0f) > config.ClipEpsilon) clipCount++;
-
-            var logitsGradient = new float[probs.Length];
-            if (unclippedObjective <= clippedObjective)
+            if (_continuousActionDims > 0)
             {
-                for (var index = 0; index < probs.Length; index++)
-                    logitsGradient[index] = ratio * probs[index] * sample.Advantage;
-                logitsGradient[sample.Action] -= ratio * sample.Advantage;
-            }
+                // ── Continuous Gaussian policy (tanh-squashed) ─────────────────────
+                var D = _continuousActionDims;
+                var actorOut = inference.Logits; // [mean_0..D-1, logStd_0..D-1]
+                var newLogProb = 0f;
+                var entropy = 0f;
 
-            var entropy = 0f;
-            foreach (var probability in probs)
-            {
-                if (probability > 1e-6f) entropy -= probability * Mathf.Log(probability);
-            }
-
-            totalEntropy += entropy;
-            if (config.EntropyCoefficient > 0f)
-            {
-                for (var j = 0; j < logitsGradient.Length; j++)
+                // Pre-compute per-dimension values; reused for both loss and gradient.
+                var eps = new float[D];
+                var std = new float[D];
+                for (var d = 0; d < D; d++)
                 {
-                    var logPj = probs[j] > 1e-6f ? Mathf.Log(probs[j]) : Mathf.Log(1e-6f);
-                    logitsGradient[j] += config.EntropyCoefficient * probs[j] * (entropy + logPj);
+                    var a      = sample.ContinuousActions[d];
+                    var u      = Atanh(a);
+                    var lStd   = Math.Clamp(actorOut[D + d], -20f, 2f);
+                    std[d]     = MathF.Exp(lStd);
+                    eps[d]     = (u - actorOut[d]) / std[d];
+                    newLogProb += -0.5f * eps[d] * eps[d] - lStd
+                                  - 0.5f * MathF.Log(2f * MathF.PI)
+                                  - MathF.Log(1f - a * a + 1e-6f);
+                    // Gaussian entropy per dim: 0.5*(1+log(2π)) + logStd
+                    entropy += 0.5f * (1f + MathF.Log(2f * MathF.PI)) + lStd;
+                }
+
+                totalEntropy += entropy;
+
+                var ratio          = MathF.Exp(newLogProb - sample.OldLogProbability);
+                var clippedRatio   = Math.Clamp(ratio, 1f - config.ClipEpsilon, 1f + config.ClipEpsilon);
+                var unclipped      = ratio * sample.Advantage;
+                var clipped        = clippedRatio * sample.Advantage;
+                totalPolicyLoss   += -Math.Min(unclipped, clipped);
+                if (MathF.Abs(ratio - 1f) > config.ClipEpsilon) clipCount++;
+
+                logitsGradient = new float[D * 2];
+                if (unclipped <= clipped) // unclipped objective is smaller → gradient is non-zero
+                {
+                    // Gradient of -(L_PPO + α*H) w.r.t. [mean_d, logStd_d]:
+                    //   ∂(-L_PPO)/∂mean_d    = -ratio*A * (eps_d / std_d)
+                    //   ∂(-L_PPO)/∂logStd_d  = -ratio*A * (eps_d² - 1)
+                    //   ∂(-α*H) /∂logStd_d   = -α               (H = Σ[logStd + const])
+                    var policyScale = ratio * sample.Advantage;
+                    for (var d = 0; d < D; d++)
+                    {
+                        logitsGradient[d]     = -policyScale * (eps[d] / std[d]);
+                        logitsGradient[D + d] = -policyScale * (eps[d] * eps[d] - 1f)
+                                                - config.EntropyCoefficient;
+                    }
+                }
+                else if (config.EntropyCoefficient > 0f)
+                {
+                    // Clipped: only entropy gradient applies.
+                    for (var d = 0; d < D; d++)
+                        logitsGradient[D + d] = -config.EntropyCoefficient;
+                }
+            }
+            else
+            {
+                // ── Discrete softmax policy (existing path) ────────────────────────
+                var probs = Softmax(inference.Logits);
+                var actionProbability = Math.Clamp(probs[sample.Action], 1e-6f, 1.0f);
+                var logProbability = Mathf.Log(actionProbability);
+                var ratio = Mathf.Exp(logProbability - sample.OldLogProbability);
+                var clippedRatio = Math.Clamp(ratio, 1.0f - config.ClipEpsilon, 1.0f + config.ClipEpsilon);
+                var unclippedObjective = ratio * sample.Advantage;
+                var clippedObjective = clippedRatio * sample.Advantage;
+                totalPolicyLoss += -Math.Min(unclippedObjective, clippedObjective);
+
+                if (Mathf.Abs(ratio - 1.0f) > config.ClipEpsilon) clipCount++;
+
+                logitsGradient = new float[probs.Length];
+                if (unclippedObjective <= clippedObjective)
+                {
+                    for (var index = 0; index < probs.Length; index++)
+                        logitsGradient[index] = ratio * probs[index] * sample.Advantage;
+                    logitsGradient[sample.Action] -= ratio * sample.Advantage;
+                }
+
+                var entropy = 0f;
+                foreach (var probability in probs)
+                {
+                    if (probability > 1e-6f) entropy -= probability * Mathf.Log(probability);
+                }
+
+                totalEntropy += entropy;
+                if (config.EntropyCoefficient > 0f)
+                {
+                    for (var j = 0; j < logitsGradient.Length; j++)
+                    {
+                        var logPj = probs[j] > 1e-6f ? Mathf.Log(probs[j]) : Mathf.Log(1e-6f);
+                        logitsGradient[j] += config.EntropyCoefficient * probs[j] * (entropy + logPj);
+                    }
                 }
             }
 
@@ -258,6 +380,20 @@ internal sealed class PolicyValueNetwork
         _valueHead.LoadSerialized(checkpoint.WeightBuffer,  ref wi, checkpoint.LayerShapeBuffer, ref si, isLegacy);
     }
 
+    /// <summary>
+    /// Deterministic continuous action: tanh(mean).
+    /// Only valid when this network was built with continuousActionDims &gt; 0.
+    /// </summary>
+    public float[] SelectDeterministicContinuousAction(float[] observation)
+    {
+        var actorOut = Infer(observation).Logits;
+        var D = _continuousActionDims;
+        var action = new float[D];
+        for (var i = 0; i < D; i++)
+            action[i] = MathF.Tanh(actorOut[i]);
+        return action;
+    }
+
     public int SelectGreedyAction(float[] observation)
     {
         var logits = Infer(observation).Logits;
@@ -293,6 +429,13 @@ internal sealed class PolicyValueNetwork
         }
 
         return actions;
+    }
+
+    /// <summary>Inverse tanh, clamped to avoid ±∞ at the boundaries.</summary>
+    private static float Atanh(float x)
+    {
+        x = Math.Clamp(x, -1f + 1e-6f, 1f - 1e-6f);
+        return 0.5f * MathF.Log((1f + x) / (1f - x));
     }
 
     private static float[] Softmax(float[] logits)
