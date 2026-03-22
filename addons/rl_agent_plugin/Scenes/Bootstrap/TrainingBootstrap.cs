@@ -321,16 +321,16 @@ public partial class TrainingBootstrap : Node
             var continuousDims = firstAgent.GetContinuousActionDimensions();
             var actionDefinitions = firstAgent.GetActionSpace();
 
-            if (algorithm == RLAlgorithmKind.PPO && continuousDims > 0)
+            if (algorithm == RLAlgorithmKind.PPO && discreteCount <= 0 && continuousDims <= 0)
             {
-                GD.PushError($"[RL] Group '{groupId}': PPO does not support continuous actions.");
+                GD.PushError($"[RL] Group '{groupId}': PPO requires at least one discrete or continuous action.");
                 GetTree().Quit(1);
                 return;
             }
 
-            if (algorithm == RLAlgorithmKind.PPO && discreteCount <= 0)
+            if (algorithm == RLAlgorithmKind.PPO && discreteCount > 0 && continuousDims > 0)
             {
-                GD.PushError($"[RL] Group '{groupId}': PPO requires at least one discrete action.");
+                GD.PushError($"[RL] Group '{groupId}': PPO does not support mixing discrete and continuous actions.");
                 GetTree().Quit(1);
                 return;
             }
@@ -366,9 +366,16 @@ public partial class TrainingBootstrap : Node
                     return;
                 }
 
-                if (algorithm == RLAlgorithmKind.PPO && agent.GetDiscreteActionCount() != discreteCount)
+                if (algorithm == RLAlgorithmKind.PPO && discreteCount > 0 && agent.GetDiscreteActionCount() != discreteCount)
                 {
                     GD.PushError($"[RL] Group '{groupId}': all PPO agents must have the same discrete action count.");
+                    GetTree().Quit(1);
+                    return;
+                }
+
+                if (algorithm == RLAlgorithmKind.PPO && continuousDims > 0 && agent.GetContinuousActionDimensions() != continuousDims)
+                {
+                    GD.PushError($"[RL] Group '{groupId}': all PPO agents must have the same continuous action dimensions.");
                     GetTree().Quit(1);
                     return;
                 }

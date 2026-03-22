@@ -49,6 +49,7 @@ public static class InferencePolicyFactory
             : new PpoInferencePolicy(
                 checkpoint.ObservationSize,
                 checkpoint.DiscreteActionCount,
+                checkpoint.ContinuousActionDimensions,
                 graph);
     }
 

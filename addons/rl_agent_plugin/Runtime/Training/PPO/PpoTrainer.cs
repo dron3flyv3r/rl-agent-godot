@@ -22,7 +22,11 @@ public sealed class PpoTrainer : ITrainer, IAsyncTrainer
     {
         _config = config;
         _trainerConfig = config.TrainerConfig;
-        _network = new PolicyValueNetwork(config.ObservationSize, config.DiscreteActionCount, config.NetworkGraph);
+        _network = new PolicyValueNetwork(
+            config.ObservationSize,
+            config.DiscreteActionCount,
+            config.ContinuousActionDimensions,
+            config.NetworkGraph);
         _rng.Randomize();
     }
 
@@ -31,10 +35,13 @@ public sealed class PpoTrainer : ITrainer, IAsyncTrainer
     public PolicyDecision SampleAction(float[] observation)
     {
         var inference = _network.Infer(observation);
+
+        if (_config.ContinuousActionDimensions > 0)
+            return SampleContinuousDecision(inference.Logits, inference.Value);
+
         var probabilities = Softmax(inference.Logits);
         var sampledAction = SampleFromProbabilities(probabilities);
         var logProbability = Mathf.Log(Math.Max(1e-6f, probabilities[sampledAction]));
-
         return new PolicyDecision
         {
             DiscreteAction = sampledAction,
@@ -48,6 +55,14 @@ public sealed class PpoTrainer : ITrainer, IAsyncTrainer
     {
         var inference = _network.InferBatch(observations);
         var decisions = new PolicyDecision[observations.BatchSize];
+
+        if (_config.ContinuousActionDimensions > 0)
+        {
+            for (var b = 0; b < observations.BatchSize; b++)
+                decisions[b] = SampleContinuousDecision(inference.Logits.CopyRow(b), inference.Values[b]);
+            return decisions;
+        }
+
         for (var batchIndex = 0; batchIndex < observations.BatchSize; batchIndex++)
         {
             var probabilities = Softmax(inference.Logits.CopyRow(batchIndex));
@@ -63,6 +78,38 @@ public sealed class PpoTrainer : ITrainer, IAsyncTrainer
         }
 
         return decisions;
+    }
+
+    private PolicyDecision SampleContinuousDecision(float[] actorOut, float value)
+    {
+        var D = _config.ContinuousActionDimensions;
+        var action  = new float[D];
+        var logProb = 0f;
+        var entropy = 0f;
+
+        for (var d = 0; d < D; d++)
+        {
+            var mean   = actorOut[d];
+            var logStd = Math.Clamp(actorOut[D + d], -20f, 2f);
+            var std    = MathF.Exp(logStd);
+            var eps    = SampleNormal();
+            var u      = mean + std * eps;
+            var a      = MathF.Tanh(u);
+            action[d]  = a;
+            logProb   += -0.5f * eps * eps - logStd
+                         - 0.5f * MathF.Log(2f * MathF.PI)
+                         - MathF.Log(1f - a * a + 1e-6f);
+            entropy   += 0.5f * (1f + MathF.Log(2f * MathF.PI)) + logStd;
+        }
+
+        return new PolicyDecision
+        {
+            DiscreteAction = -1,
+            ContinuousActions = action,
+            Value = value,
+            LogProbability = logProb,
+            Entropy = entropy,
+        };
     }
 
     public float EstimateValue(float[] observation)
@@ -81,6 +128,9 @@ public sealed class PpoTrainer : ITrainer, IAsyncTrainer
         {
             Observation = t.Observation.ToArray(),
             Action = t.DiscreteAction,
+            ContinuousActions = t.ContinuousActions.Length > 0
+                ? (float[])t.ContinuousActions.Clone()
+                : Array.Empty<float>(),
             Reward = t.Reward,
             Done = t.Done,
             OldLogProbability = t.OldLogProbability,
@@ -163,7 +213,10 @@ public sealed class PpoTrainer : ITrainer, IAsyncTrainer
 
         // Lazy-create shadow network with identical architecture.
         _shadowNetwork ??= new PolicyValueNetwork(
-            _config.ObservationSize, _config.DiscreteActionCount, _config.NetworkGraph);
+            _config.ObservationSize,
+            _config.DiscreteActionCount,
+            _config.ContinuousActionDimensions,
+            _config.NetworkGraph);
 
         // Copy live weights into shadow so backprop works on an isolated copy.
         _network.CopyWeightsTo(_shadowNetwork);
@@ -279,6 +332,7 @@ public sealed class PpoTrainer : ITrainer, IAsyncTrainer
             {
                 Observation = transition.Observation,
                 Action = transition.Action,
+                ContinuousActions = transition.ContinuousActions,
                 Return = returns[index],
                 Advantage = advantages[index],
                 OldLogProbability = transition.OldLogProbability,
@@ -303,6 +357,14 @@ public sealed class PpoTrainer : ITrainer, IAsyncTrainer
         {
             sample.Advantage = (sample.Advantage - (float)mean) / stdDev;
         }
+    }
+
+    private float SampleNormal()
+    {
+        // Box-Muller transform
+        var u1 = Math.Max(_rng.Randf(), 1e-10f);
+        var u2 = _rng.Randf();
+        return Mathf.Sqrt(-2f * Mathf.Log(u1)) * Mathf.Cos(2f * Mathf.Pi * u2);
     }
 
     private int SampleFromProbabilities(float[] probabilities)
@@ -386,6 +448,7 @@ public sealed class PpoTrainer : ITrainer, IAsyncTrainer
     {
         public float[] Observation { get; init; } = Array.Empty<float>();
         public int Action { get; init; }
+        public float[] ContinuousActions { get; init; } = Array.Empty<float>();
         public float Reward { get; init; }
         public bool Done { get; init; }
         public float OldLogProbability { get; init; }
@@ -398,6 +461,7 @@ public sealed class TrainingSample
 {
     public float[] Observation { get; init; } = Array.Empty<float>();
     public int Action { get; init; }
+    public float[] ContinuousActions { get; init; } = Array.Empty<float>();
     public float Return { get; init; }
     public float Advantage { get; set; }
     public float OldLogProbability { get; init; }

@@ -383,13 +383,6 @@ public partial class RLAcademy : Node
                 continue;
             }
 
-            if (string.Equals(checkpoint.Algorithm, RLCheckpoint.PpoAlgorithm, StringComparison.OrdinalIgnoreCase)
-                && agentContinuousDims > 0)
-            {
-                GD.PushError($"[RLAcademy] Checkpoint for '{agent.AsNode().Name}' is PPO, but the agent expects continuous actions.");
-                continue;
-            }
-
             if (checkpoint.ContinuousActionDimensions > 0 && checkpoint.ContinuousActionDimensions != agentContinuousDims)
             {
                 GD.PushError(
