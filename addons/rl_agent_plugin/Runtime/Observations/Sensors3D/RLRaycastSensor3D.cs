@@ -170,6 +170,10 @@ public partial class RLRaycastSensor3D : Node3D, IObservationSensor, IObservatio
             return;
         }
 
+        // Enable rays only while reading data
+        foreach (var ray in _rays)
+            ray.Enabled = true;
+
         foreach (var ray in _rays)
         {
             if (ray.IsColliding())
@@ -190,6 +194,10 @@ public partial class RLRaycastSensor3D : Node3D, IObservationSensor, IObservatio
                 if (IncludeHitClass) buffer.Add(0f);
             }
         }
+
+        // Disable rays after reading data
+        foreach (var ray in _rays)
+            ray.Enabled = false;
     }
 
     private void WriteZeros(ObservationBuffer buffer)
@@ -237,7 +245,7 @@ public partial class RLRaycastSensor3D : Node3D, IObservationSensor, IObservatio
                     CollisionMask         = _collisionMask,
                     CollideWithAreas      = _collideWithAreas,
                     CollideWithBodies     = _collideWithBodies,
-                    Enabled               = true,
+                    Enabled               = false,
                     Visible               = _showDebug,
                     DebugShapeThickness   = 2,
                     DebugShapeCustomColor = new Color(0.2f, 1f, 0.2f),

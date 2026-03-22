@@ -65,41 +65,35 @@ public partial class WallClimbAgent : RLAgent3D
         var boxPos = pushBox?.GlobalPosition ?? Vector3.Zero;
         var boxVel = pushBox?.LinearVelocity ?? Vector3.Zero;
         var goalPos = _arena.GoalWorldPosition;
+        var posNorm = new Vector3(PosNorm, PosNorm, PosNorm);
 
         // player position (normalized)
-        obs.Add(playerPos.X / PosNorm);
-        obs.Add(playerPos.Y / PosNorm);
-        obs.Add(playerPos.Z / PosNorm);
+        obs.AddNormalized(playerPos, Vector3.Zero, posNorm);
 
 
         // is_on_floor
         obs.Add(_player.IsGrounded ? 1f : 0f);
 
         // box position (normalized)
-        obs.Add(boxPos.X / PosNorm);
-        obs.Add(boxPos.Y / PosNorm);
-        obs.Add(boxPos.Z / PosNorm);
+        obs.AddNormalized(boxPos, Vector3.Zero, posNorm);
 
         // box linear velocity (normalized)
-        obs.Add(boxVel.X / VelNorm);
-        obs.Add(boxVel.Y / VelNorm);
-        obs.Add(boxVel.Z / VelNorm);
+        obs.AddNormalized(boxVel, Vector3.Zero, new Vector3(VelNorm, VelNorm, VelNorm));
+
+        // player velocity (normalized)
+        obs.AddNormalized(playerVel, Vector3.Zero, new Vector3(VelNorm, VelNorm, VelNorm));
 
         // vector player → box
         var playerToBox = boxPos - playerPos;
-        obs.Add(playerToBox.X / PosNorm);
-        obs.Add(playerToBox.Y / PosNorm);
-        obs.Add(playerToBox.Z / PosNorm);
+        obs.AddNormalized(playerToBox, Vector3.Zero, posNorm);
 
         // vector player → goal
         var playerToGoal = goalPos - playerPos;
-        obs.Add(playerToGoal.X / PosNorm);
-        obs.Add(playerToGoal.Y / PosNorm);
-        obs.Add(playerToGoal.Z / PosNorm);
+        obs.AddNormalized(playerToGoal, Vector3.Zero, posNorm);
 
         // raycast sensor — per ray: [dist, hit_flag] when IncludeHitClass, else [dist]
-        if (_sensor is not null)
-            obs.AddSensor("rays", _sensor);
+        // if (_sensor is not null)
+        //     obs.AddSensor("rays", _sensor);
     }
 
     public override void OnStep()

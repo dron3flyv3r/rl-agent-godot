@@ -225,9 +225,7 @@ public partial class TrainingBootstrap : Node
                     trainingConfig = GD.Load<RLTrainingConfig>(_manifest.TrainingConfigPath);
                 }
 
-                trainerConfig = academy.ResolveTrainerConfig()
-                    ?? trainingConfig?.ToTrainerConfig()
-                    ?? GD.Load<RLTrainerConfig>(_manifest.TrainerConfigPath);
+                trainerConfig = trainingConfig?.ToTrainerConfig();
 
                 _trainingConfig = trainingConfig;
                 _trainerConfig  = trainerConfig;
@@ -288,9 +286,20 @@ public partial class TrainingBootstrap : Node
         }
 
         var agents = _academies.SelectMany(a => a.GetAgents(RLAgentControlMode.Train)).ToList();
-        if (trainerConfig is null || agents.Count == 0)
+        if (trainerConfig is null)
         {
-            GD.PushError("Training scene is missing RL configuration or agents.");
+            GD.PushError(
+                "[RL] Missing trainer configuration. Assign RLAcademy.TrainingConfig with a non-null Algorithm, " +
+                "then relaunch training.");
+            GetTree().Quit(1);
+            return;
+        }
+
+        if (agents.Count == 0)
+        {
+            GD.PushError(
+                "[RL] No trainable agents found. Ensure at least one agent is set to Train or Auto control mode " +
+                "and has a PolicyGroupConfig binding.");
             GetTree().Quit(1);
             return;
         }
@@ -417,6 +426,8 @@ public partial class TrainingBootstrap : Node
             // In quick-test mode, seed the curriculum to the debug value so OnEpisodeBegin sees the right difficulty.
             if (_quickTestMode && environment.Academy.DebugCurriculumProgress > 0f)
                 environment.Academy.SetCurriculumProgress(environment.Academy.DebugCurriculumProgress);
+            else if (!_quickTestMode)
+                environment.Academy.SetCurriculumProgress(0f);
 
             if (!TryInitializeEnvironment(environment, out var initializationError))
             {
@@ -577,7 +588,7 @@ public partial class TrainingBootstrap : Node
             }
         }
 
-        var trainerConfig = _academies.Count > 0 ? _academies[0].ResolveTrainerConfig() : null;
+        var trainerConfig = _trainerConfig;
         if (trainerConfig is not null && _totalSteps % Math.Max(1, trainerConfig.StatusWriteIntervalSteps) == 0)
         {
             var totalEpisodes = _episodeCountByGroup.Values.Sum();

@@ -5,7 +5,7 @@ namespace RlAgentPlugin.Demo;
 public partial class WallClimbArenaController : Node3D
 {
     [Export] public float WallHeightMin { get; set; } = 0f;
-    [Export] public float WallHeightMax { get; set; } = 1.5f;
+    [Export] public float WallHeightMax { get; set; } = 3.0f;
 
     // Spawn positions
     private static readonly Vector3 PlayerSpawn = new(-3f, 0.5f, 0f);
@@ -22,7 +22,6 @@ public partial class WallClimbArenaController : Node3D
     private RigidBody3D? _pushBox;
     private Area3D? _goal;
 
-    private float _targetWallHeight;
     private float _accumulatedReward;
     private readonly System.Collections.Generic.Dictionary<string, float> _rewardBreakdown = new();
     private Vector3 _wallBasePosition;
@@ -57,19 +56,16 @@ public partial class WallClimbArenaController : Node3D
         _pushBox = GetNodeOrNull<RigidBody3D>("PushBox");
         _goal = GetNodeOrNull<Area3D>("Goal");
         CaptureWallAnchor();
-        ApplyCurriculumProgress(0f);
     }
 
     public void ApplyCurriculumProgress(float p)
     {
         CurriculumProgress = Mathf.Clamp(p, 0f, 1f);
-        _targetWallHeight = Mathf.Lerp(WallHeightMin, WallHeightMax, CurriculumProgress);
+        SetWallHeight(Mathf.Lerp(WallHeightMin, WallHeightMax, CurriculumProgress));
     }
 
     public void HandleAgentEpisodeBegin()
     {
-        SetWallHeight(_targetWallHeight);
-
         // Reset player
         if (_player is not null)
         {
@@ -113,6 +109,12 @@ public partial class WallClimbArenaController : Node3D
 
         // Player-to-box proximity shaping
         var playerToBoxDist = playerPos.DistanceTo(boxPos);
+        if (_prevPlayerToBoxDist < float.MaxValue)
+        {
+            var delta2 = _prevPlayerToBoxDist - playerToBoxDist;
+            if (delta2 != 0f)
+                AccumulateReward(delta2 * ProgressRewardScale, "player_to_box");
+        }
         _prevPlayerToBoxDist = playerToBoxDist;
 
         // Box-toward-wall shaping
@@ -162,7 +164,7 @@ public partial class WallClimbArenaController : Node3D
             if (playerPos.DistanceTo(goalPos) <= GoalReachRadius)
             {
                 IsGoalReached = true;
-                AccumulateReward(1.0f, "goal_reached");
+                AccumulateReward(2.0f, "goal_reached");
             }
         }
     }

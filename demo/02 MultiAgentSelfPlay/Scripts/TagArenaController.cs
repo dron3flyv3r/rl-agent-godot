@@ -10,9 +10,8 @@ public enum StandaloneControlledAgent
 {
     None = 0,
     ChaserA = 1,
-    ChaserB = 2,
-    RunnerA = 3,
-    RunnerB = 4,
+    RunnerA = 2,
+    RunnerB = 3,
 }
 
 public partial class TagArenaController : Node2D
@@ -46,6 +45,7 @@ public partial class TagArenaController : Node2D
     private readonly Dictionary<TagPlayer, Dictionary<string, float>> _stepRewardComponents = new();
     private readonly Dictionary<TagPlayer, bool> _resetRequested = new();
     private readonly Dictionary<TagPlayer, Vector2> _terminalPositions = new();
+    private readonly HashSet<TagPlayer> _taggedRunners = new();
 
     private int _episodeStep;
     private bool _episodeResolved;
@@ -113,6 +113,11 @@ public partial class TagArenaController : Node2D
 
         foreach (var player in _players)
         {
+            if (!IsPlayerActive(player))
+            {
+                continue;
+            }
+
             var beforeDistance = beforeNearestOpponentDistance[player];
             var afterDistance = afterNearestOpponentDistance[player];
 
@@ -130,10 +135,14 @@ public partial class TagArenaController : Node2D
             }
         }
 
-        var tagPair = FindFirstTag(afterPositions);
-        if (tagPair is not null)
+        var tagPairs = FindTags(afterPositions);
+        if (tagPairs.Count > 0)
         {
-            ResolveTag(tagPair.Value.chaser, tagPair.Value.runner, afterPositions);
+            ResolveTags(tagPairs, afterPositions);
+            if (!_episodeResolved && _episodeStep >= Math.Max(1, EpisodeStepLimit))
+            {
+                ResolveTimeout(afterPositions);
+            }
         }
         else if (_episodeStep >= Math.Max(1, EpisodeStepLimit))
         {
@@ -204,6 +213,11 @@ public partial class TagArenaController : Node2D
         return _episodeResolved && !_resetRequested.GetValueOrDefault(player);
     }
 
+    public bool IsPlayerActive(TagPlayer player)
+    {
+        return player.Role != TagAgentRole.Runner || !_taggedRunners.Contains(player);
+    }
+
     public void HandleAgentEpisodeBegin(TagPlayer player)
     {
         if (!_players.Contains(player) || !_episodeResolved || _resetRequested.GetValueOrDefault(player))
@@ -236,6 +250,7 @@ public partial class TagArenaController : Node2D
         _nextEpisodePrepared = false;
         _resolutionMessage = message;
         _terminalPositions.Clear();
+        _taggedRunners.Clear();
 
         foreach (var player in _players)
         {
@@ -258,6 +273,8 @@ public partial class TagArenaController : Node2D
             return;
         }
 
+        _taggedRunners.Clear();
+
         foreach (var (player, spawnPosition) in CreateSpawnPositions())
         {
             player.SetSpawnPosition(spawnPosition);
@@ -273,6 +290,7 @@ public partial class TagArenaController : Node2D
         _nextEpisodePrepared = false;
         _resolutionMessage = "New episode.";
         _terminalPositions.Clear();
+        _taggedRunners.Clear();
 
         foreach (var player in _players)
         {
@@ -283,34 +301,39 @@ public partial class TagArenaController : Node2D
         UpdateHud();
     }
 
-    private void ResolveTag(TagPlayer chaser, TagPlayer runner, IReadOnlyDictionary<TagPlayer, Vector2> positions)
+    private void ResolveTags(
+        IReadOnlyList<(TagPlayer chaser, TagPlayer runner)> tagPairs,
+        IReadOnlyDictionary<TagPlayer, Vector2> positions)
     {
-        _episodeResolved = true;
-        CaptureTerminalPositions(positions);
-
-        // Only the chaser that made the tag and the runner that was tagged receive the terminal reward.
-        // Other agents receive a smaller shared outcome signal so they're aware the episode ended.
-        foreach (var player in _players)
+        var tagMessages = new List<string>(tagPairs.Count);
+        foreach (var (chaser, runner) in tagPairs)
         {
-            if (player == chaser)
+            if (_taggedRunners.Contains(runner))
             {
-                AddStepReward(player, ChaserTagReward, "tag_reward");
+                continue;
             }
-            else if (player.Role == TagAgentRole.Chaser)
+
+            _taggedRunners.Add(runner);
+            if (runner.Agent is not null)
             {
-                AddStepReward(player, ChaserTagReward * 0.25f, "teammate_tag_reward");
+                runner.Agent.IsDone = true;
             }
-            else if (player == runner)
-            {
-                AddStepReward(player, RunnerTaggedPenalty, "tagged_penalty");
-            }
-            else
-            {
-                AddStepReward(player, RunnerTaggedPenalty * 0.25f, "teammate_tagged_penalty");
-            }
+
+            AddStepReward(chaser, ChaserTagReward, "tag_reward");
+            AddStepReward(runner, RunnerTaggedPenalty, "tagged_penalty");
+            tagMessages.Add($"{chaser.PlayerId} tagged {runner.PlayerId}");
         }
 
-        _resolutionMessage = $"{chaser.PlayerId} tagged {runner.PlayerId} on step {_episodeStep}.";
+        if (AllRunnersTagged())
+        {
+            _episodeResolved = true;
+            CaptureTerminalPositions(positions);
+            _resolutionMessage = $"{string.Join(", ", tagMessages)}. Chaser cleared the arena on step {_episodeStep}.";
+            return;
+        }
+
+        var remainingRunners = CountActiveRunners();
+        _resolutionMessage = $"{string.Join(", ", tagMessages)}. {remainingRunners} runner{(remainingRunners == 1 ? string.Empty : "s")} remaining.";
     }
 
     private void ResolveTimeout(IReadOnlyDictionary<TagPlayer, Vector2> positions)
@@ -324,7 +347,7 @@ public partial class TagArenaController : Node2D
             {
                 AddStepReward(player, ChaserTimeoutPenalty, "timeout_penalty");
             }
-            else
+            else if (IsPlayerActive(player))
             {
                 AddStepReward(player, RunnerTimeoutReward, "timeout_reward");
             }
@@ -383,7 +406,6 @@ public partial class TagArenaController : Node2D
         var controlledAgentId = ControlledAgent switch
         {
             StandaloneControlledAgent.ChaserA => "ChaserA",
-            StandaloneControlledAgent.ChaserB => "ChaserB",
             StandaloneControlledAgent.RunnerA => "RunnerA",
             StandaloneControlledAgent.RunnerB => "RunnerB",
             _ => string.Empty,
@@ -454,10 +476,16 @@ public partial class TagArenaController : Node2D
         var result = new Dictionary<TagPlayer, float>(_players.Count);
         foreach (var player in _players)
         {
+            if (!IsPlayerActive(player))
+            {
+                result[player] = 0f;
+                continue;
+            }
+
             var nearestDistance = float.MaxValue;
             foreach (var other in _players)
             {
-                if (other == player || other.Role == player.Role)
+                if (other == player || other.Role == player.Role || !IsPlayerActive(other))
                 {
                     continue;
                 }
@@ -471,20 +499,31 @@ public partial class TagArenaController : Node2D
         return result;
     }
 
-    private (TagPlayer chaser, TagPlayer runner)? FindFirstTag(IReadOnlyDictionary<TagPlayer, Vector2> positions)
+    private List<(TagPlayer chaser, TagPlayer runner)> FindTags(IReadOnlyDictionary<TagPlayer, Vector2> positions)
     {
+        var tags = new List<(TagPlayer chaser, TagPlayer runner)>();
         foreach (var chaser in _players.Where(player => player.Role == TagAgentRole.Chaser))
         {
+            if (!IsPlayerActive(chaser))
+            {
+                continue;
+            }
+
             foreach (var runner in _players.Where(player => player.Role == TagAgentRole.Runner))
             {
+                if (!IsPlayerActive(runner))
+                {
+                    continue;
+                }
+
                 if (positions[chaser].DistanceTo(positions[runner]) <= TagRadius)
                 {
-                    return (chaser, runner);
+                    tags.Add((chaser, runner));
                 }
             }
         }
 
-        return null;
+        return tags;
     }
 
     private IEnumerable<Vector2> GetRelativePositions(
@@ -495,7 +534,7 @@ public partial class TagArenaController : Node2D
     {
         var selfPosition = positions[self];
         var ordered = _players
-            .Where(player => player != self && player.Role == role)
+            .Where(player => player != self && player.Role == role && IsPlayerActive(player))
             .OrderBy(player => selfPosition.DistanceTo(positions[player]))
             .Take(count)
             .Select(player => positions[player] - selfPosition)
@@ -553,16 +592,30 @@ public partial class TagArenaController : Node2D
 
         if (_statusLabel is not null)
         {
-            _statusLabel.Text = $"Step {_episodeStep}/{EpisodeStepLimit} | {_resolutionMessage}";
+            var runnerCount = Math.Max(1, _players.Count(player => player.Role == TagAgentRole.Runner));
+            _statusLabel.Text = $"Step {_episodeStep}/{EpisodeStepLimit} | {_taggedRunners.Count}/{runnerCount} runners tagged | {_resolutionMessage}";
         }
 
         if (_footerLabel is not null)
         {
             _footerLabel.Text = IsTrainingRun()
-                ? "Training uses four train-mode agents with separate policies and shared arena resets."
+                ? "Training uses one chaser policy against two runner agents with shared arena resets."
                 : ControlledAgent == StandaloneControlledAgent.None
                     ? "Controls: Enter resets the arena. Spy overlay stays visible; set ControlledAgent to a player to enable manual control."
                     : "Controls: arrows move the selected human agent, Enter resets the arena, Tab cycles the spy overlay.";
         }
     }
+
+    private bool AllRunnersTagged()
+    {
+        return _players
+            .Where(player => player.Role == TagAgentRole.Runner)
+            .All(player => _taggedRunners.Contains(player));
+    }
+
+    private int CountActiveRunners()
+    {
+        return _players.Count(player => player.Role == TagAgentRole.Runner && IsPlayerActive(player));
+    }
+
 }

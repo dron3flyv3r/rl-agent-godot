@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Godot;
 
@@ -35,6 +36,12 @@ public sealed class ObservationBuffer
     /// <summary>Add a value linearly mapped from [min, max] to [-1, 1].</summary>
     public void AddNormalized(float value, float min, float max)
     {
+        if (float.IsNaN(value) || float.IsInfinity(value))
+        {
+            GD.PushWarning($"[ObservationBuffer] Attempted to add invalid value {value}. Adding 0 instead.");
+            _values.Add(0f);
+            return;
+        }
         var range = max - min;
         var normalized = range > 0f ? (value - min) / range * 2f - 1f : 0f;
         _values.Add(Mathf.Clamp(normalized, -1f, 1f));
@@ -130,4 +137,5 @@ public sealed class ObservationBuffer
 
         return copy;
     }
+    public override string ToString() => $"[{string.Join(", ", _values)}]";
 }

@@ -18,6 +18,7 @@ public partial class RLAgent2D : Node2D, IRLAgent
     private readonly Dictionary<string, float> _pendingRewardComponents = new(StringComparer.Ordinal);
     private readonly Dictionary<string, float> _episodeRewardComponents = new(StringComparer.Ordinal);
     private Dictionary<string, float> _lastStepRewardBreakdown = new(StringComparer.Ordinal);
+    private bool _isDone;
     private bool _donePending;
     private RLAgentControlMode _controlMode = RLAgentControlMode.Auto;
 
@@ -103,10 +104,25 @@ public partial class RLAgent2D : Node2D, IRLAgent
     }
 
     /// <summary>Signal that the episode has ended. Can be called from external scripts (e.g. a game controller).</summary>
-    public void EndEpisode() => _donePending = true;
+    public void EndEpisode()
+    {
+        IsDone = true;
+        _donePending = true;
+    }
 
-    /// <summary>Returns true if EndEpisode() has been called and the done signal is pending. Does not consume it.</summary>
-    public bool IsDone => _donePending;
+    /// <summary>When true, this agent instance is terminal and receives only no-op actions until ResetEpisode().</summary>
+    public bool IsDone
+    {
+        get => _isDone;
+        set
+        {
+            _isDone = value;
+            if (_isDone)
+            {
+                ApplyNoOpAction();
+            }
+        }
+    }
 
     // ── Action API ────────────────────────────────────────────────────────────
 
@@ -136,6 +152,12 @@ public partial class RLAgent2D : Node2D, IRLAgent
 
     public virtual void ApplyAction(int action)
     {
+        if (IsDone)
+        {
+            ApplyNoOpAction();
+            return;
+        }
+
         var explicitActionSpace = ResolveExplicitActionSpace();
         var discreteActionCount = GetDiscreteActionCount();
         if (discreteActionCount > 0 && (action < 0 || action >= discreteActionCount))
@@ -153,6 +175,12 @@ public partial class RLAgent2D : Node2D, IRLAgent
 
     public virtual void ApplyAction(float[] continuousActions)
     {
+        if (IsDone)
+        {
+            ApplyNoOpAction();
+            return;
+        }
+
         CurrentActionIndex = -1;
         CurrentContinuousActions = continuousActions is null ? Array.Empty<float>() : (float[])continuousActions.Clone();
         var explicitActionSpace = ResolveExplicitActionSpace();
@@ -167,6 +195,33 @@ public partial class RLAgent2D : Node2D, IRLAgent
         return ResolveExplicitActionSpace()?.GetContinuousActionDimensions() ?? 0;
     }
 
+    public void ApplyNoOpAction()
+    {
+        if (GetDiscreteActionCount() > 0)
+        {
+            CurrentActionIndex = 0;
+            CurrentContinuousActions = Array.Empty<float>();
+            var explicitActionSpace = ResolveExplicitActionSpace();
+            if (explicitActionSpace is not null)
+            {
+                OnActionsReceived(explicitActionSpace.CreateDiscreteActionBuffer(0));
+            }
+
+            return;
+        }
+
+        var continuousDims = GetContinuousActionDimensions();
+        CurrentActionIndex = -1;
+        CurrentContinuousActions = continuousDims > 0
+            ? new float[continuousDims]
+            : Array.Empty<float>();
+        var actionSpace = ResolveExplicitActionSpace();
+        if (actionSpace is not null && continuousDims > 0)
+        {
+            OnActionsReceived(actionSpace.CreateContinuousActionBuffer(CurrentContinuousActions));
+        }
+    }
+
     public virtual void ResetEpisode()
     {
         EpisodeSteps = 0;
@@ -178,6 +233,7 @@ public partial class RLAgent2D : Node2D, IRLAgent
         _pendingRewardComponents.Clear();
         LastStepReward = 0f;
         _lastStepRewardBreakdown = new Dictionary<string, float>(StringComparer.Ordinal);
+        _isDone = false;
         _donePending = false;
         OnEpisodeBegin();
         if (GetDiscreteActionCount() > 0)

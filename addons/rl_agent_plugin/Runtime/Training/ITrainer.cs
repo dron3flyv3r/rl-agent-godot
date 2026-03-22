@@ -55,7 +55,7 @@ public sealed class PolicyGroupConfig
 {
     public string GroupId { get; init; } = string.Empty;
     public string RunId { get; init; } = string.Empty;
-    public RLAlgorithmKind Algorithm { get; init; } = RLAlgorithmKind.PPO;
+    public RLAlgorithmKind Algorithm { get; init; } = RLAlgorithmKind.Custom;
     /// <summary>Key passed to <see cref="TrainerFactory.Register"/> when Algorithm is Custom.</summary>
     public string CustomTrainerId { get; init; } = string.Empty;
     public RLPolicyGroupConfig? SharedPolicy { get; init; }

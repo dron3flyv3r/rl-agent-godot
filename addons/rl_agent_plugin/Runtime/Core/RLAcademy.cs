@@ -7,7 +7,7 @@ namespace RlAgentPlugin.Runtime;
 [GlobalClass]
 public partial class RLAcademy : Node
 {
-    private RLTrainingConfig? _trainingConfig = new RLTrainingConfig();
+    private RLTrainingConfig? _trainingConfig;
 
     [ExportGroup("Configuration")]
     [Export]
@@ -81,7 +81,7 @@ public partial class RLAcademy : Node
         if (TrainingConfig is null)
             warnings.Add("TrainingConfig is not assigned. Assign an RLTrainingConfig resource.");
         else if (TrainingConfig.Algorithm is null)
-            warnings.Add("RLTrainingConfig.Algorithm is not assigned. Assign an RLPPOConfig or RLSACConfig resource.");
+            warnings.Add("RLTrainingConfig.Algorithm is not assigned. Assign an RLAlgorithmConfig resource.");
         return warnings.ToArray();
     }
 
@@ -317,6 +317,7 @@ public partial class RLAcademy : Node
                 continue;
             }
 
+            observationInference.AgentBindings.TryGetValue(agent, out var binding);
             var checkpointPath = agent.GetInferenceModelPath();
 
             // For .rlmodel files resolve path directly; for .json fall back to registry.
@@ -333,7 +334,7 @@ public partial class RLAcademy : Node
             }
             else
             {
-                var resolvedPath = CheckpointRegistry.ResolveCheckpointPath(checkpointPath);
+                var resolvedPath = CheckpointRegistry.ResolveCheckpointPath(checkpointPath, binding?.BindingKey);
                 if (string.IsNullOrWhiteSpace(resolvedPath))
                 {
                     continue;
@@ -352,7 +353,6 @@ public partial class RLAcademy : Node
             var actionCount = checkpoint.DiscreteActionCount > 0
                 ? checkpoint.DiscreteActionCount
                 : checkpoint.ContinuousActionDimensions;
-            observationInference.AgentBindings.TryGetValue(agent, out var binding);
             if (binding is not null)
             {
                 _agentObservationGroups[agent] = binding.BindingKey;
