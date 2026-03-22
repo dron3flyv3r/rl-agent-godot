@@ -49,6 +49,8 @@ public partial class RLDashboard : Control
     private LineEdit?       _prefixFilter;
     private LineEdit?       _renameEdit;
     private Button?         _renameBtn;
+    private Label?          _policyFilterLabel;
+    private OptionButton?   _policyFilterDropdown;
     private Label?          _liveBadge;
     private Label?          _headerStatus;
     private ColorRect?      _statusDot;
@@ -78,8 +80,14 @@ public partial class RLDashboard : Control
     private readonly List<Metric>              _metrics            = new();
     private readonly List<string>              _runIds             = new();
     private readonly Dictionary<string, long>  _metricsFileOffsets = new();
-    private string _selectedRunId = "";
-    private RunMeta _selectedRunMeta = new("", Array.Empty<string>(), Array.Empty<string>(), false);
+    private string       _selectedRunId            = "";
+    private RunMeta      _selectedRunMeta          = new("", Array.Empty<string>(), Array.Empty<string>(), false);
+    private string       _selectedPolicyGroupFilter = "";
+    private List<string> _knownPolicyGroups         = new();
+    private readonly HashSet<string> _rewardSeriesLabels  = new();
+    private readonly HashSet<string> _entropySeriesLabels = new();
+    private readonly HashSet<string> _lengthSeriesLabels  = new();
+    private readonly HashSet<string> _lossSeriesLabels    = new();
     private double _pollTimer;
     private double _livePulseAccum;
     private bool   _isLive;
@@ -92,13 +100,23 @@ public partial class RLDashboard : Control
     private static readonly Color CRunning    = new(0.20f, 0.85f, 0.35f);
     private static readonly Color CStopped    = new(0.70f, 0.70f, 0.70f);
     private static readonly Color CIdle       = new(0.45f, 0.45f, 0.45f);
-    private static readonly Color CReward     = new(0.22f, 0.82f, 0.42f);
     private static readonly Color CPolicyLoss = new(0.92f, 0.42f, 0.22f);
     private static readonly Color CValueLoss  = new(0.35f, 0.62f, 0.92f);
-    private static readonly Color CEntropy    = new(0.88f, 0.68f, 0.22f);
-    private static readonly Color CLength     = new(0.72f, 0.42f, 0.92f);
     private static readonly Color CElo        = new(0.92f, 0.42f, 0.78f);
     private static readonly Color CCurriculum = new(0.35f, 0.82f, 0.88f);
+
+    // Palette used to assign one color per policy group (reward / entropy / length charts).
+    private static readonly Color[] CPolicyPalette =
+    {
+        new(0.22f, 0.82f, 0.42f),  // green
+        new(0.35f, 0.62f, 0.92f),  // blue
+        new(0.92f, 0.42f, 0.22f),  // orange
+        new(0.88f, 0.68f, 0.22f),  // amber
+        new(0.72f, 0.42f, 0.92f),  // purple
+        new(0.92f, 0.42f, 0.78f),  // pink
+        new(0.35f, 0.82f, 0.88f),  // cyan
+        new(0.82f, 0.92f, 0.35f),  // lime
+    };
 
     // ── Godot lifecycle ──────────────────────────────────────────────────────
     public override void _Ready()
@@ -277,6 +295,24 @@ public partial class RLDashboard : Control
         _renameBtn = new Button { Text = "Rename", Visible = false };
         _renameBtn.Pressed += () => SaveDisplayName(_renameEdit?.Text ?? "");
         row2.AddChild(_renameBtn);
+
+        _policyFilterLabel = new Label
+        {
+            Text = "Policy:",
+            VerticalAlignment = VerticalAlignment.Center,
+            Visible = false,
+        };
+        row2.AddChild(_policyFilterLabel);
+
+        _policyFilterDropdown = new OptionButton
+        {
+            CustomMinimumSize = new Vector2(160, 0),
+            TooltipText       = "Filter charts to a single policy group",
+            Visible           = false,
+        };
+        _policyFilterDropdown.AddItem("All Policies");
+        _policyFilterDropdown.ItemSelected += OnPolicyFilterSelected;
+        row2.AddChild(_policyFilterDropdown);
 
         row2.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
 
@@ -471,6 +507,20 @@ public partial class RLDashboard : Control
         var idx = _runIds.IndexOf(runId);
         if (idx >= 0) _runDropdown?.Select(idx);
 
+        _selectedPolicyGroupFilter = "";
+        _knownPolicyGroups.Clear();
+        _rewardSeriesLabels.Clear();
+        _entropySeriesLabels.Clear();
+        _lengthSeriesLabels.Clear();
+        _lossSeriesLabels.Clear();
+        if (_policyFilterDropdown is not null)
+        {
+            _policyFilterDropdown.Clear();
+            _policyFilterDropdown.AddItem("All Policies");
+            _policyFilterDropdown.Visible = false;
+        }
+        if (_policyFilterLabel is not null) _policyFilterLabel.Visible = false;
+
         _rewardChart?.ClearSeries();
         _lossChart?.ClearSeries();
         _entropyChart?.ClearSeries();
@@ -519,6 +569,7 @@ public partial class RLDashboard : Control
         }
         var status = ReadStatusFile($"{runDir}/status.json");
         SetStatusUi(status);
+        RefreshPolicyFilterDropdown();
         RefreshCharts();
         RefreshStats(status);
 
@@ -816,25 +867,138 @@ public partial class RLDashboard : Control
         }
     }
 
+    private void RefreshPolicyFilterDropdown()
+    {
+        if (_policyFilterDropdown is null) return;
+
+        var groups = _metrics
+            .Select(m => m.PolicyGroup)
+            .Where(g => !string.IsNullOrEmpty(g))
+            .Distinct()
+            .OrderBy(g => g)
+            .ToList();
+
+        // Skip rebuild if groups haven't changed (avoids resetting the selection mid-run).
+        if (groups.SequenceEqual(_knownPolicyGroups)) return;
+        _knownPolicyGroups = groups;
+
+        var prevFilter = _selectedPolicyGroupFilter;
+        _policyFilterDropdown.Clear();
+        _policyFilterDropdown.AddItem("All Policies");
+        foreach (var g in groups)
+            _policyFilterDropdown.AddItem(g);
+
+        // Restore previous selection when possible.
+        if (!string.IsNullOrEmpty(prevFilter))
+        {
+            var idx = groups.IndexOf(prevFilter);
+            if (idx >= 0)
+                _policyFilterDropdown.Select(idx + 1);
+            else
+            {
+                _policyFilterDropdown.Select(0);
+                _selectedPolicyGroupFilter = "";
+            }
+        }
+
+        // Only show the controls when there are multiple policies.
+        var show = groups.Count > 1;
+        _policyFilterDropdown.Visible = show;
+        if (_policyFilterLabel is not null) _policyFilterLabel.Visible = show;
+    }
+
+    private void OnPolicyFilterSelected(long index)
+    {
+        _selectedPolicyGroupFilter = index == 0 ? "" : _knownPolicyGroups[(int)index - 1];
+
+        // Clear charts so stale series from the previous selection are removed cleanly.
+        _rewardChart?.ClearSeries();
+        _lossChart?.ClearSeries();
+        _entropyChart?.ClearSeries();
+        _lengthChart?.ClearSeries();
+        _rewardSeriesLabels.Clear();
+        _entropySeriesLabels.Clear();
+        _lengthSeriesLabels.Clear();
+        _lossSeriesLabels.Clear();
+
+        RefreshCharts();
+        var status = ReadStatusFile($"res://RL-Agent-Training/runs/{_selectedRunId}/status.json");
+        RefreshStats(status);
+    }
+
     private void RefreshCharts()
     {
         if (_metrics.Count == 0) return;
 
-        _rewardChart?.UpdateSeries("Reward", CReward,
-            _metrics.Select(m => m.EpisodeReward));
+        var allGroups = _metrics
+            .Select(m => m.PolicyGroup)
+            .Distinct()
+            .ToList();
 
-        _lossChart?.UpdateSeries("Policy", CPolicyLoss,
-            _metrics.Select(m => m.PolicyLoss));
-        _lossChart?.UpdateSeries("Value",  CValueLoss,
-            _metrics.Select(m => m.ValueLoss));
+        var activeGroups = string.IsNullOrEmpty(_selectedPolicyGroupFilter)
+            ? allGroups
+            : allGroups.Where(g => g == _selectedPolicyGroupFilter).ToList();
 
-        _entropyChart?.UpdateSeries("Entropy", CEntropy,
-            _metrics.Select(m => m.Entropy));
+        bool multi = activeGroups.Count > 1;
 
-        _lengthChart?.UpdateSeries("Length", CLength,
-            _metrics.Select(m => (float)m.EpisodeLength));
+        var newRewardLabels  = new HashSet<string>();
+        var newEntropyLabels = new HashSet<string>();
+        var newLengthLabels  = new HashSet<string>();
+        var newLossLabels    = new HashSet<string>();
 
-        var eloMetrics = _metrics.Where(m => m.LearnerElo.HasValue).ToList();
+        for (int i = 0; i < activeGroups.Count; i++)
+        {
+            var group        = activeGroups[i];
+            var color        = CPolicyPalette[i % CPolicyPalette.Length];
+            var groupMetrics = _metrics.Where(m => m.PolicyGroup == group).ToList();
+
+            var rewardLabel  = multi ? group : "Reward";
+            var entropyLabel = multi ? group : "Entropy";
+            var lengthLabel  = multi ? group : "Length";
+
+            _rewardChart?.UpdateSeries(rewardLabel,   color, groupMetrics.Select(m => m.EpisodeReward));
+            _entropyChart?.UpdateSeries(entropyLabel, color, groupMetrics.Select(m => m.Entropy));
+            _lengthChart?.UpdateSeries(lengthLabel,   color, groupMetrics.Select(m => (float)m.EpisodeLength));
+
+            newRewardLabels.Add(rewardLabel);
+            newEntropyLabels.Add(entropyLabel);
+            newLengthLabels.Add(lengthLabel);
+
+            // Loss: each group gets a policy-loss and value-loss series.
+            var polLabel = multi ? $"{group} Policy" : "Policy";
+            var valLabel = multi ? $"{group} Value"  : "Value";
+            var valColor = multi
+                ? new Color(color.R * 0.65f, color.G * 0.65f, color.B * 0.65f, 0.85f)
+                : CValueLoss;
+
+            _lossChart?.UpdateSeries(polLabel, color,    groupMetrics.Select(m => m.PolicyLoss));
+            _lossChart?.UpdateSeries(valLabel, valColor, groupMetrics.Select(m => m.ValueLoss));
+
+            newLossLabels.Add(polLabel);
+            newLossLabels.Add(valLabel);
+        }
+
+        // Remove any series that no longer belong in the chart.
+        foreach (var stale in _rewardSeriesLabels.Except(newRewardLabels))
+            _rewardChart?.RemoveSeries(stale);
+        foreach (var stale in _entropySeriesLabels.Except(newEntropyLabels))
+            _entropyChart?.RemoveSeries(stale);
+        foreach (var stale in _lengthSeriesLabels.Except(newLengthLabels))
+            _lengthChart?.RemoveSeries(stale);
+        foreach (var stale in _lossSeriesLabels.Except(newLossLabels))
+            _lossChart?.RemoveSeries(stale);
+
+        _rewardSeriesLabels.Clear();  _rewardSeriesLabels.UnionWith(newRewardLabels);
+        _entropySeriesLabels.Clear(); _entropySeriesLabels.UnionWith(newEntropyLabels);
+        _lengthSeriesLabels.Clear();  _lengthSeriesLabels.UnionWith(newLengthLabels);
+        _lossSeriesLabels.Clear();    _lossSeriesLabels.UnionWith(newLossLabels);
+
+        // Elo and curriculum are not split by policy (self-play learner has a single Elo).
+        bool hasFilter = !string.IsNullOrEmpty(_selectedPolicyGroupFilter);
+
+        var eloMetrics = _metrics
+            .Where(m => m.LearnerElo.HasValue && (!hasFilter || m.PolicyGroup == _selectedPolicyGroupFilter))
+            .ToList();
         if (_eloChart is not null)
         {
             _eloChart.Visible = eloMetrics.Count > 0;
@@ -842,18 +1006,16 @@ public partial class RLDashboard : Control
                 _eloChart.UpdateSeries("Elo", CElo, eloMetrics.Select(m => m.LearnerElo!.Value));
         }
 
-        var curriculumMetrics = _metrics.Where(m => m.CurriculumProgress.HasValue).ToList();
+        var curriculumMetrics = _metrics
+            .Where(m => m.CurriculumProgress.HasValue && (!hasFilter || m.PolicyGroup == _selectedPolicyGroupFilter))
+            .ToList();
         if (_curriculumChart is not null)
         {
             var showCurriculum = _selectedRunMeta.HasCurriculum || curriculumMetrics.Count > 0;
             _curriculumChart.Visible = showCurriculum;
             if (curriculumMetrics.Count > 0)
-            {
-                _curriculumChart.UpdateSeries(
-                    "Progress",
-                    CCurriculum,
+                _curriculumChart.UpdateSeries("Progress", CCurriculum,
                     curriculumMetrics.Select(m => m.CurriculumProgress!.Value));
-            }
         }
     }
 
@@ -861,9 +1023,15 @@ public partial class RLDashboard : Control
     {
         if (_metrics.Count == 0) return;
 
-        var window  = _metrics.TakeLast(50).ToList();
+        var filtered = string.IsNullOrEmpty(_selectedPolicyGroupFilter)
+            ? _metrics
+            : _metrics.Where(m => m.PolicyGroup == _selectedPolicyGroupFilter).ToList();
+
+        if (filtered.Count == 0) return;
+
+        var window  = filtered.TakeLast(50).ToList();
         var avg     = window.Average(m => m.EpisodeReward);
-        var best    = _metrics.Max(m => m.EpisodeReward);
+        var best    = filtered.Max(m => m.EpisodeReward);
         var last    = _metrics[^1];
         var steps   = status.TotalSteps   > 0 ? status.TotalSteps   : last.TotalSteps;
         var eps     = status.EpisodeCount > 0 ? status.EpisodeCount : last.EpisodeCount;

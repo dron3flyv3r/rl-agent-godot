@@ -82,6 +82,13 @@ public partial class LineChartPanel : Control
         QueueRedraw();
     }
 
+    public void RemoveSeries(string label)
+    {
+        var idx = _series.FindIndex(s => s.Label == label);
+        if (idx >= 0) _series.RemoveAt(idx);
+        QueueRedraw();
+    }
+
     // ── Input / lifecycle ────────────────────────────────────────────────────
     public override void _Ready()
     {

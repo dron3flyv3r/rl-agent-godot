@@ -25,7 +25,6 @@ public sealed class TrainingSceneValidation
     public string ScenePath { get; set; } = string.Empty;
     public string AcademyPath { get; set; } = string.Empty;
     public string TrainingConfigPath { get; set; } = string.Empty;
-    public string TrainerConfigPath { get; set; } = string.Empty;
     public string NetworkConfigPath { get; set; } = string.Empty;
     public string CheckpointPath { get; set; } = string.Empty;
     public string RunPrefix { get; set; } = string.Empty;

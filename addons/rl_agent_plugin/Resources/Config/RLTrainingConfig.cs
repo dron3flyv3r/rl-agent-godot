@@ -6,10 +6,10 @@ namespace RlAgentPlugin.Runtime;
 [Tool]
 public partial class RLTrainingConfig : Resource
 {
-    private const string AlgorithmTypes = $"{nameof(RLPPOConfig)},{nameof(RLSACConfig)}";
+    private const string AlgorithmType = nameof(RLAlgorithmConfig);
 
-    [Export(PropertyHint.ResourceType, AlgorithmTypes)]
-    public RLAlgorithmConfig? Algorithm { get; set; } = new RLPPOConfig();
+    [Export(PropertyHint.ResourceType, AlgorithmType)]
+    public RLAlgorithmConfig? Algorithm { get; set; }
 
     [Export]
     public RLScheduleConfig? Schedules { get; set; }

@@ -185,13 +185,13 @@ public partial class RLSetupDock : VBoxContainer
         _validationDetailLabel.Text = summary;
     }
 
-    public void SetConfigSummary(string trainerPath, string networkPath, string checkpointPath)
+    public void SetConfigSummary(string trainingPath, string networkPath, string checkpointPath)
     {
-        var trainerName = FileName(trainerPath, "(none)");
+        var trainingName = FileName(trainingPath, "(none)");
         var networkName = FileName(networkPath, "(none)");
         var checkpointName = FileName(checkpointPath, "(none)");
-        _configLabel.Text = $"Trainer:     {trainerName}\nNetwork:     {networkName}\nCheckpoint: {checkpointName}";
-        _configLabel.TooltipText = $"Trainer: {trainerPath}\nNetwork: {networkPath}\nCheckpoint: {checkpointPath}";
+        _configLabel.Text = $"Training:   {trainingName}\nNetwork:     {networkName}\nCheckpoint: {checkpointName}";
+        _configLabel.TooltipText = $"Training: {trainingPath}\nNetwork: {networkPath}\nCheckpoint: {checkpointPath}";
     }
 
     public void SetLaunchStatus(string text)

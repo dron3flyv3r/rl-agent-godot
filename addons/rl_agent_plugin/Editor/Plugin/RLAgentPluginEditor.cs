@@ -391,7 +391,6 @@ public partial class RLAgentPluginEditor : EditorPlugin
         manifest.RunDirectory = $"res://RL-Agent-Training/runs/{manifest.RunId}";
         manifest.CheckpointPath = $"{manifest.RunDirectory}/{checkpointFileName}";
         manifest.TrainingConfigPath = validation.TrainingConfigPath;
-        manifest.TrainerConfigPath = validation.TrainerConfigPath;
         manifest.NetworkConfigPath = validation.NetworkConfigPath;
         manifest.MetricsPath = $"{manifest.RunDirectory}/metrics.jsonl";
         manifest.StatusPath = $"{manifest.RunDirectory}/status.json";
@@ -463,7 +462,6 @@ public partial class RLAgentPluginEditor : EditorPlugin
         manifest.RunDirectory = "user://rl_agent_plugin/quick_test";
         manifest.CheckpointPath = string.Empty;
         manifest.TrainingConfigPath = validation.TrainingConfigPath;
-        manifest.TrainerConfigPath = validation.TrainerConfigPath;
         manifest.NetworkConfigPath = validation.NetworkConfigPath;
         manifest.MetricsPath = string.Empty;
         manifest.StatusPath = $"{manifest.RunDirectory}/status.json";
@@ -615,7 +613,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
     {
         _lastValidation = validation;
         _setupDock?.SetValidationSummary(validation.BuildSummary(), validation.IsValid);
-        _setupDock?.SetConfigSummary(validation.TrainerConfigPath, validation.NetworkConfigPath, validation.CheckpointPath);
+        _setupDock?.SetConfigSummary(validation.TrainingConfigPath, validation.NetworkConfigPath, validation.CheckpointPath);
     }
 
     private static string ResolveTrainingScenePath()
@@ -725,13 +723,11 @@ public partial class RLAgentPluginEditor : EditorPlugin
             else
             {
                 validation.AcademyPath = root.GetPathTo(academy).ToString();
-                var trainingConfigRes = ReadResourceProperty(academy, "TrainingConfig");
-                var trainerConfigRes = ReadResourceProperty(academy, "TrainerConfig");
+                var trainingConfigRes = ReadResourceProperty(academy, "TrainingConfig") as RLTrainingConfig;
                 var checkpoint = ReadResourceProperty(academy, "Checkpoint");
                 var runConfig = ReadResourceProperty(academy, "RunConfig");
 
                 validation.TrainingConfigPath = trainingConfigRes?.ResourcePath ?? string.Empty;
-                validation.TrainerConfigPath = trainerConfigRes?.ResourcePath ?? validation.TrainingConfigPath;
                 validation.NetworkConfigPath = validation.TrainingConfigPath;
                 validation.CheckpointPath = checkpoint?.ResourcePath ?? string.Empty;
                 validation.RunPrefix = ReadStringProperty(runConfig, "RunPrefix");
@@ -742,21 +738,23 @@ public partial class RLAgentPluginEditor : EditorPlugin
                 validation.EnableSpyOverlay = ReadBoolProperty(academy, "EnableSpyOverlay");
                 validation.HasCurriculum = ReadResourceProperty(academy, "Curriculum") is not null;
 
-                if (trainingConfigRes is null && trainerConfigRes is null)
+                if (trainingConfigRes is null)
                 {
                     validation.Errors.Add("RLAcademy is missing an RLTrainingConfig resource.");
                 }
 
-                // Determine algorithm from trainer config
-                var algorithm = RLAlgorithmKind.PPO;
-                if (trainingConfigRes is RLTrainingConfig trainingConfig)
+                if (trainingConfigRes is not null && trainingConfigRes.Algorithm is null)
                 {
-                    algorithm = trainingConfig.Algorithm?.AlgorithmKind ?? RLAlgorithmKind.PPO;
+                    validation.Errors.Add("RLAcademy.TrainingConfig has no Algorithm assigned.");
                 }
-                else if (trainerConfigRes is RLTrainerConfig trainerConfig)
+
+                if (validation.TrainAgentCount == 0)
                 {
-                    algorithm = trainerConfig.Algorithm;
+                    validation.Errors.Add("No Train or Auto mode agents were found in the selected scene.");
                 }
+
+                var resolvedTrainerConfig = trainingConfigRes?.ToTrainerConfig();
+                var algorithm = resolvedTrainerConfig?.Algorithm ?? RLAlgorithmKind.Custom;
 
                 var typedTrainAgents = new List<IRLAgent>();
                 foreach (var groupNodes in agentsByGroup.Values)
@@ -844,7 +842,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
                     // Custom: id must be provided (action-space validation is the trainer's responsibility)
                     if (algorithm == RLAlgorithmKind.Custom)
                     {
-                        var customId = ReadStringProperty(trainerConfigRes ?? trainingConfigRes, "CustomTrainerId");
+                        var customId = resolvedTrainerConfig?.CustomTrainerId ?? string.Empty;
                         if (string.IsNullOrWhiteSpace(customId))
                             validation.Errors.Add($"Group '{groupSummary.GroupId}': Algorithm is Custom but CustomTrainerId is not set.");
                     }
@@ -1328,8 +1326,6 @@ public partial class RLAgentPluginEditor : EditorPlugin
                 builder.Append(ReadBoolProperty(node, "EnableSpyOverlay"));
                 builder.Append('|');
                 builder.Append(ReadResourceProperty(node, "TrainingConfig")?.ResourcePath ?? string.Empty);
-                builder.Append('|');
-                builder.Append(ReadResourceProperty(node, "TrainerConfig")?.ResourcePath ?? string.Empty);
                 builder.Append('|');
                 builder.Append(ReadResourceProperty(node, "Checkpoint")?.ResourcePath ?? string.Empty);
                 if (typedAcademy is not null)

@@ -87,20 +87,40 @@ public static class CheckpointRegistry
         runDir.ListDirEnd();
     }
 
-    public static string GetLatestCheckpointPath()
+    public static string GetLatestCheckpointPath(string? groupId = null)
     {
         var checkpoints = ListCheckpointPaths();
-        return checkpoints.Count > 0 ? checkpoints[0] : string.Empty;
+        if (checkpoints.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(groupId))
+        {
+            return checkpoints[0];
+        }
+
+        var safeGroupId = RLPolicyGroupBindingResolver.MakeSafeGroupId(groupId);
+        var fileName = $"checkpoint__{safeGroupId}.json";
+        foreach (var checkpointPath in checkpoints)
+        {
+            if (string.Equals(System.IO.Path.GetFileName(checkpointPath), fileName, StringComparison.OrdinalIgnoreCase))
+            {
+                return checkpointPath;
+            }
+        }
+
+        return string.Empty;
     }
 
-    public static string ResolveCheckpointPath(string preferredPath)
+    public static string ResolveCheckpointPath(string preferredPath, string? groupId = null)
     {
         if (!string.IsNullOrWhiteSpace(preferredPath) && FileAccess.FileExists(preferredPath))
         {
             return preferredPath;
         }
 
-        return GetLatestCheckpointPath();
+        return GetLatestCheckpointPath(groupId);
     }
 
     /// <summary>

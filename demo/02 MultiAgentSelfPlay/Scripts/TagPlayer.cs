@@ -30,6 +30,12 @@ public partial class TagPlayer : CharacterBody2D
             return;
         }
 
+        if (!arena.IsPlayerActive(this))
+        {
+            Agent.ApplyAction(0);
+            return;
+        }
+
         if (!arena.IsTrainingSession
             && Agent.ControlMode == RLAgentControlMode.Human
             && ManualControlWhenStandalone)

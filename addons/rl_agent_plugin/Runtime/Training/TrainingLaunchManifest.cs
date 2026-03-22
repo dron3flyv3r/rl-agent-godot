@@ -12,7 +12,6 @@ public sealed class TrainingLaunchManifest
     public string RunId { get; set; } = string.Empty;
     public string RunDirectory { get; set; } = string.Empty;
     public string TrainingConfigPath { get; set; } = string.Empty;
-    public string TrainerConfigPath { get; set; } = string.Empty;
     public string NetworkConfigPath { get; set; } = string.Empty;
     public string CheckpointPath { get; set; } = string.Empty;
     public string MetricsPath { get; set; } = string.Empty;
@@ -81,7 +80,6 @@ public sealed class TrainingLaunchManifest
             RunId = ReadString(data, nameof(RunId)),
             RunDirectory = ReadString(data, nameof(RunDirectory)),
             TrainingConfigPath = ReadString(data, nameof(TrainingConfigPath)),
-            TrainerConfigPath = ReadString(data, nameof(TrainerConfigPath)),
             NetworkConfigPath = ReadString(data, nameof(NetworkConfigPath)),
             CheckpointPath = ReadString(data, nameof(CheckpointPath)),
             MetricsPath = ReadString(data, nameof(MetricsPath)),
@@ -105,7 +103,6 @@ public sealed class TrainingLaunchManifest
             { nameof(RunId), RunId },
             { nameof(RunDirectory), RunDirectory },
             { nameof(TrainingConfigPath), TrainingConfigPath },
-            { nameof(TrainerConfigPath), TrainerConfigPath },
             { nameof(NetworkConfigPath), NetworkConfigPath },
             { nameof(CheckpointPath), CheckpointPath },
             { nameof(MetricsPath), MetricsPath },

@@ -14,6 +14,7 @@
 
 [sub_resource type="Resource" id="Resource_ruj3f"]
 script = ExtResource("3_x3qrm")
+Gamma = 0.97
 
 [sub_resource type="Resource" id="TrainingConfig"]
 script = ExtResource("3_650tm")
@@ -23,7 +24,7 @@ Algorithm = SubResource("Resource_ruj3f")
 script = ExtResource("9_runcfg")
 RunPrefix = "TagDemo"
 SimulationSpeed = 4.0
-BatchSize = 16
+BatchSize = 24
 ActionRepeat = 2
 CheckpointInterval = 20
 AsyncGradientUpdates = true
@@ -106,22 +107,6 @@ color = Color(0.937255, 0.4, 0.364706, 1)
 polygon = PackedVector2Array(0, -16, 14, 0, 0, 16, -14, 0)
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="ChaserA" unique_id=718592230]
-shape = SubResource("CircleShape2D_q38m4")
-
-[node name="ChaserB" type="CharacterBody2D" parent="." unique_id=529484080]
-position = Vector2(238, 424)
-script = ExtResource("7_3gkkj")
-Role = 0
-
-[node name="Agent" type="Node2D" parent="ChaserB" unique_id=1464470303]
-script = ExtResource("8_h1ebu")
-PolicyGroupConfig = ExtResource("5_fc5f6")
-
-[node name="Visual" type="Polygon2D" parent="ChaserB" unique_id=1562436759]
-color = Color(0.890196, 0.301961, 0.27451, 1)
-polygon = PackedVector2Array(0, -16, 14, 0, 0, 16, -14, 0)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="ChaserB" unique_id=1673189355]
 shape = SubResource("CircleShape2D_q38m4")
 
 [node name="RunnerA" type="CharacterBody2D" parent="." unique_id=1317511240]
