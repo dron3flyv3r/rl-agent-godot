@@ -22,6 +22,13 @@ public partial class RLAcademy : Node
     [ExportGroup("Run")]
     [Export] public RLRunConfig? RunConfig { get; set; }
 
+    /// <summary>
+    /// Optional.  When set, training runs in distributed mode: this process acts as the master
+    /// trainer while headless worker processes collect rollouts in parallel.
+    /// Leave null for the standard single-process training mode.
+    /// </summary>
+    [Export] public RLDistributedConfig? DistributedConfig { get; set; }
+
     [ExportGroup("Curriculum")]
     [Export] public RLCurriculumConfig? Curriculum { get; set; }
 
@@ -30,6 +37,7 @@ public partial class RLAcademy : Node
 
     [ExportGroup("Inference")]
     [Export] public RLCheckpoint? Checkpoint { get; set; }
+
 
     [ExportGroup("Debug")]
     /// <summary>Show the observation/reward/action spy overlay when running outside of training. Press Tab to cycle agents.</summary>
