@@ -6,7 +6,7 @@ using Godot;
 
 namespace RlAgentPlugin.Runtime;
 
-public sealed class PpoTrainer : ITrainer, IAsyncTrainer
+public sealed class PpoTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
 {
     private readonly PolicyGroupConfig _config;
     private readonly RLTrainerConfig _trainerConfig;
@@ -435,6 +435,65 @@ public sealed class PpoTrainer : ITrainer, IAsyncTrainer
 
         return entropy;
     }
+
+    // ── IDistributedTrainer ───────────────────────────────────────────────────
+
+    public bool IsRolloutReady => _transitions.Count >= _trainerConfig.RolloutLength;
+
+    public byte[] ExportAndClearRollout()
+    {
+        var snapshot = _transitions
+            .Select(t => new DistributedTransition
+            {
+                Observation       = t.Observation,
+                DiscreteAction    = t.Action,
+                ContinuousActions = t.ContinuousActions,
+                Reward            = t.Reward,
+                Done              = t.Done,
+                OldLogProbability = t.OldLogProbability,
+                Value             = t.Value,
+                NextValue         = t.NextValue,
+            })
+            .ToList();
+        _transitions.Clear();
+        return DistributedProtocol.SerializeRollout(snapshot);
+    }
+
+    public void InjectRollout(byte[] data)
+    {
+        foreach (var t in DistributedProtocol.DeserializeRollout(data))
+        {
+            _transitions.Add(new PpoTransition
+            {
+                Observation       = t.Observation,
+                Action            = t.DiscreteAction,
+                ContinuousActions = t.ContinuousActions,
+                Reward            = t.Reward,
+                Done              = t.Done,
+                OldLogProbability = t.OldLogProbability,
+                Value             = t.Value,
+                NextValue         = t.NextValue,
+            });
+        }
+    }
+
+    public byte[] ExportWeights()
+    {
+        var cp = _network.SaveCheckpoint("_dist_", 0, 0, 0);
+        return DistributedProtocol.SerializeWeights(cp.WeightBuffer, cp.LayerShapeBuffer);
+    }
+
+    public void ImportWeights(byte[] data)
+    {
+        var (weights, shapes) = DistributedProtocol.DeserializeWeights(data);
+        _network.LoadCheckpoint(new RLCheckpoint
+        {
+            WeightBuffer     = weights,
+            LayerShapeBuffer = shapes,
+        });
+    }
+
+    // ── Internal types ────────────────────────────────────────────────────────
 
     private sealed class PpoAsyncResult
     {

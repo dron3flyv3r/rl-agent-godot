@@ -36,10 +36,11 @@ public partial class RLDashboard : Control
 
     private sealed class RunStatus
     {
-        public string Status       = "idle";
+        public string Status              = "idle";
         public long   TotalSteps;
         public long   EpisodeCount;
-        public string Message      = "";
+        public long   WorkerEpisodeCount;
+        public string Message             = "";
     }
 
     private sealed record RunMeta(string DisplayName, string[] AgentNames, string[] AgentGroups, bool HasCurriculum);
@@ -344,13 +345,13 @@ public partial class RLDashboard : Control
         hbox.AddThemeConstantOverride("separation", 0);
         panel.AddChild(hbox);
 
-        _statAvgReward  = AddStatCard(hbox, "Avg Reward (last 50)", "—", first: true);
+        _statAvgReward  = AddStatCard(hbox, "Avg Reward (50 ep)", "—", first: true);
         hbox.AddChild(MakeVSep());
-        _statBestReward = AddStatCard(hbox, "Best Episode Reward",  "—", first: false);
+        _statBestReward = AddStatCard(hbox, "Best Reward",        "—", first: false);
         hbox.AddChild(MakeVSep());
-        _statTotalSteps = AddStatCard(hbox, "Total Steps",          "—", first: false);
+        _statTotalSteps = AddStatCard(hbox, "Total Steps",        "—", first: false);
         hbox.AddChild(MakeVSep());
-        _statEpisodes   = AddStatCard(hbox, "Episodes",             "—", first: false);
+        _statEpisodes   = AddStatCard(hbox, "Episodes",           "—", first: false);
 
         return panel;
     }
@@ -358,8 +359,8 @@ public partial class RLDashboard : Control
     private static Label AddStatCard(HBoxContainer parent, string title, string dflt, bool first)
     {
         var margin = new MarginContainer();
-        margin.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-        margin.AddThemeConstantOverride("margin_left",   first ? 10 : 18);
+        margin.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;
+        margin.AddThemeConstantOverride("margin_left",   first ? 8 : 8);
         margin.AddThemeConstantOverride("margin_right",  8);
         margin.AddThemeConstantOverride("margin_top",    5);
         margin.AddThemeConstantOverride("margin_bottom", 5);
@@ -632,10 +633,11 @@ public partial class RLDashboard : Control
             var d = variant.AsGodotDictionary();
             return new RunStatus
             {
-                Status       = GetString(d, "status", "unknown"),
-                TotalSteps   = GetLong(d, "total_steps"),
-                EpisodeCount = GetLong(d, "episode_count"),
-                Message      = GetString(d, "message", ""),
+                Status             = GetString(d, "status", "unknown"),
+                TotalSteps         = GetLong(d, "total_steps"),
+                EpisodeCount       = GetLong(d, "episode_count"),
+                WorkerEpisodeCount = GetLong(d, "worker_episode_count"),
+                Message            = GetString(d, "message", ""),
             };
         }
         catch
@@ -849,7 +851,10 @@ public partial class RLDashboard : Control
         {
             case "running":
                 _statusDot.Color  = CRunning;
-                _statusLabel.Text = $"Running  •  ep {status.EpisodeCount:N0}  •  {FormatSteps(status.TotalSteps)} steps";
+                var epDisplay = status.WorkerEpisodeCount > 0
+                    ? $"{status.EpisodeCount:N0} master  +  {status.WorkerEpisodeCount:N0} simulated"
+                    : status.EpisodeCount.ToString("N0");
+                _statusLabel.Text = $"Running  •  ep {epDisplay}  •  {FormatSteps(status.TotalSteps)} steps";
                 break;
             case "done":
             case "stopped":
@@ -1039,7 +1044,12 @@ public partial class RLDashboard : Control
         if (_statAvgReward  is not null) _statAvgReward.Text  = avg.ToString("F3");
         if (_statBestReward is not null) _statBestReward.Text = best.ToString("F3");
         if (_statTotalSteps is not null) _statTotalSteps.Text = FormatSteps(steps);
-        if (_statEpisodes   is not null) _statEpisodes.Text   = eps.ToString("N0");
+        if (_statEpisodes is not null)
+        {
+            _statEpisodes.Text = status.WorkerEpisodeCount > 0
+                ? $"{eps:N0} + {status.WorkerEpisodeCount:N0} simulated"
+                : eps.ToString("N0");
+        }
 
         if (!string.IsNullOrWhiteSpace(last.OpponentGroup))
         {

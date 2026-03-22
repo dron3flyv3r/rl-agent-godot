@@ -66,6 +66,19 @@ public partial class TrainingBootstrap : Node
     private readonly List<SubViewport> _viewports = new();
     private int _curriculumSuccessCount;
 
+    // Distributed training
+    private bool _isWorkerMode;
+    private int  _workerId;
+    private int  _masterPort = 7890;
+    private DistributedMaster? _distributedMaster;
+    private DistributedWorker? _distributedWorker;
+    private CanvasLayer?       _trainingOverlay;
+
+    // Smooth steps counter for the overlay — interpolates between real values to avoid
+    // jarring jumps when a worker rollout arrives (e.g. +2048 steps at once).
+    private double _smoothDisplaySteps;
+    private double _smoothDisplayRate;
+
     private void SetCurriculumProgressForAllAcademies(float progress)
     {
         foreach (var academy in _academies)
@@ -119,6 +132,12 @@ public partial class TrainingBootstrap : Node
     {
         _selfPlayRng.Randomize();
 
+        // Detect distributed worker mode via custom command-line args (passed after --).
+        var userArgs = OS.GetCmdlineUserArgs();
+        _isWorkerMode = System.Array.Exists(userArgs, a => a == "--rl-worker");
+        _workerId     = ParseDistributedIntArg(userArgs, "--worker-id", 0);
+        _masterPort   = ParseDistributedIntArg(userArgs, "--master-port", 7890);
+
         _manifest = TrainingLaunchManifest.LoadFromUserStorage();
         if (_manifest is null)
         {
@@ -162,6 +181,14 @@ public partial class TrainingBootstrap : Node
             _asyncGradientUpdates = false;
             _parallelPolicyGroups = false;
         }
+
+        // In distributed master mode, run only 1 game instance for monitoring.
+        // Workers handle bulk data collection; the master stays free for training.
+        // Only apply when at least one trainer actually supports distribution —
+        // algorithms that don't (e.g. SAC) should keep their full BatchSize.
+        var hasDistributableTrainers = _trainersByGroup.Values.Any(t => t is IDistributedTrainer);
+        if (!_isWorkerMode && firstAcademy.DistributedConfig is not null && hasDistributableTrainers)
+            _batchSize = 1;
 
         _previousTimeScale = Engine.TimeScale;
         _previousPhysicsTicksPerSecond = Engine.PhysicsTicksPerSecond;
@@ -426,7 +453,46 @@ public partial class TrainingBootstrap : Node
 
         ConfigureEnvironmentRoles();
         InitializeOpponentBanks();
-        SaveInitialCheckpoints();
+        if (!_isWorkerMode) SaveInitialCheckpoints();
+
+        // ── Distributed training setup ────────────────────────────────────────
+        var distributedTrainers = _trainersByGroup
+            .Where(kvp => kvp.Value is IDistributedTrainer)
+            .ToDictionary(kvp => kvp.Key, kvp => (IDistributedTrainer)kvp.Value, StringComparer.Ordinal);
+
+        if (firstAcademy.DistributedConfig is not null && distributedTrainers.Count == 0)
+            GD.PushWarning("[RL Distributed] DistributedConfig is set but none of the configured algorithms " +
+                           "support distributed training (SAC does not implement IDistributedTrainer). " +
+                           "Training will run in single-process mode.");
+
+        if (distributedTrainers.Count > 0)
+        {
+            if (_isWorkerMode)
+            {
+                _distributedWorker = new DistributedWorker("127.0.0.1", _masterPort, distributedTrainers);
+                _distributedWorker.Connect();
+                // Override simulation speed for workers.
+                if (firstAcademy.DistributedConfig is { } wCfg)
+                    ApplySimulationSpeed(wCfg.WorkerSimulationSpeed);
+                GD.Print($"[RL Distributed] Running as worker {_workerId}.");
+            }
+            else if (firstAcademy.DistributedConfig is { } distCfg)
+            {
+                _distributedMaster = new DistributedMaster(
+                    distCfg.MasterPort,
+                    distCfg.WorkerCount,
+                    distCfg.MonitorIntervalUpdates,
+                    distCfg.VerboseLog,
+                    distributedTrainers);
+                _distributedMaster.Start();
+                if (distCfg.AutoLaunchWorkers)
+                    LaunchDistributedWorkers(distCfg);
+                if (distCfg.ShowTrainingOverlay)
+                    _trainingOverlay = CreateTrainingOverlay();
+                GD.Print($"[RL Distributed] Running as master on port {distCfg.MasterPort}.");
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
 
         foreach (var environment in _environments)
         {
@@ -447,14 +513,20 @@ public partial class TrainingBootstrap : Node
         _allTrainAgents = _academies.SelectMany(a => a.GetAgents(RLAgentControlMode.Train)).ToList();
 
         _statusWriter = new RunMetricsWriter(string.Empty, _manifest.StatusPath);
-        _statusWriter.WriteStatus(
-            "running",
-            _manifest.ScenePath,
-            _totalSteps,
-            0,
-            _quickTestMode
-                ? $"Quick test running ({_quickTestEpisodeLimit} episode target)."
-                : "Training started.");
+        // Workers must not write to the shared status/metrics files — they use the same
+        // manifest paths as the master, and would overwrite correct data with worker-local
+        // (wrong) values. Only the master owns these files.
+        if (!_isWorkerMode)
+        {
+            _statusWriter.WriteStatus(
+                "running",
+                _manifest.ScenePath,
+                _totalSteps,
+                0,
+                _quickTestMode
+                    ? $"Quick test running ({_quickTestEpisodeLimit} episode target)."
+                    : "Training started.");
+        }
         GD.Print($"[RL] Run: {_manifest.RunId}");
         if (_quickTestMode)
         {
@@ -558,7 +630,17 @@ public partial class TrainingBootstrap : Node
             }
 
             TrainerUpdateStats? updateStats;
-            if (_asyncGradientUpdates && trainer is IAsyncTrainer asyncTrainer)
+            if (_distributedWorker is not null && trainer is IDistributedTrainer workerDt)
+            {
+                // Worker: send rollout to master instead of training locally.
+                updateStats = _distributedWorker.TickUpdate(workerDt, groupId, _totalSteps, episodeCount);
+            }
+            else if (_distributedMaster is not null && trainer is IDistributedTrainer masterDt)
+            {
+                // Master: wait for all workers, then train on the combined buffer.
+                updateStats = _distributedMaster.TickUpdate(masterDt, groupId, _totalSteps, episodeCount);
+            }
+            else if (_asyncGradientUpdates && trainer is IAsyncTrainer asyncTrainer)
             {
                 // Poll for any result completed since last frame, then schedule the next job.
                 updateStats = asyncTrainer.TryPollResult(groupId, _totalSteps, episodeCount);
@@ -596,13 +678,16 @@ public partial class TrainingBootstrap : Node
         }
 
         var trainerConfig = _trainerConfig;
-        if (trainerConfig is not null && _totalSteps % Math.Max(1, trainerConfig.StatusWriteIntervalSteps) == 0)
+        if (!_isWorkerMode && trainerConfig is not null && _totalSteps % Math.Max(1, trainerConfig.StatusWriteIntervalSteps) == 0)
         {
             var totalEpisodes = _episodeCountByGroup.Values.Sum();
             var statusMessage = _quickTestMode
                 ? $"Quick test running: {totalEpisodes}/{_quickTestEpisodeLimit} episodes complete."
                 : $"Training update {_updateCountByGroup.Values.Sum()}";
-            _statusWriter.WriteStatus("running", _manifest.ScenePath, _totalSteps, totalEpisodes, statusMessage);
+            var reportedSteps    = _totalSteps + (_distributedMaster?.TotalWorkerSteps ?? 0L);
+            var workerEpisodes   = _distributedMaster?.TotalWorkerEpisodes ?? 0L;
+            _statusWriter.WriteStatus("running", _manifest.ScenePath, reportedSteps, totalEpisodes, statusMessage,
+                workerEpisodes);
         }
 
         if (_quickTestMode)
@@ -621,10 +706,13 @@ public partial class TrainingBootstrap : Node
         Engine.PhysicsTicksPerSecond = _previousPhysicsTicksPerSecond;
         Engine.MaxPhysicsStepsPerFrame = _previousMaxPhysicsStepsPerFrame;
 
-        if (_manifest is null)
-        {
+        _distributedMaster?.Shutdown();
+        _distributedMaster?.Dispose();
+        _distributedWorker?.Dispose();
+
+        // Workers do not own checkpoints — only the master persists them.
+        if (_isWorkerMode || _manifest is null)
             return;
-        }
 
         foreach (var (groupId, trainer) in _trainersByGroup)
         {
@@ -645,8 +733,14 @@ public partial class TrainingBootstrap : Node
             }
         }
 
-        var totalEpisodes = _episodeCountByGroup.Values.Sum();
-        _statusWriter?.WriteStatus(_finalStatus, _manifest.ScenePath, _totalSteps, totalEpisodes, _finalStatusMessage);
+        if (!_isWorkerMode)
+        {
+            var totalEpisodes      = _episodeCountByGroup.Values.Sum();
+            var finalReportedSteps = _totalSteps + (_distributedMaster?.TotalWorkerSteps ?? 0L);
+            var workerEpisodes     = _distributedMaster?.TotalWorkerEpisodes ?? 0L;
+            _statusWriter?.WriteStatus(_finalStatus, _manifest.ScenePath, finalReportedSteps, totalEpisodes,
+                _finalStatusMessage, workerEpisodes);
+        }
     }
 
     private void CompleteQuickTest()
@@ -1151,8 +1245,9 @@ public partial class TrainingBootstrap : Node
                     }
                 }
 
-                if (!_quickTestMode)
+                if (!_quickTestMode && !_isWorkerMode)
                 {
+                    var metricSteps = _totalSteps + (_distributedMaster?.TotalWorkerSteps ?? 0L);
                     _metricsWritersByGroup[groupId].AppendMetric(
                         pending.Agent.EpisodeReward,
                         pending.Agent.EpisodeSteps,
@@ -1160,7 +1255,7 @@ public partial class TrainingBootstrap : Node
                         _lastValueLossByGroup[groupId],
                         _lastEntropyByGroup[groupId],
                         _lastClipFractionByGroup[groupId],
-                        _totalSteps,
+                        metricSteps,
                         episodeCount,
                         pending.Agent.GetEpisodeRewardBreakdown(),
                         policyGroup: GetGroupDisplayName(groupId),
@@ -1803,5 +1898,226 @@ public partial class TrainingBootstrap : Node
         public string Source { get; init; }
         public long UpdateCount { get; init; }
         public IInferencePolicy Policy { get; init; }
+    }
+
+    // ── Distributed training helpers ─────────────────────────────────────────
+
+    /// <summary>
+    /// Launches <see cref="RLDistributedConfig.WorkerCount"/> headless Godot worker processes.
+    /// Workers connect back to the master on localhost:<see cref="RLDistributedConfig.MasterPort"/>.
+    /// </summary>
+    private void LaunchDistributedWorkers(RLDistributedConfig config)
+    {
+        var executable = !string.IsNullOrWhiteSpace(config.EngineExecutablePath)
+            ? config.EngineExecutablePath
+            : OS.GetExecutablePath();
+        var projectPath    = ProjectSettings.GlobalizePath("res://");
+        // Workers must run the bootstrap scene so they load the manifest and enter training mode.
+        // Godot 4 CLI: godot4 --headless --path /project res://scene.tscn -- [user args]
+        var bootstrapScene = "res://addons/rl_agent_plugin/Scenes/Bootstrap/TrainingBootstrap.tscn";
+
+        GD.Print($"[RL Distributed] Executable : {executable}");
+        GD.Print($"[RL Distributed] Project    : {projectPath}");
+        GD.Print($"[RL Distributed] Bootstrap  : {bootstrapScene}");
+
+        for (var i = 0; i < config.WorkerCount; i++)
+        {
+            var args = new[]
+            {
+                "--headless",
+                "--path", projectPath,
+                bootstrapScene,
+                "--",
+                "--rl-worker",
+                $"--master-port={config.MasterPort}",
+                $"--worker-id={i}",
+            };
+
+            GD.Print($"[RL Distributed] Launching worker {i}: {executable} {string.Join(" ", args)}");
+            var pid = OS.CreateProcess(executable, args);
+            if (pid > 0)
+                GD.Print($"[RL Distributed] Worker {i} launched (PID {pid}).");
+            else
+                GD.PushError($"[RL Distributed] Failed to launch worker {i} — OS.CreateProcess returned -1.");
+        }
+    }
+
+    public override void _Process(double delta)
+    {
+        // Worker self-destruct: master is gone.
+        if (_distributedWorker?.ShouldQuit == true)
+        {
+            GD.Print("[RL Distributed] Worker shutting down — master is gone.");
+            GetTree().Quit();
+            return;
+        }
+
+        if (_trainingOverlay is null || _distributedMaster is null) return;
+
+        var s = _distributedMaster.GetStats(_totalSteps);
+
+        // ── Smooth steps counter (rate-only PLL) ─────────────────────────────
+        // The display position is NEVER directly snapped — only the rate is
+        // adjusted.  This means the counter always ticks upward monotonically;
+        // it just runs slightly faster when behind reality and slightly slower
+        // when ahead.  Workers deliver steps in rollout-sized chunks, but those
+        // arrivals only influence the rate, so the display stays perfectly smooth.
+        var realSteps  = (double)s.TotalSteps;
+        var targetRate = (double)s.StepsPerSec;
+
+        if (_smoothDisplaySteps <= 0 && realSteps > 0)
+        {
+            // First data: start the counter slightly behind real so it always
+            // appears to be running forward toward a known value.
+            _smoothDisplaySteps = Math.Max(0.0, realSteps - targetRate * 0.5);
+            _smoothDisplayRate  = targetRate;
+        }
+        else if (targetRate > 0)
+        {
+            // Phase error: positive = display is behind, negative = ahead.
+            var error = realSteps - _smoothDisplaySteps;
+
+            // Blend the target rate with a small correction proportional to
+            // the error.  The gain of 0.15 means a 2 048-step gap adds only
+            // ~307 steps/sec to the rate — barely perceptible, but it will
+            // close the gap in a few seconds without any visible lurch.
+            var correctedRate = targetRate + error * 0.15;
+            correctedRate = Math.Max(0.0, correctedRate);
+
+            // Smooth the rate change itself so sudden step-rate changes
+            // (e.g. a worker disconnecting) ease in rather than snap.
+            _smoothDisplayRate += (correctedRate - _smoothDisplayRate) * Math.Min(1.0, delta * 2.0);
+
+            // Advance — position is only ever changed via the rate.
+            _smoothDisplaySteps += _smoothDisplayRate * delta;
+            _smoothDisplaySteps  = Math.Max(0.0, _smoothDisplaySteps);
+        }
+
+        var displaySteps = (long)_smoothDisplaySteps;
+
+        // Overlay is always visible when enabled; only the text changes.
+        if (_trainingOverlay.GetChildCount() > 0
+            && _trainingOverlay.GetChild(0) is Control panel
+            && panel.GetChildCount() > 0
+            && panel.GetChild(0) is Label label)
+        {
+            label.Text = BuildOverlayText(s, displaySteps);
+        }
+    }
+
+    private static string BuildOverlayText(DistributedMasterStats s, long displaySteps)
+    {
+        // All lines are always present so the panel never reflowsof jumps.
+        // Use "---" placeholders for values not yet available.
+        var sb = new System.Text.StringBuilder();
+
+        // ── Title / status (fixed 1 line) ─────────────────────────────────────
+        string status;
+        if (s.ConnectedWorkers == 0)
+            status = "Waiting for workers...";
+        else if (s.IsTraining)
+            status = "Training  — backprop in progress";
+        else
+            status = "Collecting rollouts";
+        sb.AppendLine($"  RL Distributed  |  {status}");
+        sb.AppendLine();
+
+        // ── Connection (fixed 2 lines) ────────────────────────────────────────
+        sb.AppendLine($"  Workers         {s.ConnectedWorkers,2} / {s.ExpectedWorkers,-2}");
+        sb.AppendLine($"  Rollouts recv   {(s.ConnectedWorkers > 0 ? $"{s.RolloutsThisRound} / {s.ConnectedWorkers}" : "---")}");
+        sb.AppendLine();
+
+        // ── Progress (fixed 3 lines) ──────────────────────────────────────────
+        sb.AppendLine($"  Update #        {s.TotalUpdates}");
+        sb.AppendLine($"  Total steps     {(displaySteps > 0 ? displaySteps.ToString("N0") : "---")}");
+        sb.AppendLine($"  Steps / sec     {(s.StepsPerSec > 0f ? s.StepsPerSec.ToString("N0") : "---")}");
+        sb.AppendLine();
+
+        // ── Timing (fixed 2 lines) ────────────────────────────────────────────
+        sb.AppendLine($"  Backprop time   {(s.IsTraining && s.TrainingElapsedSec > 0.05f ? $"{s.TrainingElapsedSec:F2}s" : s.LastUpdateDurationSec > 0.01f ? $"{s.LastUpdateDurationSec:F2}s (last)" : "---")}");
+        sb.AppendLine();
+
+        // ── Training quality (fixed 4 lines — shown as --- until first update) ─
+        var hasUpdate = s.TotalUpdates > 0;
+        sb.AppendLine($"  Batch size      {(hasUpdate ? s.LastBatchSteps.ToString("N0") + " steps" : "---")}");
+        sb.AppendLine($"  Policy loss     {(hasUpdate ? s.LastPolicyLoss.ToString("F4") : "---")}");
+        sb.AppendLine($"  Value loss      {(hasUpdate ? s.LastValueLoss.ToString("F4")  : "---")}");
+        sb.AppendLine($"  Entropy         {(hasUpdate ? s.LastEntropy.ToString("F4")    : "---")}");
+        sb.Append    ($"  Clip frac       {(hasUpdate && s.LastClipFraction > 0f ? s.LastClipFraction.ToString("F4") : "---")}");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds a simple full-screen overlay that appears while the master runs backprop.
+    /// Uses a high CanvasLayer so it renders on top of everything in the scene.
+    /// </summary>
+    private CanvasLayer CreateTrainingOverlay()
+    {
+        var canvas = new CanvasLayer { Layer = 128, Visible = true };
+
+        // Panel anchored to the top-left corner — grows to fit content.
+        var panel = new Panel
+        {
+            AnchorLeft   = 0f,
+            AnchorTop    = 0f,
+            AnchorRight  = 0f,
+            AnchorBottom = 0f,
+            OffsetRight  = 360f,
+            OffsetBottom = 380f,
+            Position     = new Vector2(16f, 16f),
+        };
+        var style = new StyleBoxFlat
+        {
+            BgColor      = new Color(0.05f, 0.05f, 0.08f, 0.88f),
+            CornerRadiusTopLeft     = 6,
+            CornerRadiusTopRight    = 6,
+            CornerRadiusBottomLeft  = 6,
+            CornerRadiusBottomRight = 6,
+            ContentMarginLeft   = 12f,
+            ContentMarginRight  = 12f,
+            ContentMarginTop    = 10f,
+            ContentMarginBottom = 10f,
+        };
+        panel.AddThemeStyleboxOverride("panel", style);
+
+        var label = new Label
+        {
+            Text                = "Training — processing batch...",
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment   = VerticalAlignment.Top,
+            AutowrapMode        = TextServer.AutowrapMode.Off,
+        };
+        label.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        label.AddThemeColorOverride("font_color", new Color(0.9f, 0.95f, 1f, 1f));
+        label.AddThemeFontSizeOverride("font_size", 14);
+
+        panel.AddChild(label);
+        canvas.AddChild(panel);
+        AddChild(canvas);
+        return canvas;
+    }
+
+    /// <summary>Overrides <c>Engine.TimeScale</c> and scales physics ticks accordingly.</summary>
+    private void ApplySimulationSpeed(float speed)
+    {
+        var basePhysicsTicks = _previousPhysicsTicksPerSecond;
+        Engine.TimeScale              = speed;
+        Engine.PhysicsTicksPerSecond  = Math.Max(1, (int)Math.Ceiling(basePhysicsTicks * speed));
+        Engine.MaxPhysicsStepsPerFrame = Math.Max(
+            _previousMaxPhysicsStepsPerFrame,
+            Engine.PhysicsTicksPerSecond);
+    }
+
+    /// <summary>Parses an integer from a <c>--key=value</c> command-line argument array.</summary>
+    private static int ParseDistributedIntArg(string[] args, string key, int defaultValue)
+    {
+        foreach (var arg in args)
+        {
+            if (arg.StartsWith(key + "=", StringComparison.Ordinal)
+                && int.TryParse(arg.AsSpan(key.Length + 1), out var v))
+                return v;
+        }
+        return defaultValue;
     }
 }

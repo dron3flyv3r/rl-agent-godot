@@ -18,7 +18,8 @@ public sealed class RunMetricsWriter
     public RunMetricsWriter(TrainingLaunchManifest manifest)
         : this(manifest.MetricsPath, manifest.StatusPath) { }
 
-    public void WriteStatus(string status, string scenePath, long totalSteps, long episodeCount, string message)
+    public void WriteStatus(string status, string scenePath, long totalSteps, long episodeCount, string message,
+        long workerEpisodeCount = 0)
     {
         EnsureFileDirectory(_statusPath);
         using var file = FileAccess.Open(_statusPath, FileAccess.ModeFlags.Write);
@@ -28,14 +29,18 @@ public sealed class RunMetricsWriter
             return;
         }
 
-        file.StoreString(Json.Stringify(new Godot.Collections.Dictionary
+        var payload = new Godot.Collections.Dictionary
         {
-            { "status", status },
-            { "scene_path", scenePath },
-            { "total_steps", totalSteps },
+            { "status",        status },
+            { "scene_path",    scenePath },
+            { "total_steps",   totalSteps },
             { "episode_count", episodeCount },
-            { "message", message },
-        }));
+            { "message",       message },
+        };
+        if (workerEpisodeCount > 0)
+            payload["worker_episode_count"] = workerEpisodeCount;
+
+        file.StoreString(Json.Stringify(payload));
     }
 
     public void AppendMetric(
