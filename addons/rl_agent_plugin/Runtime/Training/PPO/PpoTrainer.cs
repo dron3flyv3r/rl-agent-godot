@@ -438,6 +438,8 @@ public sealed class PpoTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
 
     // ── IDistributedTrainer ───────────────────────────────────────────────────
 
+    public bool IsOffPolicy => false;
+
     public bool IsRolloutReady => _transitions.Count >= _trainerConfig.RolloutLength;
 
     public byte[] ExportAndClearRollout()
@@ -450,6 +452,7 @@ public sealed class PpoTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
                 ContinuousActions = t.ContinuousActions,
                 Reward            = t.Reward,
                 Done              = t.Done,
+                NextObservation   = Array.Empty<float>(),
                 OldLogProbability = t.OldLogProbability,
                 Value             = t.Value,
                 NextValue         = t.NextValue,

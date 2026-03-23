@@ -104,6 +104,7 @@ public partial class RLAcademy : Node
 
     public override void _Ready()
     {
+        AddToGroup("rl_agent_plugin_academy");
         TryInitializeInference();
         TryInitializeHumanMode();
 

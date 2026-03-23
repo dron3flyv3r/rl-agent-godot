@@ -93,7 +93,7 @@ public static class DistributedProtocol
 
     /// <summary>
     /// Per-transition layout:
-    /// obs_len, obs[], discrete_action, cont_len, cont[], reward, done, log_prob, value, next_value
+    /// obs_len, obs[], discrete_action, cont_len, cont[], reward, done, next_obs_len, next_obs[], log_prob, value, next_value
     /// </summary>
     public static byte[] SerializeRollout(IReadOnlyList<DistributedTransition> transitions)
     {
@@ -109,6 +109,8 @@ public static class DistributedProtocol
             foreach (var f in t.ContinuousActions) bw.Write(f);
             bw.Write(t.Reward);
             bw.Write(t.Done);
+            bw.Write(t.NextObservation.Length);
+            foreach (var f in t.NextObservation) bw.Write(f);
             bw.Write(t.OldLogProbability);
             bw.Write(t.Value);
             bw.Write(t.NextValue);
@@ -136,6 +138,8 @@ public static class DistributedProtocol
             ms.Seek(contLen * sizeof(float), SeekOrigin.Current); // skip cont
             ms.Seek(sizeof(float), SeekOrigin.Current);           // skip reward
             if (br.ReadBoolean()) episodes++;                      // done
+            var nextObsLen = br.ReadInt32();
+            ms.Seek(nextObsLen * sizeof(float), SeekOrigin.Current); // skip next_obs
             ms.Seek(sizeof(float) * 3, SeekOrigin.Current);       // skip log_prob, value, next_value
         }
         return episodes;
@@ -156,13 +160,19 @@ public static class DistributedProtocol
             var contLen = br.ReadInt32();
             var cont    = new float[contLen];
             for (var j = 0; j < contLen; j++) cont[j] = br.ReadSingle();
+            var reward  = br.ReadSingle();
+            var done    = br.ReadBoolean();
+            var nextObsLen = br.ReadInt32();
+            var nextObs = new float[nextObsLen];
+            for (var j = 0; j < nextObsLen; j++) nextObs[j] = br.ReadSingle();
             result.Add(new DistributedTransition
             {
                 Observation        = obs,
                 DiscreteAction     = action,
                 ContinuousActions  = cont,
-                Reward             = br.ReadSingle(),
-                Done               = br.ReadBoolean(),
+                Reward             = reward,
+                Done               = done,
+                NextObservation    = nextObs,
                 OldLogProbability  = br.ReadSingle(),
                 Value              = br.ReadSingle(),
                 NextValue          = br.ReadSingle(),
@@ -181,6 +191,7 @@ public struct DistributedTransition
     public float[] ContinuousActions;
     public float   Reward;
     public bool    Done;
+    public float[] NextObservation;   // SAC Bellman target; PPO sends Array.Empty
     public float   OldLogProbability;
     public float   Value;
     public float   NextValue;

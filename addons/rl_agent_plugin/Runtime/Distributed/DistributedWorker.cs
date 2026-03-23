@@ -203,11 +203,20 @@ public sealed class DistributedWorker : IDisposable
             }
         }
 
-        if (_waitingForWeights.Contains(groupId)) return null;
+        // On-policy (PPO): block until master returns fresh weights.
+        if (!trainer.IsOffPolicy && _waitingForWeights.Contains(groupId)) return null;
+
         if (!trainer.IsRolloutReady) return null;
 
         var rolloutBytes = trainer.ExportAndClearRollout();
-        _waitingForWeights.Add(groupId);
+
+        if (!trainer.IsOffPolicy)
+        {
+            // PPO: block until master returns fresh weights (ensures on-policy data).
+            _waitingForWeights.Add(groupId);
+        }
+        // SAC: don't block — continue collecting immediately.
+        // Incoming weights are applied eagerly in the weight-drain loop above.
 
         if (_writer is not null)
         {
