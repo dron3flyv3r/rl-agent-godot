@@ -74,6 +74,10 @@ public partial class TrainingBootstrap : Node
     private DistributedWorker? _distributedWorker;
     private CanvasLayer?       _trainingOverlay;
 
+    // Self-play bank rescan (workers only): rate-limit disk scans to once per N steps.
+    private long _lastSelfPlayBankScanStep = long.MinValue;
+    private const long SelfPlayBankScanInterval = 200;
+
     // Smooth steps counter for the overlay — interpolates between real values to avoid
     // jarring jumps when a worker rollout arrives (e.g. +2048 steps at once).
     private double _smoothDisplaySteps;
@@ -459,11 +463,6 @@ public partial class TrainingBootstrap : Node
         var distributedTrainers = _trainersByGroup
             .Where(kvp => kvp.Value is IDistributedTrainer)
             .ToDictionary(kvp => kvp.Key, kvp => (IDistributedTrainer)kvp.Value, StringComparer.Ordinal);
-
-        if (firstAcademy.DistributedConfig is not null && distributedTrainers.Count == 0)
-            GD.PushWarning("[RL Distributed] DistributedConfig is set but none of the configured algorithms " +
-                           "support distributed training (SAC does not implement IDistributedTrainer). " +
-                           "Training will run in single-process mode.");
 
         if (distributedTrainers.Count > 0)
         {
@@ -1001,6 +1000,33 @@ public partial class TrainingBootstrap : Node
         return $"{filePath}::0";
     }
 
+    /// <summary>
+    /// Rescans the self-play bank directory for a group and registers any newly-written snapshot
+    /// files that the master has persisted since the last scan. Safe to call repeatedly —
+    /// <see cref="PolicyPool.AddSnapshot"/> is a no-op for keys that already exist.
+    /// Used by workers, which never call <see cref="PersistCheckpoint"/> themselves.
+    /// </summary>
+    private void RescanOpponentBankDirectory(string groupId)
+    {
+        if (!_opponentBanksByGroup.TryGetValue(groupId, out var bank)) return;
+        var directory = GetSelfPlayBankDirectory(groupId);
+        var dir = DirAccess.Open(directory);
+        if (dir is null) return;
+
+        dir.ListDirBegin();
+        while (true)
+        {
+            var entry = dir.GetNext();
+            if (string.IsNullOrEmpty(entry)) break;
+            if (dir.CurrentIsDir() || entry.StartsWith(".") || !entry.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var filePath    = $"{directory}/{entry}";
+            var snapshotKey = ExtractSnapshotKeyFromFileName(entry, filePath);
+            bank.Pool.AddSnapshot(filePath, snapshotKey, EloTracker.InitialRating);
+        }
+        dir.ListDirEnd();
+    }
+
     private void SaveInitialCheckpoints()
     {
         if (_quickTestMode) return;
@@ -1282,7 +1308,10 @@ public partial class TrainingBootstrap : Node
                     }
                     else if (curriculumEnvironment.Academy.MaxCurriculumSteps > 0)
                     {
-                        var progress = Mathf.Clamp(_totalSteps / (float)curriculumEnvironment.Academy.MaxCurriculumSteps, 0f, 1f);
+                        // Include worker steps so the master's curriculum advances at the true
+                        // combined throughput rate rather than only counting local steps.
+                        var combinedSteps = _totalSteps + (_distributedMaster?.TotalWorkerSteps ?? 0L);
+                        var progress = Mathf.Clamp(combinedSteps / (float)curriculumEnvironment.Academy.MaxCurriculumSteps, 0f, 1f);
                         SetCurriculumProgressForAllAcademies(progress);
                     }
                 }
@@ -1462,6 +1491,16 @@ public partial class TrainingBootstrap : Node
         if (!environment.NeedsMatchupRefresh)
         {
             return true;
+        }
+
+        // Workers never call PersistCheckpoint (they don't train), so their in-memory opponent
+        // pools never grow. Periodically rescan the shared bank directory on disk so workers
+        // pick up snapshots that the master has written during training.
+        if (_isWorkerMode && _totalSteps - _lastSelfPlayBankScanStep >= SelfPlayBankScanInterval)
+        {
+            foreach (var groupId in _selfPlayParticipantGroups)
+                RescanOpponentBankDirectory(groupId);
+            _lastSelfPlayBankScanStep = _totalSteps;
         }
 
         foreach (var learnerRole in environment.GroupRoles.Values.Where(role => role.IsSelfPlayLearner))

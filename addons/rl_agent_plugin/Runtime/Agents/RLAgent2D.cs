@@ -307,7 +307,10 @@ public partial class RLAgent2D : Node2D, IRLAgent
         if (PolicyGroupConfig.MaxEpisodeSteps > 0)
             return PolicyGroupConfig.MaxEpisodeSteps;
 
-        return ResolveAcademy()?.MaxEpisodeSteps ?? 0;
+        var academy = ResolveAcademy();
+        if (academy is null)
+            GD.PushWarning($"[RL] {Name}: no RLAcademy found in scene — MaxEpisodeSteps will be 0 (episodes never timeout). Add an RLAcademy node to the scene.");
+        return academy?.MaxEpisodeSteps ?? 0;
     }
 
     // ── Framework-internal ────────────────────────────────────────────────────
@@ -415,17 +418,25 @@ public partial class RLAgent2D : Node2D, IRLAgent
         return path;
     }
 
+    private RLAcademy? _cachedAcademy;
+
     private RLAcademy? ResolveAcademy()
     {
+        if (_cachedAcademy is not null) return _cachedAcademy;
+
+        // Fast path: walk up the ancestor chain.
         Node? current = this;
         while (current is not null)
         {
-            if (current is RLAcademy academy)
-            {
-                return academy;
-            }
-
+            if (current is RLAcademy a) { _cachedAcademy = a; return a; }
             current = current.GetParent();
+        }
+
+        // Fallback: scene-wide group search (handles sibling academy).
+        if (IsInsideTree())
+        {
+            foreach (var node in GetTree().GetNodesInGroup("rl_agent_plugin_academy"))
+                if (node is RLAcademy a) { _cachedAcademy = a; return a; }
         }
 
         return null;

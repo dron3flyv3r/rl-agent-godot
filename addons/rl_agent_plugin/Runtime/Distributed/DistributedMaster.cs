@@ -358,17 +358,21 @@ public sealed class DistributedMaster : IDisposable
         }
 
         // Gate on training readiness.
-        // With workers: train once every connected worker has sent a rollout.
-        //   (Worker-injected transitions satisfy IsRolloutReady automatically.)
-        // Without workers: fall back to standalone rollout-ready check.
-        var connected = ConnectedWorkers;
-        if (connected > 0)
+        // On-policy: synchronous barrier — wait for all workers before training.
+        // Off-policy: no gate — master trains on its own schedule; workers asynchronously
+        //             enrich the replay buffer. TryUpdate/TryScheduleBackgroundUpdate
+        //             apply their own internal conditions (warmup, step cadence).
+        if (!trainer.IsOffPolicy)
         {
-            if (_rolloutsThisRound.GetValueOrDefault(groupId) < connected) return null;
-        }
-        else
-        {
-            if (!trainer.IsRolloutReady) return null;
+            var connected = ConnectedWorkers;
+            if (connected > 0)
+            {
+                if (_rolloutsThisRound.GetValueOrDefault(groupId) < connected) return null;
+            }
+            else
+            {
+                if (!trainer.IsRolloutReady) return null;
+            }
         }
 
         // Prefer async (non-blocking backprop).

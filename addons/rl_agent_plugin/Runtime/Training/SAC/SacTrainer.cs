@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
+using Godot;
 
 namespace RlAgentPlugin.Runtime;
 
-public sealed class SacTrainer : ITrainer, IAsyncTrainer
+public sealed class SacTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
 {
     private readonly PolicyGroupConfig _config;
     private readonly RLTrainerConfig _trainerConfig;
@@ -15,10 +17,19 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer
     private float _logAlpha;
     private readonly float _targetEntropy;
     private long _totalStepsSeen;
+    // Threshold-based cadence: train when _totalStepsSeen >= this value.
+    // Avoids the fragile modulo check that can skip multiples when N agents
+    // make decisions per frame and N doesn't divide SacUpdateEverySteps.
+    private long _nextTrainingStep;
 
     // ── Async gradient update state ───────────────────────────────────────────
     private SacNetwork? _shadowNetwork;
     private Task<SacAsyncResult>? _pendingUpdate;
+
+    // ── Distributed staging buffer ────────────────────────────────────────────
+    // Transitions accumulated since last worker send.
+    // Capped at 2 × SacBatchSize to bound memory when not consumed by a master.
+    private readonly Queue<Transition> _stagingTransitions = new();
 
     public SacTrainer(PolicyGroupConfig config)
     {
@@ -115,8 +126,23 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer
 
     public void RecordTransition(Transition transition)
     {
+        // Guard against NaN/infinity from physics explosions corrupting the replay buffer.
+        if (!IsFiniteTransition(transition)) return;
+
         _buffer.Add(transition);
         _totalStepsSeen++;
+        _stagingTransitions.Enqueue(transition);
+        // Cap staging buffer so it doesn't grow forever in standalone mode
+        while (_stagingTransitions.Count > _trainerConfig.SacBatchSize * 2)
+            _stagingTransitions.Dequeue();
+    }
+
+    private static bool IsFiniteTransition(Transition t)
+    {
+        if (!float.IsFinite(t.Reward)) return false;
+        foreach (var f in t.Observation)    if (!float.IsFinite(f)) return false;
+        foreach (var f in t.NextObservation) if (!float.IsFinite(f)) return false;
+        return true;
     }
 
     public TrainerUpdateStats? TryUpdate(string groupId, long totalSteps, long episodeCount)
@@ -124,8 +150,9 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer
         if (_buffer.Count < _trainerConfig.SacWarmupSteps)
             return null;
 
-        if (_totalStepsSeen % Math.Max(1, _trainerConfig.SacUpdateEverySteps) != 0)
+        if (_totalStepsSeen < _nextTrainingStep)
             return null;
+        _nextTrainingStep = _totalStepsSeen + Math.Max(1, _trainerConfig.SacUpdateEverySteps);
 
         var batch = _buffer.SampleBatch(_trainerConfig.SacBatchSize, _rng);
         var alpha = MathF.Exp(_logAlpha);
@@ -136,9 +163,18 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer
         foreach (var t in batch)
         {
             if (_isContinuous)
-                UpdateContinuous(_network, t, alpha, _trainerConfig, ref _logAlpha, ref policyLoss, ref valueLoss, ref entropySum, _targetEntropy, _rng);
+                UpdateContinuous(_network, t, alpha, _trainerConfig, ref policyLoss, ref valueLoss, ref entropySum, _rng);
             else
-                UpdateDiscrete(_network, t, alpha, _trainerConfig, ref _logAlpha, ref policyLoss, ref valueLoss, ref entropySum, _targetEntropy);
+                UpdateDiscrete(_network, t, alpha, _trainerConfig, ref policyLoss, ref valueLoss, ref entropySum);
+        }
+
+        // Single per-batch logAlpha update (batch-average gradient, not per-transition).
+        // Sign: H < H_target → logAlpha increases (push toward more entropy).
+        if (_trainerConfig.SacAutoTuneAlpha && batch.Length > 0)
+        {
+            var meanEntropy = entropySum / batch.Length;
+            _logAlpha -= _trainerConfig.LearningRate * (meanEntropy - _targetEntropy);
+            _logAlpha = Math.Clamp(_logAlpha, -20f, 4f);
         }
 
         _network.SoftUpdateTargets(_trainerConfig.SacTau);
@@ -171,8 +207,9 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer
         if (_buffer.Count < _trainerConfig.SacWarmupSteps)
             return false;
 
-        if (_totalStepsSeen % Math.Max(1, _trainerConfig.SacUpdateEverySteps) != 0)
+        if (_totalStepsSeen < _nextTrainingStep)
             return false;
+        _nextTrainingStep = _totalStepsSeen + Math.Max(1, _trainerConfig.SacUpdateEverySteps);
 
         // Pre-sample the batch on the main thread (buffer access is main-thread-safe here).
         var batch = _buffer.SampleBatch(_trainerConfig.SacBatchSize, _rng);
@@ -203,6 +240,16 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer
     {
         if (_pendingUpdate is null || !_pendingUpdate.IsCompleted)
             return null;
+
+        if (_pendingUpdate.IsFaulted)
+        {
+            // Clear the stuck task so training can resume on the next eligible step.
+            // (Re-throwing would leave _trainingInProgress dirty in the master, blocking forever.)
+            var msg = _pendingUpdate.Exception?.GetBaseException().Message ?? "unknown";
+            _pendingUpdate = null;
+            Godot.GD.PushError($"[SAC] Background training task faulted — skipping update. {msg}");
+            return null;
+        }
 
         var result = _pendingUpdate.Result;
         _pendingUpdate = null;
@@ -240,7 +287,7 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer
         float targetEntropy,
         Random rng)
     {
-        // alpha is fixed for the entire batch (standard SAC practice); only logAlpha accumulates.
+        // alpha is fixed for the entire batch — only updated once after the loop.
         var alpha = MathF.Exp(logAlpha);
         var policyLoss = 0f;
         var valueLoss = 0f;
@@ -249,9 +296,18 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer
         foreach (var t in batch)
         {
             if (isContinuous)
-                UpdateContinuous(network, t, alpha, config, ref logAlpha, ref policyLoss, ref valueLoss, ref entropySum, targetEntropy, rng);
+                UpdateContinuous(network, t, alpha, config, ref policyLoss, ref valueLoss, ref entropySum, rng);
             else
-                UpdateDiscrete(network, t, alpha, config, ref logAlpha, ref policyLoss, ref valueLoss, ref entropySum, targetEntropy);
+                UpdateDiscrete(network, t, alpha, config, ref policyLoss, ref valueLoss, ref entropySum);
+        }
+
+        // Single per-batch logAlpha update (batch-average gradient, not per-transition).
+        // Sign: H < H_target → logAlpha increases (push toward more entropy).
+        if (config.SacAutoTuneAlpha && batch.Length > 0)
+        {
+            var meanEntropy = entropySum / batch.Length;
+            logAlpha -= config.LearningRate * (meanEntropy - targetEntropy);
+            logAlpha = Math.Clamp(logAlpha, -20f, 4f);
         }
 
         network.SoftUpdateTargets(config.SacTau);
@@ -273,11 +329,9 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer
         Transition t,
         float alpha,
         RLTrainerConfig config,
-        ref float logAlpha,
         ref float policyLoss,
         ref float valueLoss,
-        ref float entropySum,
-        float targetEntropy)
+        ref float entropySum)
     {
         // Compute target V(s') = sum_a pi(a|s') * (min_Q_target(s',a) - alpha * log_pi(a|s'))
         var (nextQ1, nextQ2) = network.GetDiscreteTargetQValues(t.NextObservation);
@@ -304,21 +358,13 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer
         // Update actor
         network.UpdateActorDiscrete(t.Observation, alpha);
 
-        // Compute entropy for logging and alpha update
+        // Compute entropy for logging; logAlpha update happens once per batch in the caller.
         var (probs, logProbs) = network.GetDiscreteActorProbs(t.Observation);
         var entropy = 0f;
         for (var a = 0; a < probs.Length; a++)
             entropy -= probs[a] * logProbs[a];
 
         entropySum += entropy;
-
-        // Auto-tune alpha: minimize log_alpha * (entropy - target_entropy)
-        if (config.SacAutoTuneAlpha)
-        {
-            var alphaLossGrad = -(entropy - targetEntropy);
-            logAlpha -= config.LearningRate * alphaLossGrad;
-        }
-
         policyLoss -= entropy; // policy loss ≈ -entropy as a proxy metric
     }
 
@@ -329,11 +375,9 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer
         Transition t,
         float alpha,
         RLTrainerConfig config,
-        ref float logAlpha,
         ref float policyLoss,
         ref float valueLoss,
         ref float entropySum,
-        float targetEntropy,
         Random rng)
     {
         // Sample next action for target
@@ -356,16 +400,64 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer
         var (action, logProb, eps, u) = network.SampleContinuousAction(t.Observation, rng);
         network.UpdateActorContinuous(t.Observation, action, eps, u, alpha);
 
+        // Accumulate entropy; logAlpha update happens once per batch in the caller.
         entropySum += -logProb;
-
-        // Auto-tune alpha
-        if (config.SacAutoTuneAlpha)
-        {
-            var alphaLossGrad = -(-logProb - targetEntropy);
-            logAlpha -= config.LearningRate * alphaLossGrad;
-        }
-
         policyLoss += logProb; // policy loss proxy
+    }
+
+    // ── IDistributedTrainer ───────────────────────────────────────────────────
+
+    public bool IsOffPolicy => true;
+
+    public bool IsRolloutReady => _stagingTransitions.Count >= _trainerConfig.SacBatchSize;
+
+    public byte[] ExportAndClearRollout()
+    {
+        var batch = new List<DistributedTransition>(_stagingTransitions.Count);
+        while (_stagingTransitions.TryDequeue(out var t))
+        {
+            batch.Add(new DistributedTransition
+            {
+                Observation       = t.Observation,
+                DiscreteAction    = t.DiscreteAction,
+                ContinuousActions = t.ContinuousActions,
+                Reward            = t.Reward,
+                Done              = t.Done,
+                NextObservation   = t.NextObservation,
+                OldLogProbability = 0f,
+                Value             = 0f,
+                NextValue         = 0f,
+            });
+        }
+        return DistributedProtocol.SerializeRollout(batch);
+    }
+
+    public void InjectRollout(byte[] data)
+    {
+        foreach (var t in DistributedProtocol.DeserializeRollout(data))
+        {
+            _buffer.Add(new Transition
+            {
+                Observation       = t.Observation,
+                DiscreteAction    = t.DiscreteAction,
+                ContinuousActions = t.ContinuousActions,
+                Reward            = t.Reward,
+                Done              = t.Done,
+                NextObservation   = t.NextObservation,
+            });
+        }
+    }
+
+    public byte[] ExportWeights()
+    {
+        var cp = _network.SaveCheckpoint("_dist_", 0, 0, 0);
+        return DistributedProtocol.SerializeWeights(cp.WeightBuffer, cp.LayerShapeBuffer);
+    }
+
+    public void ImportWeights(byte[] data)
+    {
+        var (weights, shapes) = DistributedProtocol.DeserializeWeights(data);
+        _network.LoadCheckpoint(new RLCheckpoint { WeightBuffer = weights, LayerShapeBuffer = shapes });
     }
 
     // ── Private types ─────────────────────────────────────────────────────────

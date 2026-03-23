@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="RLPPOConfig" format=3 uid="uid://cslj70l6lnc0m"]
+
+[ext_resource type="Script" uid="uid://ire111rjxew5" path="res://addons/rl_agent_plugin/Resources/Config/RLPPOConfig.cs" id="1_2og43"]
+
+[resource]
+script = ExtResource("1_2og43")
+RolloutLength = 512
+MiniBatchSize = 128
+LearningRate = 0.0003
+Gamma = 0.95
+metadata/_custom_type_script = "uid://ire111rjxew5"

@@ -14,6 +14,12 @@ namespace RlAgentPlugin.Runtime;
 public interface IDistributedTrainer : ITrainer
 {
     /// <summary>
+    /// True for off-policy algorithms (SAC, DQN, etc.).
+    /// Controls worker blocking behaviour and master training gate.
+    /// </summary>
+    bool IsOffPolicy { get; }
+
+    /// <summary>
     /// PPO: true when the local rollout buffer has reached <c>RolloutLength</c> and is ready to ship.
     /// SAC: true when enough transitions have accumulated to justify sending a batch.
     /// </summary>
