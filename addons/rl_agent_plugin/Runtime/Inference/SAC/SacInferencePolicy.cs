@@ -5,7 +5,6 @@ namespace RlAgentPlugin.Runtime;
 public sealed class SacInferencePolicy : IInferencePolicy
 {
     private readonly SacNetwork _network;
-    private readonly bool _isContinuous;
 
     public SacInferencePolicy(int observationSize, int actionDimensions, bool isContinuous, RLNetworkGraph graph)
     {
@@ -17,7 +16,6 @@ public sealed class SacInferencePolicy : IInferencePolicy
                 "SAC inference does not support discrete action spaces. Convert the action space to continuous-only actions.");
 
         _network = new SacNetwork(observationSize, actionDimensions, isContinuous, graph, 0f);
-        _isContinuous = isContinuous;
     }
 
     public void LoadCheckpoint(RLCheckpoint checkpoint)
@@ -27,8 +25,6 @@ public sealed class SacInferencePolicy : IInferencePolicy
 
     public PolicyDecision Predict(float[] observation)
     {
-        return _isContinuous
-            ? new PolicyDecision { ContinuousActions = _network.DeterministicContinuousAction(observation) }
-            : new PolicyDecision { DiscreteAction = _network.GreedyDiscreteAction(observation) };
+        return new PolicyDecision { ContinuousActions = _network.DeterministicContinuousAction(observation) };
     }
 }
