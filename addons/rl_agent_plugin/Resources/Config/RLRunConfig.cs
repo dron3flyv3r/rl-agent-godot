@@ -2,6 +2,11 @@ using Godot;
 
 namespace RlAgentPlugin.Runtime;
 
+/// <summary>
+/// Run-level execution settings shared by all academies in a training session.
+/// Controls simulation pacing, environment batching, checkpoint cadence, and
+/// optional threading optimizations.
+/// </summary>
 [GlobalClass]
 [Tool]
 public partial class RLRunConfig : Resource

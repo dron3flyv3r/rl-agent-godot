@@ -37,6 +37,7 @@ public partial class RLPPOConfig : RLAlgorithmConfig
 
     public override RLAlgorithmKind AlgorithmKind => RLAlgorithmKind.PPO;
 
+    /// <inheritdoc />
     internal override void ApplyTo(RLTrainerConfig config)
     {
         config.Algorithm               = RLAlgorithmKind.PPO;

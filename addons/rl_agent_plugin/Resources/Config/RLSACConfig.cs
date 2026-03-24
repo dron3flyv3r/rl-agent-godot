@@ -40,6 +40,7 @@ public partial class RLSACConfig : RLAlgorithmConfig
 
     public override RLAlgorithmKind AlgorithmKind => RLAlgorithmKind.SAC;
 
+    /// <inheritdoc />
     internal override void ApplyTo(RLTrainerConfig config)
     {
         config.Algorithm               = RLAlgorithmKind.SAC;

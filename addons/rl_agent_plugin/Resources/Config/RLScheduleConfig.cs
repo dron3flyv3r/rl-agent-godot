@@ -26,6 +26,11 @@ public partial class RLScheduleConfig : Resource
     /// <summary>Optional schedule for SAC alpha temperature.</summary>
     [Export] public RLHyperparamSchedule? SacAlpha           { get; set; }
 
+    /// <summary>
+    /// Evaluates assigned schedules and writes resulting values into the trainer config.
+    /// </summary>
+    /// <param name="config">Mutable runtime trainer settings to override.</param>
+    /// <param name="ctx">Current schedule evaluation context.</param>
     internal void ApplyTo(RLTrainerConfig config, ScheduleContext ctx)
     {
         if (LearningRate       is not null) config.LearningRate      = LearningRate.Evaluate(ctx);
