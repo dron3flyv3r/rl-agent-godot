@@ -2,6 +2,10 @@ using Godot;
 
 namespace RlAgentPlugin.Runtime;
 
+/// <summary>
+/// Defines one logical policy group, including identity, optional inference model,
+/// and trainable network architecture.
+/// </summary>
 [GlobalClass]
 [Tool]
 public partial class RLPolicyGroupConfig : Resource

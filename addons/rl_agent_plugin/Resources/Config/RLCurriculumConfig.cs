@@ -4,10 +4,15 @@ namespace RlAgentPlugin.Runtime;
 
 public enum RLCurriculumMode
 {
+    /// <summary>Advance curriculum based on global training step progress.</summary>
     StepBased = 0,
+    /// <summary>Adapt curriculum by recent episode success-rate.</summary>
     SuccessRate = 1,
 }
 
+/// <summary>
+/// Curriculum progression settings used to control environment difficulty over time.
+/// </summary>
 [GlobalClass]
 [Tool]
 public partial class RLCurriculumConfig : Resource

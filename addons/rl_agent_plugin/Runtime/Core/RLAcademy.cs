@@ -10,16 +10,24 @@ public partial class RLAcademy : Node
     private RLTrainingConfig? _trainingConfig;
 
     [ExportGroup("Configuration")]
+    /// <summary>
+    /// Training algorithm and schedule resource used when this academy participates in training.
+    /// </summary>
     [Export]
     public RLTrainingConfig? TrainingConfig
     {
         get => _trainingConfig;
         set { _trainingConfig = value; UpdateConfigurationWarnings(); }
     }
-    // Global episode length cap used when agents and policy groups do not override it (0 = no cap).
+    /// <summary>
+    /// Global episode length cap used when agents and policy groups do not override it (0 = no cap).
+    /// </summary>
     [Export(PropertyHint.Range, "0,100000,1,or_greater")] public int MaxEpisodeSteps { get; set; } = 0;
 
     [ExportGroup("Run")]
+    /// <summary>
+    /// Run-level simulation settings (batching, time scale, checkpoints, threading).
+    /// </summary>
     [Export] public RLRunConfig? RunConfig { get; set; }
 
     /// <summary>
@@ -30,12 +38,21 @@ public partial class RLAcademy : Node
     [Export] public RLDistributedConfig? DistributedConfig { get; set; }
 
     [ExportGroup("Curriculum")]
+    /// <summary>
+    /// Optional curriculum settings for dynamic difficulty progression.
+    /// </summary>
     [Export] public RLCurriculumConfig? Curriculum { get; set; }
 
     [ExportGroup("Self-Play")]
+    /// <summary>
+    /// Optional self-play pairing configuration for multi-policy training.
+    /// </summary>
     [Export] public RLSelfPlayConfig? SelfPlay { get; set; }
 
     [ExportGroup("Inference")]
+    /// <summary>
+    /// Inference-only checkpoint used to run trained policies outside training bootstrap.
+    /// </summary>
     [Export] public RLCheckpoint? Checkpoint { get; set; }
 
 
@@ -74,8 +91,15 @@ public partial class RLAcademy : Node
     }
 
     public bool InferenceActive { get; private set; }
+    /// <summary>
+    /// Current curriculum progress value in the range [0, 1].
+    /// </summary>
     public float CurriculumProgress { get; private set; }
 
+    /// <summary>
+    /// Sets curriculum progress and immediately notifies every discovered agent.
+    /// </summary>
+    /// <param name="progress">Desired curriculum progress in [0, 1]; clamped automatically.</param>
     public void SetCurriculumProgress(float progress)
     {
         CurriculumProgress = Mathf.Clamp(progress, 0f, 1f);
@@ -195,6 +219,9 @@ public partial class RLAcademy : Node
         }
     }
 
+    /// <summary>
+    /// Returns all agents under the academy's scene root, regardless of control mode.
+    /// </summary>
     public IReadOnlyList<IRLAgent> GetAgents()
     {
         var agents = new List<IRLAgent>();
@@ -203,6 +230,10 @@ public partial class RLAcademy : Node
         return agents;
     }
 
+    /// <summary>
+    /// Returns agents matching a specific control mode, including Auto-mode agents when relevant.
+    /// </summary>
+    /// <param name="controlMode">Requested control mode filter.</param>
     public IReadOnlyList<IRLAgent> GetAgents(RLAgentControlMode controlMode)
     {
         var agents = new List<IRLAgent>();
@@ -223,6 +254,9 @@ public partial class RLAcademy : Node
         return agents;
     }
 
+    /// <summary>
+    /// Forces all discovered agents to reset their current episodes.
+    /// </summary>
     public void ResetAllAgents()
     {
         foreach (var agent in GetAgents())
@@ -231,11 +265,24 @@ public partial class RLAcademy : Node
         }
     }
 
+    /// <summary>
+    /// Returns a copy of configured self-play pairings, or an empty list when self-play is disabled.
+    /// </summary>
     public List<RLPolicyPairingConfig> GetResolvedSelfPlayPairings()
         => SelfPlay is not null
             ? new List<RLPolicyPairingConfig>(SelfPlay.Pairings)
             : new List<RLPolicyPairingConfig>();
 
+    /// <summary>
+    /// Infers observation sizes for agents in the academy scene.
+    /// </summary>
+    /// <param name="controlMode">
+    /// Optional control-mode filter. When null, includes all discovered agents.
+    /// </param>
+    /// <param name="resetEpisodes">
+    /// Whether to reset episodes during probing to ensure clean observation collection.
+    /// </param>
+    /// <returns>Inference result containing per-group observation-size metadata.</returns>
     public ObservationSizeInferenceResult InferObservationSizes(RLAgentControlMode? controlMode = null, bool resetEpisodes = true)
     {
         var agents = controlMode.HasValue ? GetAgents(controlMode.Value) : GetAgents();

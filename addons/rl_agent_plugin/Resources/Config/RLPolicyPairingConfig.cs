@@ -2,7 +2,11 @@ using Godot;
 
 namespace RlAgentPlugin.Runtime;
 
+/// <summary>
+/// Defines a self-play matchup between two policy groups and how opponents are sampled.
+/// </summary>
 [GlobalClass]
+[Tool]
 public partial class RLPolicyPairingConfig : Resource
 {
     private Resource? _groupA;
