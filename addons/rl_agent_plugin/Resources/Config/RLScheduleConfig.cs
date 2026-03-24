@@ -17,9 +17,13 @@ namespace RlAgentPlugin.Runtime;
 [Tool]
 public partial class RLScheduleConfig : Resource
 {
+    /// <summary>Optional schedule for trainer learning rate.</summary>
     [Export] public RLHyperparamSchedule? LearningRate      { get; set; }
+    /// <summary>Optional schedule for PPO entropy bonus coefficient.</summary>
     [Export] public RLHyperparamSchedule? EntropyCoefficient { get; set; }
+    /// <summary>Optional schedule for PPO clip epsilon.</summary>
     [Export] public RLHyperparamSchedule? ClipEpsilon        { get; set; }
+    /// <summary>Optional schedule for SAC alpha temperature.</summary>
     [Export] public RLHyperparamSchedule? SacAlpha           { get; set; }
 
     internal void ApplyTo(RLTrainerConfig config, ScheduleContext ctx)

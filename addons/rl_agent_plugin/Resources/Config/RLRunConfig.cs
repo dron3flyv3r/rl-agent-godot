@@ -6,11 +6,29 @@ namespace RlAgentPlugin.Runtime;
 [Tool]
 public partial class RLRunConfig : Resource
 {
+    /// <summary>
+    /// Optional prefix used when generating run IDs and output folders.
+    /// </summary>
     [Export] public string RunPrefix { get; set; } = string.Empty;
+    /// <summary>
+    /// Global simulation speed multiplier applied during training.
+    /// </summary>
     [Export] public float SimulationSpeed { get; set; } = 1.0f;
+    /// <summary>
+    /// Number of parallel academy environments stepped per decision tick.
+    /// </summary>
     [Export(PropertyHint.Range, "1,256,or_greater")] public int BatchSize { get; set; } = 1;
+    /// <summary>
+    /// Repeat each selected action for N physics steps before requesting a new decision.
+    /// </summary>
     [Export] public int ActionRepeat { get; set; } = 4;
+    /// <summary>
+    /// Save policy checkpoints every N trainer updates.
+    /// </summary>
     [Export] public int CheckpointInterval { get; set; } = 10;
+    /// <summary>
+    /// Show a tiled debug grid for batched environments in training scenes.
+    /// </summary>
     [Export] public bool ShowBatchGrid { get; set; } = false;
     /// <summary>
     /// Run PPO gradient updates on a background thread while the main thread continues

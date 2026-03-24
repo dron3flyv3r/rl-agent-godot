@@ -8,9 +8,15 @@ public partial class RLTrainingConfig : Resource
 {
     private const string AlgorithmType = nameof(RLAlgorithmConfig);
 
+    /// <summary>
+    /// Algorithm-specific training settings (PPO, SAC, or custom trainer config).
+    /// </summary>
     [Export(PropertyHint.ResourceType, AlgorithmType)]
     public RLAlgorithmConfig? Algorithm { get; set; }
 
+    /// <summary>
+    /// Optional dynamic schedules that override selected hyperparameters over time.
+    /// </summary>
     [Export]
     public RLScheduleConfig? Schedules { get; set; }
 

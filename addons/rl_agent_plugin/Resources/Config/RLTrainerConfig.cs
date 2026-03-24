@@ -28,7 +28,6 @@ public partial class RLTrainerConfig
     public float ValueClipEpsilon { get; set; } = 0.2f;
     public float EntropyCoefficient { get; set; } = 0.01f;
     public int StatusWriteIntervalSteps { get; set; } = 32;
-    public int CheckpointIntervalUpdates { get; set; } = 10;
 
     // ── SAC hyperparameters (ignored by PPO) ───────────────────────────────
     public int ReplayBufferCapacity { get; set; } = 100_000;
