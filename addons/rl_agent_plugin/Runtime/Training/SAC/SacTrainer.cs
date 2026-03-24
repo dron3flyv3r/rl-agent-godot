@@ -439,6 +439,11 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
                 Done              = t.Done,
                 NextObservation   = t.NextObservation,
             });
+            // Count injected worker transitions toward training cadence so the
+            // _nextTrainingStep threshold advances correctly in distributed mode.
+            // Without this, _totalStepsSeen stays at 0 on a master with no local
+            // agents and TryUpdate permanently blocks after the first update.
+            _totalStepsSeen++;
         }
     }
 
