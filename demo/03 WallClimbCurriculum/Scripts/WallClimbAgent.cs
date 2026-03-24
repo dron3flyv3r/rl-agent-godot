@@ -5,9 +5,6 @@ namespace RlAgentPlugin.Demo;
 
 public partial class WallClimbAgent : RLAgent3D
 {
-    private enum MoveAction { Idle = 0, Forward = 1, Back = 2, Left = 3, Right = 4, ForwardLeft = 5, ForwardRight = 6, BackLeft = 7, BackRight = 8 }
-    private enum JumpAction { NoJump = 0, Jump = 1 }
-
     private WallClimbPlayer? _player;
     private WallClimbArenaController? _arena;
     private RLRaycastSensor3D? _sensor;
@@ -31,31 +28,24 @@ public partial class WallClimbAgent : RLAgent3D
 
     public override void DefineActions(ActionSpaceBuilder builder)
     {
-        builder.AddDiscrete<MoveAction>();
-        builder.AddDiscrete<JumpAction>();
+        // Continuous: [0]=X (forward/back), [1]=Z (left/right) — SAC tanh-squashes to (-1,1)
+        builder.AddContinuous("Move", 2);
+        // Continuous: [0] > 0 → jump. SAC tanh output naturally stays in (-1,1).
+        builder.AddContinuous("Jump", 1);
     }
 
     protected override void OnActionsReceived(ActionBuffer actions)
     {
         if (_player is null) return;
 
-        var move = actions.GetDiscreteAsEnum<MoveAction>();
-        var jump = actions.GetDiscreteAsEnum<JumpAction>();
+        var move = actions.GetContinuous("Move");
+        var jump = actions.GetContinuous("Jump");
 
-        var direction = move switch
-        {
-            MoveAction.Forward => new Vector3(1f, 0f, 0f),
-            MoveAction.Back    => new Vector3(-1f, 0f, 0f),
-            MoveAction.Left    => new Vector3(0f, 0f, -1f),
-            MoveAction.Right   => new Vector3(0f, 0f, 1f),
-            MoveAction.ForwardLeft  => new Vector3(1f, 0f, -1f).Normalized(),
-            MoveAction.ForwardRight => new Vector3(1f, 0f, 1f).Normalized(),
-            MoveAction.BackLeft     => new Vector3(-1f, 0f, -1f).Normalized(),
-            MoveAction.BackRight    => new Vector3(-1f, 0f, 1f).Normalized(),
-            _                  => Vector3.Zero,
-        };
+        var direction = new Vector3(move[0], 0f, move[1]);
+        // Clamp diagonal magnitudes to 1 so speed is consistent in all directions.
+        if (direction.LengthSquared() > 1f) direction = direction.Normalized();
 
-        _player.SetMoveIntent(direction, jump == JumpAction.Jump);
+        _player.SetMoveIntent(direction, jump[0] > 0f);
     }
 
     public override void CollectObservations(ObservationBuffer obs)

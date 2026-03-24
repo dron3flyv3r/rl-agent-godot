@@ -38,4 +38,5 @@ public partial class RLTrainerConfig
     public float SacInitAlpha { get; set; } = 0.2f;
     public bool SacAutoTuneAlpha { get; set; } = true;
     public int SacUpdateEverySteps { get; set; } = 1;
+    public float SacTargetEntropyFraction { get; set; } = 0.5f;
 }

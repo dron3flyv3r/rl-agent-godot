@@ -21,6 +21,7 @@ public partial class TrainingBootstrap : Node
     private readonly Dictionary<string, ITrainer> _trainersByGroup = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RunMetricsWriter> _metricsWritersByGroup = new(StringComparer.Ordinal);
     private readonly Dictionary<string, long> _episodeCountByGroup = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> _workerEpisodeCountByGroup = new(StringComparer.Ordinal);
     private readonly Dictionary<string, long> _updateCountByGroup = new(StringComparer.Ordinal);
     private readonly Dictionary<string, float> _lastPolicyLossByGroup = new(StringComparer.Ordinal);
     private readonly Dictionary<string, float> _lastValueLossByGroup = new(StringComparer.Ordinal);
@@ -186,12 +187,9 @@ public partial class TrainingBootstrap : Node
             _parallelPolicyGroups = false;
         }
 
-        // In distributed master mode, run only 1 game instance for monitoring.
-        // Workers handle bulk data collection; the master stays free for training.
-        // Only apply when at least one trainer actually supports distribution —
-        // algorithms that don't (e.g. SAC) should keep their full BatchSize.
-        var hasDistributableTrainers = _trainersByGroup.Values.Any(t => t is IDistributedTrainer);
-        if (!_isWorkerMode && firstAcademy.DistributedConfig is not null && hasDistributableTrainers)
+        // In distributed master mode, run only 1 game instance for live monitoring.
+        // Workers handle bulk data collection; the master stays free for training coordination.
+        if (!_isWorkerMode && firstAcademy.DistributedConfig is not null)
             _batchSize = 1;
 
         _previousTimeScale = Engine.TimeScale;
@@ -437,6 +435,7 @@ public partial class TrainingBootstrap : Node
             _trainersByGroup[groupId] = TrainerFactory.Create(groupConfig);
             _metricsWritersByGroup[groupId] = new RunMetricsWriter(metricsPath, _manifest.StatusPath);
             _episodeCountByGroup[groupId] = 0;
+            _workerEpisodeCountByGroup[groupId] = 0;
             _updateCountByGroup[groupId] = 0;
             _lastPolicyLossByGroup[groupId] = 0f;
             _lastValueLossByGroup[groupId] = 0f;
@@ -542,6 +541,43 @@ public partial class TrainingBootstrap : Node
         if (_academies.Count == 0 || _manifest is null || _statusWriter is null)
         {
             return;
+        }
+
+        // Workers receive curriculum progress from master; apply it before episode processing
+        // so OnEpisodeBegin sees the correct difficulty this frame.
+        if (_distributedWorker is not null)
+        {
+            var syncedProgress = _distributedWorker.ConsumeCurriculumProgress();
+            if (syncedProgress.HasValue)
+                SetCurriculumProgressForAllAcademies(syncedProgress.Value);
+        }
+
+        // Master drains worker episode summaries and writes them to the metrics log so
+        // RLDash shows episodes from all processes, not just the master's single game.
+        if (_distributedMaster is not null && !_quickTestMode)
+        {
+            foreach (var (groupId, summaries) in _distributedMaster.DrainWorkerEpisodeSummaries())
+            {
+                if (!_metricsWritersByGroup.TryGetValue(groupId, out var writer)) continue;
+                _workerEpisodeCountByGroup[groupId] = _workerEpisodeCountByGroup.GetValueOrDefault(groupId) + summaries.Count;
+                var metricSteps     = _totalSteps + _distributedMaster.TotalWorkerSteps;
+                var localEpisodes   = _episodeCountByGroup.GetValueOrDefault(groupId);
+                var workerEpisodes  = _workerEpisodeCountByGroup[groupId];
+                foreach (var s in summaries)
+                {
+                    writer.AppendMetric(
+                        s.Reward,
+                        s.Steps,
+                        _lastPolicyLossByGroup.GetValueOrDefault(groupId),
+                        _lastValueLossByGroup.GetValueOrDefault(groupId),
+                        _lastEntropyByGroup.GetValueOrDefault(groupId),
+                        _lastClipFractionByGroup.GetValueOrDefault(groupId),
+                        metricSteps,
+                        localEpisodes + workerEpisodes,
+                        s.RewardBreakdown,
+                        policyGroup: GetGroupDisplayName(groupId));
+                }
+            }
         }
 
         var pendingLearningDecisionsByGroup = new Dictionary<string, List<PendingDecisionContext>>(StringComparer.Ordinal);
@@ -666,6 +702,10 @@ public partial class TrainingBootstrap : Node
             lastCheckpoint = currentCheckpoint;
 
             PersistCheckpoint(groupId, currentCheckpoint, _updateCountByGroup[groupId]);
+
+            // Broadcast curriculum progress alongside each weight update so workers stay in sync.
+            if (_distributedMaster is not null && _academies.Count > 0 && _academies[0].Curriculum is not null)
+                _distributedMaster.BroadcastCurriculumProgress(_academies[0].CurriculumProgress);
         }
 
         if (lastCheckpoint is not null)
@@ -1274,6 +1314,7 @@ public partial class TrainingBootstrap : Node
                 if (!_quickTestMode && !_isWorkerMode)
                 {
                     var metricSteps = _totalSteps + (_distributedMaster?.TotalWorkerSteps ?? 0L);
+                    var totalEpisodeCount = episodeCount + _workerEpisodeCountByGroup.GetValueOrDefault(groupId);
                     _metricsWritersByGroup[groupId].AppendMetric(
                         pending.Agent.EpisodeReward,
                         pending.Agent.EpisodeSteps,
@@ -1282,7 +1323,7 @@ public partial class TrainingBootstrap : Node
                         _lastEntropyByGroup[groupId],
                         _lastClipFractionByGroup[groupId],
                         metricSteps,
-                        episodeCount,
+                        totalEpisodeCount,
                         pending.Agent.GetEpisodeRewardBreakdown(),
                         policyGroup: GetGroupDisplayName(groupId),
                         opponentGroup: role.IsSelfPlayLearner ? GetGroupDisplayName(role.OpponentGroupId) : string.Empty,
@@ -1298,21 +1339,37 @@ public partial class TrainingBootstrap : Node
                             : null);
                 }
 
-                // Curriculum: update progress before reset so OnEpisodeBegin sees the new difficulty.
-                var curriculumConfig = curriculumEnvironment.Academy.Curriculum;
-                if (curriculumConfig is not null)
+                // Worker: queue episode summary for the master to write to the metrics log.
+                if (_isWorkerMode && _distributedWorker is not null)
                 {
-                    if (curriculumConfig.Mode == RLCurriculumMode.SuccessRate)
+                    var breakdown = pending.Agent.GetEpisodeRewardBreakdown();
+                    _distributedWorker.EnqueueEpisodeSummary(
+                        groupId,
+                        pending.Agent.EpisodeReward,
+                        pending.Agent.EpisodeSteps,
+                        breakdown.Count > 0 ? breakdown : null);
+                }
+
+                // Curriculum: update progress before reset so OnEpisodeBegin sees the new difficulty.
+                // Workers receive the master's authoritative progress via CurriculumSync messages
+                // (applied at the top of _PhysicsProcess), so they skip local calculation entirely.
+                if (!_isWorkerMode)
+                {
+                    var curriculumConfig = curriculumEnvironment.Academy.Curriculum;
+                    if (curriculumConfig is not null)
                     {
-                        UpdateAdaptiveCurriculum(curriculumConfig, pending.Agent.EpisodeReward);
-                    }
-                    else if (curriculumEnvironment.Academy.MaxCurriculumSteps > 0)
-                    {
-                        // Include worker steps so the master's curriculum advances at the true
-                        // combined throughput rate rather than only counting local steps.
-                        var combinedSteps = _totalSteps + (_distributedMaster?.TotalWorkerSteps ?? 0L);
-                        var progress = Mathf.Clamp(combinedSteps / (float)curriculumEnvironment.Academy.MaxCurriculumSteps, 0f, 1f);
-                        SetCurriculumProgressForAllAcademies(progress);
+                        if (curriculumConfig.Mode == RLCurriculumMode.SuccessRate)
+                        {
+                            UpdateAdaptiveCurriculum(curriculumConfig, pending.Agent.EpisodeReward);
+                        }
+                        else if (curriculumEnvironment.Academy.MaxCurriculumSteps > 0)
+                        {
+                            // Include worker steps so the master's curriculum advances at the true
+                            // combined throughput rate rather than only counting local steps.
+                            var combinedSteps = _totalSteps + (_distributedMaster?.TotalWorkerSteps ?? 0L);
+                            var progress = Mathf.Clamp(combinedSteps / (float)curriculumEnvironment.Academy.MaxCurriculumSteps, 0f, 1f);
+                            SetCurriculumProgressForAllAcademies(progress);
+                        }
                     }
                 }
 

@@ -12,7 +12,6 @@ internal sealed class SacNetwork
 {
     private readonly int _obsSize;
     private readonly int _actionDim;
-    private readonly float _learningRate;
 
     // Actor layers (trunk + head)
     private readonly NetworkLayer[] _actorTrunk;
@@ -32,9 +31,8 @@ internal sealed class SacNetwork
 
     public SacNetwork(int obsSize, int actionDim, bool isContinuous, RLNetworkGraph graph, float learningRate)
     {
-        _obsSize      = obsSize;
-        _actionDim    = actionDim;
-        _learningRate = learningRate;
+        _obsSize   = obsSize;
+        _actionDim = actionDim;
 
         _actorTrunk = graph.BuildTrunkLayers(obsSize);
         var actorTrunkOut = graph.OutputSize(obsSize);
@@ -201,92 +199,192 @@ internal sealed class SacNetwork
 
     // ── Gradient updates ─────────────────────────────────────────────────────
 
-    public void UpdateQ1Discrete(float[] obs, int action, float target)
+    // ── Batch Q update — discrete ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Performs a single Adam step on Q1 using the provided (obs, action, target) batch.
+    /// One gradient accumulation pass over all samples, then one weight update.
+    /// </summary>
+    public void BatchUpdateQ1Discrete(
+        IReadOnlyList<(float[] obs, int action, float target)> samples, float learningRate)
+        => BatchUpdateQNetworkDiscrete(_q1Trunk, _q1Head, samples, learningRate);
+
+    /// <summary>Performs a single Adam step on Q2 using the provided (obs, action, target) batch.</summary>
+    public void BatchUpdateQ2Discrete(
+        IReadOnlyList<(float[] obs, int action, float target)> samples, float learningRate)
+        => BatchUpdateQNetworkDiscrete(_q2Trunk, _q2Head, samples, learningRate);
+
+    private void BatchUpdateQNetworkDiscrete(
+        NetworkLayer[] trunk, NetworkLayer head,
+        IReadOnlyList<(float[] obs, int action, float target)> samples,
+        float learningRate)
     {
-        var qVals = ForwardQ(_q1Trunk, _q1Head, obs);
-        var grad  = new float[qVals.Length];
-        grad[action] = qVals[action] - target;
-        BackwardQ(_q1Trunk, _q1Head, obs, grad);
-    }
+        var n = samples.Count;
+        if (n == 0) return;
 
-    public void UpdateQ2Discrete(float[] obs, int action, float target)
-    {
-        var qVals = ForwardQ(_q2Trunk, _q2Head, obs);
-        var grad  = new float[qVals.Length];
-        grad[action] = qVals[action] - target;
-        BackwardQ(_q2Trunk, _q2Head, obs, grad);
-    }
+        var trunkBufs = new GradientBuffer[trunk.Length];
+        for (var i = 0; i < trunk.Length; i++) trunkBufs[i] = trunk[i].CreateGradientBuffer();
+        var headBuf = head.CreateGradientBuffer();
 
-    public void UpdateQ1Continuous(float[] obs, float[] action, float target)
-    {
-        var input = Concat(obs, action);
-        var q     = ForwardQ(_q1Trunk, _q1Head, input)[0];
-        BackwardQ(_q1Trunk, _q1Head, input, new[] { q - target });
-    }
-
-    public void UpdateQ2Continuous(float[] obs, float[] action, float target)
-    {
-        var input = Concat(obs, action);
-        var q     = ForwardQ(_q2Trunk, _q2Head, input)[0];
-        BackwardQ(_q2Trunk, _q2Head, input, new[] { q - target });
-    }
-
-    public void UpdateActorDiscrete(float[] obs, float alpha)
-    {
-        var logits = ForwardActorFull(obs);
-        var probs  = Softmax(logits);
-
-        var (q1, q2)     = GetDiscreteQValues(obs);
-        var logProbClipped = new float[probs.Length];
-        for (var i = 0; i < probs.Length; i++)
-            logProbClipped[i] = probs[i] > 1e-8f ? MathF.Log(probs[i]) : MathF.Log(1e-8f);
-
-        var f    = new float[probs.Length];
-        var eFpi = 0f;
-        for (var i = 0; i < probs.Length; i++)
+        foreach (var (obs, action, target) in samples)
         {
-            f[i]  = Math.Min(q1[i], q2[i]) - alpha * logProbClipped[i];
-            eFpi += probs[i] * f[i];
+            var q        = ForwardQ(trunk, head, obs);   // caches trunk/head state
+            var outGrad  = new float[q.Length];
+            outGrad[action] = q[action] - target;
+
+            var grad = head.AccumulateGradients(outGrad, headBuf);
+            for (var i = trunk.Length - 1; i >= 0; i--)
+                grad = trunk[i].AccumulateGradients(grad, trunkBufs[i]);
         }
 
-        var grad = new float[probs.Length];
-        for (var j = 0; j < probs.Length; j++)
-            grad[j] = -probs[j] * (f[j] - eFpi);
-
-        BackwardActorFromLogits(grad);
+        var scale = 1f / n;
+        head.ApplyGradients(headBuf, learningRate, scale);
+        for (var i = 0; i < trunk.Length; i++)
+            trunk[i].ApplyGradients(trunkBufs[i], learningRate, scale);
     }
 
-    public void UpdateActorContinuous(float[] obs, float[] action, float[] eps, float[] u, float alpha)
+    /// <summary>Performs a single Adam step on the actor using a batch of observations.</summary>
+    public void BatchUpdateActorDiscrete(
+        IReadOnlyList<float[]> observations, float alpha, float learningRate)
     {
-        var input = Concat(obs, action);
+        var n = observations.Count;
+        if (n == 0) return;
 
-        // Forward both Q networks to get Q values and cache their states.
-        var q1 = ForwardQ(_q1Trunk, _q1Head, input)[0];
-        var q2 = ForwardQ(_q2Trunk, _q2Head, input)[0];
+        var trunkBufs = new GradientBuffer[_actorTrunk.Length];
+        for (var i = 0; i < _actorTrunk.Length; i++) trunkBufs[i] = _actorTrunk[i].CreateGradientBuffer();
+        var headBuf = _actorHead.CreateGradientBuffer();
 
-        // Use whichever Q network has the lower (more pessimistic) value.
-        var qInputGrad = q1 <= q2
-            ? ComputeQInputGradOnly(_q1Trunk, _q1Head, new[] { 1f })
-            : ComputeQInputGradOnly(_q2Trunk, _q2Head, new[] { 1f });
-
-        var dQdAction = qInputGrad[_obsSize..];
-
-        var actorOut  = ForwardActorFull(obs);
-        var actorGrad = new float[_actionDim * 2];
-
-        for (var d = 0; d < _actionDim; d++)
+        foreach (var obs in observations)
         {
-            var a      = action[d];
-            var squash = 1f - a * a;
-            var logStd = Math.Clamp(actorOut[_actionDim + d], -20f, 2f);
-            var std    = MathF.Exp(logStd);
+            // ForwardActorFull caches actor trunk/head state for AccumulateGradients.
+            // GetDiscreteQValues forwards through _q1Trunk/_q2Trunk (separate layer instances —
+            // does NOT overwrite the actor cache).
+            var logits = ForwardActorFull(obs);
+            var probs  = Softmax(logits);
+            var (q1, q2) = GetDiscreteQValues(obs);
 
-            actorGrad[d] = squash * (-dQdAction[d] + 2f * alpha * a / (squash + 1e-6f));
-            actorGrad[_actionDim + d] = -dQdAction[d] * squash * std * eps[d]
-                - alpha * (1f - 2f * a * squash * std * eps[d] / (squash + 1e-6f));
+            var logProbClipped = new float[probs.Length];
+            for (var i = 0; i < probs.Length; i++)
+                logProbClipped[i] = probs[i] > 1e-8f ? MathF.Log(probs[i]) : MathF.Log(1e-8f);
+
+            var f    = new float[probs.Length];
+            var eFpi = 0f;
+            for (var i = 0; i < probs.Length; i++)
+            {
+                f[i]  = Math.Min(q1[i], q2[i]) - alpha * logProbClipped[i];
+                eFpi += probs[i] * f[i];
+            }
+
+            var grad = new float[probs.Length];
+            for (var j = 0; j < probs.Length; j++)
+                grad[j] = -probs[j] * (f[j] - eFpi);
+
+            var inputGrad = _actorHead.AccumulateGradients(grad, headBuf);
+            for (var i = _actorTrunk.Length - 1; i >= 0; i--)
+                inputGrad = _actorTrunk[i].AccumulateGradients(inputGrad, trunkBufs[i]);
         }
 
-        BackwardActorFromLogits(actorGrad);
+        var scale = 1f / n;
+        _actorHead.ApplyGradients(headBuf, learningRate, scale);
+        for (var i = 0; i < _actorTrunk.Length; i++)
+            _actorTrunk[i].ApplyGradients(trunkBufs[i], learningRate, scale);
+    }
+
+    // ── Batch Q update — continuous ───────────────────────────────────────────
+
+    /// <summary>Performs a single Adam step on Q1 using the provided (obs, action, target) batch.</summary>
+    public void BatchUpdateQ1Continuous(
+        IReadOnlyList<(float[] obs, float[] action, float target)> samples, float learningRate)
+        => BatchUpdateQNetworkContinuous(_q1Trunk, _q1Head, samples, learningRate);
+
+    /// <summary>Performs a single Adam step on Q2 using the provided (obs, action, target) batch.</summary>
+    public void BatchUpdateQ2Continuous(
+        IReadOnlyList<(float[] obs, float[] action, float target)> samples, float learningRate)
+        => BatchUpdateQNetworkContinuous(_q2Trunk, _q2Head, samples, learningRate);
+
+    private void BatchUpdateQNetworkContinuous(
+        NetworkLayer[] trunk, NetworkLayer head,
+        IReadOnlyList<(float[] obs, float[] action, float target)> samples,
+        float learningRate)
+    {
+        var n = samples.Count;
+        if (n == 0) return;
+
+        var trunkBufs = new GradientBuffer[trunk.Length];
+        for (var i = 0; i < trunk.Length; i++) trunkBufs[i] = trunk[i].CreateGradientBuffer();
+        var headBuf = head.CreateGradientBuffer();
+
+        foreach (var (obs, action, target) in samples)
+        {
+            var input   = Concat(obs, action);
+            var q       = ForwardQ(trunk, head, input);
+            var outGrad = new[] { q[0] - target };
+
+            var grad = head.AccumulateGradients(outGrad, headBuf);
+            for (var i = trunk.Length - 1; i >= 0; i--)
+                grad = trunk[i].AccumulateGradients(grad, trunkBufs[i]);
+        }
+
+        var scale = 1f / n;
+        head.ApplyGradients(headBuf, learningRate, scale);
+        for (var i = 0; i < trunk.Length; i++)
+            trunk[i].ApplyGradients(trunkBufs[i], learningRate, scale);
+    }
+
+    /// <summary>
+    /// Performs a single Adam step on the actor for continuous actions.
+    /// Each sample must supply a freshly-reparameterized action (from SampleContinuousAction).
+    /// </summary>
+    public void BatchUpdateActorContinuous(
+        IReadOnlyList<(float[] obs, float[] action, float[] eps, float[] u)> samples,
+        float alpha, float learningRate)
+    {
+        var n = samples.Count;
+        if (n == 0) return;
+
+        var trunkBufs = new GradientBuffer[_actorTrunk.Length];
+        for (var i = 0; i < _actorTrunk.Length; i++) trunkBufs[i] = _actorTrunk[i].CreateGradientBuffer();
+        var headBuf = _actorHead.CreateGradientBuffer();
+
+        foreach (var (obs, action, eps, u) in samples)
+        {
+            var input = Concat(obs, action);
+
+            // Forward Q1 and Q2 (caches their states; actor cache is separate).
+            var q1 = ForwardQ(_q1Trunk, _q1Head, input)[0];
+            var q2 = ForwardQ(_q2Trunk, _q2Head, input)[0];
+
+            // dQ/da from the more pessimistic Q network (cache still fresh).
+            var qInputGrad = q1 <= q2
+                ? ComputeQInputGradOnly(_q1Trunk, _q1Head, new[] { 1f })
+                : ComputeQInputGradOnly(_q2Trunk, _q2Head, new[] { 1f });
+            var dQdAction = qInputGrad[_obsSize..];
+
+            // ForwardActorFull caches actor state for AccumulateGradients.
+            var actorOut  = ForwardActorFull(obs);
+            var actorGrad = new float[_actionDim * 2];
+
+            for (var d = 0; d < _actionDim; d++)
+            {
+                var a      = action[d];
+                var squash = 1f - a * a;
+                var logStd = Math.Clamp(actorOut[_actionDim + d], -20f, 2f);
+                var std    = MathF.Exp(logStd);
+
+                actorGrad[d] = squash * (-dQdAction[d] + 2f * alpha * a / (squash + 1e-6f));
+                actorGrad[_actionDim + d] = -dQdAction[d] * squash * std * eps[d]
+                    - alpha * (1f - 2f * a * squash * std * eps[d] / (squash + 1e-6f));
+            }
+
+            var inputGrad = _actorHead.AccumulateGradients(actorGrad, headBuf);
+            for (var i = _actorTrunk.Length - 1; i >= 0; i--)
+                inputGrad = _actorTrunk[i].AccumulateGradients(inputGrad, trunkBufs[i]);
+        }
+
+        var scale = 1f / n;
+        _actorHead.ApplyGradients(headBuf, learningRate, scale);
+        for (var i = 0; i < _actorTrunk.Length; i++)
+            _actorTrunk[i].ApplyGradients(trunkBufs[i], learningRate, scale);
     }
 
     public void SoftUpdateTargets(float tau)
@@ -399,27 +497,12 @@ internal sealed class SacNetwork
         return _actorHead.Forward(x);
     }
 
-    private void BackwardActorFromLogits(float[] outputGrad)
-    {
-        var grad = _actorHead.Backward(outputGrad, _learningRate);
-        for (var i = _actorTrunk.Length - 1; i >= 0; i--)
-            grad = _actorTrunk[i].Backward(grad, _learningRate);
-    }
-
     /// <summary>Forwards through a Q network, caching state in each layer.</summary>
     private static float[] ForwardQ(NetworkLayer[] trunk, NetworkLayer head, float[] input)
     {
         var x = input;
         foreach (var layer in trunk) x = layer.Forward(x);
         return head.Forward(x);
-    }
-
-    private void BackwardQ(NetworkLayer[] trunk, NetworkLayer head, float[] input, float[] outputGrad)
-    {
-        ForwardQ(trunk, head, input); // refresh caches
-        var grad = head.Backward(outputGrad, _learningRate);
-        for (var i = trunk.Length - 1; i >= 0; i--)
-            grad = trunk[i].Backward(grad, _learningRate);
     }
 
     /// <summary>

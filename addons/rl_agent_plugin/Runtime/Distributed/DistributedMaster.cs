@@ -103,8 +103,9 @@ public sealed class DistributedMaster : IDisposable
     private readonly List<WorkerConnection> _connections     = new();
     private readonly object                 _connectionsLock = new();
 
-    private readonly Queue<(string groupId, byte[] data)> _pendingRollouts = new();
-    private readonly object                               _rolloutsLock    = new();
+    private readonly Queue<(string groupId, byte[] data)>                        _pendingRollouts         = new();
+    private readonly Queue<(string groupId, List<WorkerEpisodeSummary> items)>  _pendingEpisodeSummaries = new();
+    private readonly object                                                      _rolloutsLock            = new();
 
     // Per-group counters (current round).
     private readonly Dictionary<string, int>  _rolloutsThisRound    = new(StringComparer.Ordinal);
@@ -304,6 +305,11 @@ public sealed class DistributedMaster : IDisposable
                     case DistributedMessageType.Rollout:
                         lock (_rolloutsLock) _pendingRollouts.Enqueue((groupId, payload));
                         break;
+                    case DistributedMessageType.EpisodeSummary:
+                        var summaries = DistributedProtocol.DeserializeEpisodeSummaries(payload);
+                        if (summaries.Count > 0)
+                            lock (_rolloutsLock) _pendingEpisodeSummaries.Enqueue((groupId, summaries));
+                        break;
                 }
             }
         }
@@ -471,6 +477,37 @@ public sealed class DistributedMaster : IDisposable
         {
             var c = conn; var g = groupId; var w = bytes;
             ThreadPool.QueueUserWorkItem(_ => c.Send(DistributedMessageType.Weights, g, w));
+        }
+    }
+
+    /// <summary>
+    /// Drains all pending worker episode summaries received since the last call.
+    /// Call from the main thread each frame to write worker episodes to the metrics log.
+    /// </summary>
+    public List<(string groupId, List<WorkerEpisodeSummary> summaries)> DrainWorkerEpisodeSummaries()
+    {
+        var result = new List<(string, List<WorkerEpisodeSummary>)>();
+        lock (_rolloutsLock)
+        {
+            while (_pendingEpisodeSummaries.Count > 0)
+                result.Add(_pendingEpisodeSummaries.Dequeue());
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Broadcasts the current curriculum progress to all connected workers so they stay
+    /// in sync with the master's curriculum calculation.  Call after each training update.
+    /// </summary>
+    public void BroadcastCurriculumProgress(float progress)
+    {
+        var bytes = BitConverter.GetBytes(progress);
+        List<WorkerConnection> snapshot;
+        lock (_connectionsLock) snapshot = new List<WorkerConnection>(_connections);
+        foreach (var conn in snapshot)
+        {
+            var c = conn; var b = bytes;
+            ThreadPool.QueueUserWorkItem(_ => c.Send(DistributedMessageType.CurriculumSync, "", b));
         }
     }
 

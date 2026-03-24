@@ -10,9 +10,11 @@ public sealed class SacInferencePolicy : IInferencePolicy
     public SacInferencePolicy(int observationSize, int actionDimensions, bool isContinuous, RLNetworkGraph graph)
     {
         if (actionDimensions <= 0)
-        {
             throw new ArgumentOutOfRangeException(nameof(actionDimensions), "SAC inference requires at least one action dimension.");
-        }
+
+        if (!isContinuous)
+            throw new InvalidOperationException(
+                "SAC inference does not support discrete action spaces. Convert the action space to continuous-only actions.");
 
         _network = new SacNetwork(observationSize, actionDimensions, isContinuous, graph, 0f);
         _isContinuous = isContinuous;

@@ -4,6 +4,7 @@
 [ext_resource type="Script" uid="uid://dg2me1qyyu7fl" path="res://addons/rl_agent_plugin/Resources/Config/RLSACConfig.cs" id="2_i24df"]
 [ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl_agent_plugin/Resources/Config/RLPolicyGroupConfig.cs" id="3_pgcfg"]
 [ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl_agent_plugin/Resources/Config/RLTrainingConfig.cs" id="4_trcfg"]
+[ext_resource type="Script" uid="uid://iq6ldrfkfev8" path="res://addons/rl_agent_plugin/Resources/Config/RLDistributedConfig.cs" id="5_i24df"]
 [ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl_agent_plugin/Resources/Config/RLRunConfig.cs" id="5_runcfg"]
 [ext_resource type="Script" uid="uid://do7qa2y5uje2v" path="res://demo/04 MoveToTarget3D/Scripts/MoveToTarget3DPlayer.cs" id="6_player"]
 [ext_resource type="Script" uid="uid://w0fm3b0ljdgi" path="res://demo/04 MoveToTarget3D/Scripts/MoveToTarget3DAgent.cs" id="7_agent"]
@@ -25,6 +26,11 @@ SimulationSpeed = 4.0
 BatchSize = 4
 ActionRepeat = 2
 CheckpointInterval = 50
+
+[sub_resource type="Resource" id="Resource_i24df"]
+script = ExtResource("5_i24df")
+EngineExecutablePath = "godot-mono"
+metadata/_custom_type_script = "uid://iq6ldrfkfev8"
 
 [sub_resource type="BoxMesh" id="PlatformMesh"]
 size = Vector3(10, 0.2, 10)
@@ -78,6 +84,7 @@ script = ExtResource("1_rlacad")
 TrainingConfig = SubResource("TrainingConfig")
 MaxEpisodeSteps = 500
 RunConfig = SubResource("RunConfig")
+DistributedConfig = SubResource("Resource_i24df")
 EnableSpyOverlay = true
 
 [node name="Arena" type="Node3D" parent="." unique_id=1847465851]
