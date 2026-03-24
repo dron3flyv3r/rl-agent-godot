@@ -15,8 +15,10 @@ namespace RlAgentPlugin.Runtime;
 [Tool]
 public abstract partial class RLAlgorithmConfig : Resource
 {
+    /// <summary>
+    /// Frequency (in environment steps) for console/dashboard status writes during training.
+    /// </summary>
     [Export] public int StatusWriteIntervalSteps  { get; set; } = 32;
-    [Export] public int CheckpointIntervalUpdates { get; set; } = 10;
 
     /// <summary>The algorithm this config represents. Implemented by each concrete subclass.</summary>
     public virtual RLAlgorithmKind AlgorithmKind => RLAlgorithmKind.Custom;
