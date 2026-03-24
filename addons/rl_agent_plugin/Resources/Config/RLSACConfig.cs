@@ -10,15 +10,25 @@ namespace RlAgentPlugin.Runtime;
 [Tool]
 public partial class RLSACConfig : RLAlgorithmConfig
 {
+    /// <summary>Optimizer learning rate for policy and critic networks.</summary>
     [Export] public float LearningRate          { get; set; } = 0.0003f;
+    /// <summary>Discount factor for future rewards.</summary>
     [Export] public float Gamma                 { get; set; } = 0.99f;
+    /// <summary>Gradient norm clip value.</summary>
     [Export] public float MaxGradientNorm       { get; set; } = 0.5f;
+    /// <summary>Maximum replay buffer capacity in transitions.</summary>
     [Export] public int   ReplayBufferCapacity  { get; set; } = 100_000;
+    /// <summary>Number of replay samples used for each SAC update.</summary>
     [Export] public int   BatchSize             { get; set; } = 256;
+    /// <summary>Minimum transitions to collect before training begins.</summary>
     [Export] public int   WarmupSteps           { get; set; } = 1_000;
+    /// <summary>Target-network Polyak averaging coefficient.</summary>
     [Export] public float Tau                   { get; set; } = 0.005f;
+    /// <summary>Initial entropy temperature (alpha).</summary>
     [Export] public float InitAlpha             { get; set; } = 0.2f;
+    /// <summary>Automatically tune entropy temperature during training.</summary>
     [Export] public bool  AutoTuneAlpha         { get; set; } = true;
+    /// <summary>Run one gradient update every N environment steps.</summary>
     [Export] public int   UpdateEverySteps      { get; set; } = 1;
     /// <summary>
     /// Fraction of maximum entropy used as the discrete-action target entropy.
@@ -30,6 +40,7 @@ public partial class RLSACConfig : RLAlgorithmConfig
 
     public override RLAlgorithmKind AlgorithmKind => RLAlgorithmKind.SAC;
 
+    /// <inheritdoc />
     internal override void ApplyTo(RLTrainerConfig config)
     {
         config.Algorithm               = RLAlgorithmKind.SAC;
@@ -45,6 +56,5 @@ public partial class RLSACConfig : RLAlgorithmConfig
         config.SacUpdateEverySteps        = UpdateEverySteps;
         config.SacTargetEntropyFraction   = TargetEntropyFraction;
         config.StatusWriteIntervalSteps   = StatusWriteIntervalSteps;
-        config.CheckpointIntervalUpdates = CheckpointIntervalUpdates;
     }
 }
