@@ -28,9 +28,14 @@ public sealed class DistributedWorker : IDisposable
     // Per-group flag: true while waiting for updated weights after sending a rollout.
     private readonly HashSet<string> _waitingForWeights = new(StringComparer.Ordinal);
 
-    // Weight updates arrive on the read thread; applied on the main thread.
-    private readonly Queue<(string groupId, byte[] data)> _pendingWeights = new();
-    private readonly object                               _pendingLock    = new();
+    // Weight updates and curriculum syncs arrive on the read thread; applied on the main thread.
+    private readonly Queue<(string groupId, byte[] data)> _pendingWeights            = new();
+    private readonly Queue<float>                         _pendingCurriculumUpdates  = new();
+    private readonly object                               _pendingLock               = new();
+
+    // Episode summaries accumulated on the main thread; sent alongside the next rollout.
+    private readonly Dictionary<string, List<WorkerEpisodeSummary>> _pendingSummaries = new(StringComparer.Ordinal);
+    private readonly object                                          _summariesLock    = new();
 
     private Thread?          _readThread;
     private volatile bool    _running;
@@ -129,6 +134,15 @@ public sealed class DistributedWorker : IDisposable
                             _pendingWeights.Enqueue((groupId, payload));
                         break;
 
+                    case DistributedMessageType.CurriculumSync:
+                        if (payload.Length == 4)
+                        {
+                            var progress = BitConverter.ToSingle(payload, 0);
+                            lock (_pendingLock)
+                                _pendingCurriculumUpdates.Enqueue(progress);
+                        }
+                        break;
+
                     case DistributedMessageType.Shutdown:
                         GD.Print("[RL Distributed] Worker received shutdown — exiting.");
                         _running = false;
@@ -220,12 +234,68 @@ public sealed class DistributedWorker : IDisposable
 
         if (_writer is not null)
         {
+            // Drain and send episode summaries alongside this rollout.
+            List<WorkerEpisodeSummary>? summaries = null;
+            lock (_summariesLock)
+            {
+                if (_pendingSummaries.TryGetValue(groupId, out var pending) && pending.Count > 0)
+                {
+                    summaries = new List<WorkerEpisodeSummary>(pending);
+                    pending.Clear();
+                }
+            }
+
             lock (_writeLock)
-                DistributedProtocol.WriteMessage(
-                    _writer, DistributedMessageType.Rollout, groupId, rolloutBytes);
+            {
+                DistributedProtocol.WriteMessage(_writer, DistributedMessageType.Rollout, groupId, rolloutBytes);
+                if (summaries is not null)
+                {
+                    var summaryBytes = DistributedProtocol.SerializeEpisodeSummaries(summaries);
+                    DistributedProtocol.WriteMessage(_writer, DistributedMessageType.EpisodeSummary, groupId, summaryBytes);
+                }
+            }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Queues an episode summary to be sent to the master with the next rollout for <paramref name="groupId"/>.
+    /// Call from the main thread each time an episode completes on a worker.
+    /// </summary>
+    public void EnqueueEpisodeSummary(string groupId, float reward, int steps, IReadOnlyDictionary<string, float>? breakdown)
+    {
+        var summary = new WorkerEpisodeSummary
+        {
+            Reward          = reward,
+            Steps           = steps,
+            RewardBreakdown = breakdown is not null
+                ? new Dictionary<string, float>(breakdown, StringComparer.Ordinal)
+                : new Dictionary<string, float>(),
+        };
+        lock (_summariesLock)
+        {
+            if (!_pendingSummaries.TryGetValue(groupId, out var list))
+                _pendingSummaries[groupId] = list = new List<WorkerEpisodeSummary>();
+            list.Add(summary);
+        }
+    }
+
+    /// <summary>
+    /// Returns the latest curriculum progress broadcast received from the master since the
+    /// last call, or <c>null</c> if no update has arrived.  Drains all queued values and
+    /// returns only the most recent (ignoring stale intermediate frames).
+    /// </summary>
+    public float? ConsumeCurriculumProgress()
+    {
+        lock (_pendingLock)
+        {
+            if (_pendingCurriculumUpdates.Count == 0) return null;
+            float latest = 0f;
+            while (_pendingCurriculumUpdates.Count > 0)
+                latest = _pendingCurriculumUpdates.Dequeue();
+            return latest;
+        }
     }
 
     public void Dispose()

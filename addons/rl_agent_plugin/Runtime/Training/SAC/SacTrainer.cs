@@ -33,6 +33,12 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
 
     public SacTrainer(PolicyGroupConfig config)
     {
+        if (config.DiscreteActionCount > 0)
+            throw new InvalidOperationException(
+                $"[SAC] Discrete action spaces are not supported by SacTrainer. " +
+                $"Convert the action space for group '{config.GroupId}' to continuous-only actions. " +
+                $"Use PPO if you need discrete actions.");
+
         _config = config;
         _trainerConfig = config.TrainerConfig;
         _isContinuous = config.ContinuousActionDimensions > 0 && config.DiscreteActionCount == 0;
@@ -49,10 +55,14 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
 
         _logAlpha = MathF.Log(Math.Max(config.TrainerConfig.SacInitAlpha, 1e-8f));
 
-        // Target entropy: discrete → log(|A|); continuous → -action_dims
+        // Target entropy:
+        //   continuous → -action_dims (standard SAC)
+        //   discrete   → fraction × log(|A|)  where fraction ∈ (0,1]
+        //     fraction=1.0 = uniform random (max entropy); fraction=0.5 = half of max.
+        //     Using log(|A|) directly (fraction=1) keeps the policy fully random forever.
         _targetEntropy = _isContinuous
             ? -config.ContinuousActionDimensions
-            : MathF.Log(config.DiscreteActionCount);
+            : config.TrainerConfig.SacTargetEntropyFraction * MathF.Log(config.DiscreteActionCount);
     }
 
     public PolicyDecision SampleAction(float[] observation)
@@ -156,19 +166,12 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
 
         var batch = _buffer.SampleBatch(_trainerConfig.SacBatchSize, _rng);
         var alpha = MathF.Exp(_logAlpha);
-        var policyLoss = 0f;
-        var valueLoss = 0f;
-        var entropySum = 0f;
 
-        foreach (var t in batch)
-        {
-            if (_isContinuous)
-                UpdateContinuous(_network, t, alpha, _trainerConfig, ref policyLoss, ref valueLoss, ref entropySum, _rng);
-            else
-                UpdateDiscrete(_network, t, alpha, _trainerConfig, ref policyLoss, ref valueLoss, ref entropySum);
-        }
+        var (policyLossSum, valueLossSum, entropySum) = _isContinuous
+            ? BatchUpdateContinuous(_network, batch, alpha, _trainerConfig, _rng)
+            : BatchUpdateDiscrete(_network, batch, alpha, _trainerConfig);
 
-        // Single per-batch logAlpha update (batch-average gradient, not per-transition).
+        // Single per-batch logAlpha update.
         // Sign: H < H_target → logAlpha increases (push toward more entropy).
         if (_trainerConfig.SacAutoTuneAlpha && batch.Length > 0)
         {
@@ -182,9 +185,9 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
         var n = Math.Max(1, batch.Length);
         return new TrainerUpdateStats
         {
-            PolicyLoss = policyLoss / n,
-            ValueLoss = valueLoss / n,
-            Entropy = entropySum / n,
+            PolicyLoss = policyLossSum / n,
+            ValueLoss  = valueLossSum  / n,
+            Entropy    = entropySum    / n,
             ClipFraction = 0f,
             Checkpoint = CreateCheckpoint(groupId, totalSteps, episodeCount, 0),
         };
@@ -287,22 +290,12 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
         float targetEntropy,
         Random rng)
     {
-        // alpha is fixed for the entire batch — only updated once after the loop.
         var alpha = MathF.Exp(logAlpha);
-        var policyLoss = 0f;
-        var valueLoss = 0f;
-        var entropySum = 0f;
 
-        foreach (var t in batch)
-        {
-            if (isContinuous)
-                UpdateContinuous(network, t, alpha, config, ref policyLoss, ref valueLoss, ref entropySum, rng);
-            else
-                UpdateDiscrete(network, t, alpha, config, ref policyLoss, ref valueLoss, ref entropySum);
-        }
+        var (policyLossSum, valueLossSum, entropySum) = isContinuous
+            ? BatchUpdateContinuous(network, batch, alpha, config, rng)
+            : BatchUpdateDiscrete(network, batch, alpha, config);
 
-        // Single per-batch logAlpha update (batch-average gradient, not per-transition).
-        // Sign: H < H_target → logAlpha increases (push toward more entropy).
         if (config.SacAutoTuneAlpha && batch.Length > 0)
         {
             var meanEntropy = entropySum / batch.Length;
@@ -315,94 +308,95 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
         var n = Math.Max(1, batch.Length);
         return new SacAsyncResult
         {
-            PolicyLoss = policyLoss / n,
-            ValueLoss = valueLoss / n,
-            Entropy = entropySum / n,
+            PolicyLoss  = policyLossSum / n,
+            ValueLoss   = valueLossSum  / n,
+            Entropy     = entropySum    / n,
             NewLogAlpha = logAlpha,
         };
     }
 
-    // ── Discrete SAC update ──────────────────────────────────────────────────
+    // ── Discrete SAC batch update ─────────────────────────────────────────────
 
-    private static void UpdateDiscrete(
-        SacNetwork network,
-        Transition t,
-        float alpha,
-        RLTrainerConfig config,
-        ref float policyLoss,
-        ref float valueLoss,
-        ref float entropySum)
+    /// <summary>
+    /// Computes all Bellman targets for the batch (read-only pass), then performs a single
+    /// Adam step on Q1, Q2, and the actor — one weight update per network per batch call.
+    /// </summary>
+    private static (float policyLossSum, float valueLossSum, float entropySum) BatchUpdateDiscrete(
+        SacNetwork network, Transition[] batch, float alpha, RLTrainerConfig config)
     {
-        // Compute target V(s') = sum_a pi(a|s') * (min_Q_target(s',a) - alpha * log_pi(a|s'))
-        var (nextQ1, nextQ2) = network.GetDiscreteTargetQValues(t.NextObservation);
-        var (nextProbs, nextLogProbs) = network.GetDiscreteActorProbs(t.NextObservation);
+        var qSamples  = new List<(float[] obs, int action, float target)>(batch.Length);
+        var actorObs  = new List<float[]>(batch.Length);
+        var valueLoss = 0f;
+        var entropy   = 0f;
 
-        var nextV = 0f;
-        for (var a = 0; a < nextQ1.Length; a++)
+        // Phase 1 — Bellman targets (no weight updates)
+        foreach (var t in batch)
         {
-            var minQ = Math.Min(nextQ1[a], nextQ2[a]);
-            nextV += nextProbs[a] * (minQ - alpha * nextLogProbs[a]);
+            var (nextQ1, nextQ2)          = network.GetDiscreteTargetQValues(t.NextObservation);
+            var (nextProbs, nextLogProbs) = network.GetDiscreteActorProbs(t.NextObservation);
+
+            var nextV = 0f;
+            for (var a = 0; a < nextQ1.Length; a++)
+                nextV += nextProbs[a] * (Math.Min(nextQ1[a], nextQ2[a]) - alpha * nextLogProbs[a]);
+
+            var y = t.Reward + config.Gamma * (t.Done ? 0f : 1f) * nextV;
+
+            var (q1, q2) = network.GetDiscreteQValues(t.Observation);
+            valueLoss += MathF.Abs(q1[t.DiscreteAction] - y) + MathF.Abs(q2[t.DiscreteAction] - y);
+
+            var (probs, logProbs) = network.GetDiscreteActorProbs(t.Observation);
+            for (var a = 0; a < probs.Length; a++) entropy -= probs[a] * logProbs[a];
+
+            qSamples.Add((t.Observation, t.DiscreteAction, y));
+            actorObs.Add(t.Observation);
         }
 
-        // Bellman target
-        var mask = t.Done ? 0f : 1f;
-        var y = t.Reward + config.Gamma * mask * nextV;
+        // Phase 2 — single gradient step per network
+        network.BatchUpdateQ1Discrete(qSamples, config.LearningRate);
+        network.BatchUpdateQ2Discrete(qSamples, config.LearningRate);
+        network.BatchUpdateActorDiscrete(actorObs, alpha, config.LearningRate);
 
-        // Update Q networks
-        var (q1, q2) = network.GetDiscreteQValues(t.Observation);
-        valueLoss += MathF.Abs(q1[t.DiscreteAction] - y) + MathF.Abs(q2[t.DiscreteAction] - y);
-
-        network.UpdateQ1Discrete(t.Observation, t.DiscreteAction, y);
-        network.UpdateQ2Discrete(t.Observation, t.DiscreteAction, y);
-
-        // Update actor
-        network.UpdateActorDiscrete(t.Observation, alpha);
-
-        // Compute entropy for logging; logAlpha update happens once per batch in the caller.
-        var (probs, logProbs) = network.GetDiscreteActorProbs(t.Observation);
-        var entropy = 0f;
-        for (var a = 0; a < probs.Length; a++)
-            entropy -= probs[a] * logProbs[a];
-
-        entropySum += entropy;
-        policyLoss -= entropy; // policy loss ≈ -entropy as a proxy metric
+        return (policyLossSum: -entropy, valueLossSum: valueLoss, entropySum: entropy);
     }
 
-    // ── Continuous SAC update ────────────────────────────────────────────────
+    // ── Continuous SAC batch update ───────────────────────────────────────────
 
-    private static void UpdateContinuous(
-        SacNetwork network,
-        Transition t,
-        float alpha,
-        RLTrainerConfig config,
-        ref float policyLoss,
-        ref float valueLoss,
-        ref float entropySum,
-        Random rng)
+    /// <summary>
+    /// Computes all Bellman targets and samples fresh actor actions for the batch, then
+    /// performs a single Adam step on Q1, Q2, and the actor.
+    /// </summary>
+    private static (float policyLossSum, float valueLossSum, float entropySum) BatchUpdateContinuous(
+        SacNetwork network, Transition[] batch, float alpha, RLTrainerConfig config, Random rng)
     {
-        // Sample next action for target
-        var (nextAction, nextLogProb, _, _) = network.SampleContinuousAction(t.NextObservation, rng);
-        var (nextQ1t, nextQ2t) = network.GetContinuousTargetQValues(t.NextObservation, nextAction);
-        var nextMinQ = Math.Min(nextQ1t, nextQ2t);
-        var nextV = nextMinQ - alpha * nextLogProb;
+        var qSamples     = new List<(float[] obs, float[] action, float target)>(batch.Length);
+        var actorSamples = new List<(float[] obs, float[] action, float[] eps, float[] u)>(batch.Length);
+        var valueLoss    = 0f;
+        var entropy      = 0f;
 
-        var mask = t.Done ? 0f : 1f;
-        var y = t.Reward + config.Gamma * mask * nextV;
+        // Phase 1 — Bellman targets + fresh action samples (no weight updates)
+        foreach (var t in batch)
+        {
+            var (nextAction, nextLogProb, _, _) = network.SampleContinuousAction(t.NextObservation, rng);
+            var (nextQ1t, nextQ2t)              = network.GetContinuousTargetQValues(t.NextObservation, nextAction);
+            var y = t.Reward + config.Gamma * (t.Done ? 0f : 1f) *
+                    (Math.Min(nextQ1t, nextQ2t) - alpha * nextLogProb);
 
-        // Update Q networks
-        var (q1, q2) = network.GetContinuousQValues(t.Observation, t.ContinuousActions);
-        valueLoss += MathF.Abs(q1 - y) + MathF.Abs(q2 - y);
+            var (q1, q2) = network.GetContinuousQValues(t.Observation, t.ContinuousActions);
+            valueLoss   += MathF.Abs(q1 - y) + MathF.Abs(q2 - y);
 
-        network.UpdateQ1Continuous(t.Observation, t.ContinuousActions, y);
-        network.UpdateQ2Continuous(t.Observation, t.ContinuousActions, y);
+            var (action, logProb, eps, u) = network.SampleContinuousAction(t.Observation, rng);
+            entropy += -logProb;
 
-        // Sample fresh action for actor update (reparameterization)
-        var (action, logProb, eps, u) = network.SampleContinuousAction(t.Observation, rng);
-        network.UpdateActorContinuous(t.Observation, action, eps, u, alpha);
+            qSamples.Add((t.Observation, t.ContinuousActions, y));
+            actorSamples.Add((t.Observation, action, eps, u));
+        }
 
-        // Accumulate entropy; logAlpha update happens once per batch in the caller.
-        entropySum += -logProb;
-        policyLoss += logProb; // policy loss proxy
+        // Phase 2 — single gradient step per network
+        network.BatchUpdateQ1Continuous(qSamples, config.LearningRate);
+        network.BatchUpdateQ2Continuous(qSamples, config.LearningRate);
+        network.BatchUpdateActorContinuous(actorSamples, alpha, config.LearningRate);
+
+        return (policyLossSum: entropy, valueLossSum: valueLoss, entropySum: entropy);
     }
 
     // ── IDistributedTrainer ───────────────────────────────────────────────────

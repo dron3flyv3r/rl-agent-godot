@@ -17,6 +17,10 @@ public enum DistributedMessageType : byte
     Rollout = 3,
     /// <summary>Master → Worker.  Payload: empty.  Tells the worker to exit cleanly.</summary>
     Shutdown = 5,
+    /// <summary>Master → Worker.  Payload: 4-byte little-endian float — current curriculum progress in [0, 1].</summary>
+    CurriculumSync = 6,
+    /// <summary>Worker → Master.  Payload: batch of episode summaries (reward, steps, breakdown) for metrics aggregation.</summary>
+    EpisodeSummary = 7,
 }
 
 // ── Wire-format helpers ───────────────────────────────────────────────────────
@@ -145,6 +149,55 @@ public static class DistributedProtocol
         return episodes;
     }
 
+    // ── Episode summary serialisation ────────────────────────────────────────
+
+    public static byte[] SerializeEpisodeSummaries(IList<WorkerEpisodeSummary> summaries)
+    {
+        using var ms = new MemoryStream();
+        using var bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
+        bw.Write(summaries.Count);
+        foreach (var s in summaries)
+        {
+            bw.Write(s.Reward);
+            bw.Write(s.Steps);
+            var breakdown = s.RewardBreakdown ?? new Dictionary<string, float>();
+            bw.Write(breakdown.Count);
+            foreach (var (tag, amount) in breakdown)
+            {
+                var tagBytes = Encoding.UTF8.GetBytes(tag);
+                bw.Write(tagBytes.Length);
+                bw.Write(tagBytes);
+                bw.Write(amount);
+            }
+        }
+        bw.Flush();
+        return ms.ToArray();
+    }
+
+    public static List<WorkerEpisodeSummary> DeserializeEpisodeSummaries(byte[] data)
+    {
+        var result = new List<WorkerEpisodeSummary>();
+        if (data.Length == 0) return result;
+        using var ms = new MemoryStream(data);
+        using var br = new BinaryReader(ms);
+        var count = br.ReadInt32();
+        for (var i = 0; i < count; i++)
+        {
+            var reward = br.ReadSingle();
+            var steps  = br.ReadInt32();
+            var bdCount = br.ReadInt32();
+            var breakdown = new Dictionary<string, float>(StringComparer.Ordinal);
+            for (var j = 0; j < bdCount; j++)
+            {
+                var tagLen = br.ReadInt32();
+                var tag    = Encoding.UTF8.GetString(br.ReadBytes(tagLen));
+                breakdown[tag] = br.ReadSingle();
+            }
+            result.Add(new WorkerEpisodeSummary { Reward = reward, Steps = steps, RewardBreakdown = breakdown });
+        }
+        return result;
+    }
+
     public static List<DistributedTransition> DeserializeRollout(byte[] data)
     {
         using var ms = new MemoryStream(data);
@@ -180,6 +233,20 @@ public static class DistributedProtocol
         }
         return result;
     }
+}
+
+// ── Episode summary (worker → master) ────────────────────────────────────────
+
+/// <summary>
+/// Lightweight episode outcome sent by workers to the master for metrics aggregation.
+/// The master writes these to the metrics log so RLDash shows episodes from all processes.
+/// </summary>
+public struct WorkerEpisodeSummary
+{
+    public float Reward;
+    public int   Steps;
+    /// <summary>Per-component reward breakdown. Empty dict when no tags were used.</summary>
+    public Dictionary<string, float> RewardBreakdown;
 }
 
 // ── Shared data transfer object ───────────────────────────────────────────────

@@ -43,6 +43,7 @@ public partial class WallClimbArenaController : Node3D
     private const float KillPlaneY = -1.0f;
     private const float GoalReachRadius = 0.9f;
     private const float ProgressRewardScale = 0.02f;
+    private const float GoalProgressRewardScale = 0.05f;
 
     public override void _Ready()
     {
@@ -107,23 +108,29 @@ public partial class WallClimbArenaController : Node3D
         var wallX = _wall.GlobalPosition.X;
         var goalPos = GoalWorldPosition;
 
-        // Player-to-box proximity shaping
+        // wallFactor scales sub-task rewards (box/player shaping) so they are silent at
+        // curriculum=0 (no wall) and grow proportionally as the wall rises.
+        // At curriculum=0 the only relevant gradient is goal_progress; at full height all
+        // sub-tasks are fully active.
+        var wallFactor = WallHeightMax > 0f ? CurrentWallHeight / WallHeightMax : 0f;
+
+        // Player-to-box proximity shaping (only useful when there is a wall to climb)
         var playerToBoxDist = playerPos.DistanceTo(boxPos);
-        if (_prevPlayerToBoxDist < float.MaxValue)
+        if (wallFactor > 0f && _prevPlayerToBoxDist < float.MaxValue)
         {
             var delta2 = _prevPlayerToBoxDist - playerToBoxDist;
             if (delta2 != 0f)
-                AccumulateReward(delta2 * ProgressRewardScale, "player_to_box");
+                AccumulateReward(delta2 * ProgressRewardScale * wallFactor, "player_to_box");
         }
         _prevPlayerToBoxDist = playerToBoxDist;
 
-        // Box-toward-wall shaping
+        // Box-toward-wall shaping (only useful when there is a wall to climb)
         var boxToWallDist = Mathf.Abs(boxPos.X - wallX);
-        if (_prevBoxToWallDist < float.MaxValue)
+        if (wallFactor > 0f && _prevBoxToWallDist < float.MaxValue)
         {
             var delta3 = _prevBoxToWallDist - boxToWallDist;
             if (delta3 != 0f)
-                AccumulateReward(delta3 * ProgressRewardScale, "box_to_wall");
+                AccumulateReward(delta3 * ProgressRewardScale * wallFactor, "box_to_wall");
         }
         _prevBoxToWallDist = boxToWallDist;
 
@@ -131,7 +138,7 @@ public partial class WallClimbArenaController : Node3D
         if (!_onBoxBonusGiven && playerPos.Y > boxPos.Y + 0.3f && playerToBoxDist < 1.2f)
         {
             _onBoxBonusGiven = true;
-            AccumulateReward(0.1f, "on_box");
+            AccumulateReward(0.1f * wallFactor, "on_box");
         }
 
         // One-shot: player cleared the wall (X > wallX + 0.5)
@@ -141,21 +148,18 @@ public partial class WallClimbArenaController : Node3D
             AccumulateReward(0.5f, "cleared_wall");
         }
 
-        if (_clearedWallBonusGiven)
+        // Shape toward goal using XZ-only distance so that falling (Y decrease) does not
+        // generate large negative goal_progress and inadvertently reinforce dying.
+        // GoalProgressRewardScale is larger than the sub-task scale so the goal is always dominant.
         {
-            var playerToGoalDist = playerPos.DistanceTo(goalPos);
+            var playerToGoalDist = new Vector2(playerPos.X - goalPos.X, playerPos.Z - goalPos.Z).Length();
             if (_prevPlayerToGoalDist < float.MaxValue)
             {
                 var goalDelta = _prevPlayerToGoalDist - playerToGoalDist;
                 if (goalDelta != 0f)
-                    AccumulateReward(goalDelta * ProgressRewardScale, "goal_progress");
+                    AccumulateReward(goalDelta * GoalProgressRewardScale, "goal_progress");
             }
-
             _prevPlayerToGoalDist = playerToGoalDist;
-        }
-        else
-        {
-            _prevPlayerToGoalDist = float.MaxValue;
         }
 
         // Goal detection via distance check avoids C# signal marshalling edge cases.
