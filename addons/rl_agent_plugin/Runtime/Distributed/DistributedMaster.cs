@@ -406,6 +406,10 @@ public sealed class DistributedMaster : IDisposable
     {
         ProcessIncoming();
 
+        // Inform SAC trainer how many data sources are active so auto-UTD scales correctly.
+        if (trainer is SacTrainer sacTrainer)
+            sacTrainer.DataSources = ConnectedWorkers + 1;
+
         // Poll running background job.
         if (_trainingInProgress.Contains(groupId))
         {

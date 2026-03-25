@@ -22,6 +22,34 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
     // make decisions per frame and N doesn't divide SacUpdateEverySteps.
     private long _nextTrainingStep;
 
+    // ── UTD (Updates-To-Data ratio) ───────────────────────────────────────────
+    /// <summary>
+    /// Number of active data sources feeding this trainer (master=1 + connected workers).
+    /// Set by <see cref="DistributedMaster"/> each tick; defaults to 1 for standalone mode.
+    /// Used to compute the auto UTD ratio when <see cref="RLTrainerConfig.SacUpdatesPerStep"/> is 0.
+    /// </summary>
+    public int DataSources { get; set; } = 1;
+
+    /// <summary>
+    /// Number of parallel environments per process (RunConfig.BatchSize).
+    /// Set by <see cref="TrainingBootstrap"/> at startup; defaults to 1.
+    /// Scales the auto UTD ratio so gradient updates match the full data rate.
+    /// </summary>
+    public int EnvBatchSize { get; set; } = 1;
+
+    // Auto UTD cap: prevents the background job from becoming too compute-heavy
+    // when large BatchSizes or many workers would otherwise push UTD very high.
+    private const int AutoUtdCap = 8;
+
+    private int ResolveUtd()
+    {
+        if (_trainerConfig.SacUpdatesPerStep > 0)
+            return _trainerConfig.SacUpdatesPerStep;
+        // Auto: one gradient update per new transition across all data sources,
+        // capped to avoid excessive compute per physics step.
+        return Math.Clamp(DataSources * EnvBatchSize, 1, AutoUtdCap);
+    }
+
     // ── Async gradient update state ───────────────────────────────────────────
     private SacNetwork? _shadowNetwork;
     private Task<SacAsyncResult>? _pendingUpdate;
@@ -164,32 +192,42 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
             return null;
         _nextTrainingStep = _totalStepsSeen + Math.Max(1, _trainerConfig.SacUpdateEverySteps);
 
-        var batch = _buffer.SampleBatch(_trainerConfig.SacBatchSize, _rng);
-        var alpha = MathF.Exp(_logAlpha);
+        var utd = ResolveUtd();
+        var totalPolicyLoss = 0f;
+        var totalValueLoss  = 0f;
+        var totalEntropy    = 0f;
 
-        var (policyLossSum, valueLossSum, entropySum) = _isContinuous
-            ? BatchUpdateContinuous(_network, batch, alpha, _trainerConfig, _rng)
-            : BatchUpdateDiscrete(_network, batch, alpha, _trainerConfig);
-
-        // Single per-batch logAlpha update.
-        // Sign: H < H_target → logAlpha increases (push toward more entropy).
-        if (_trainerConfig.SacAutoTuneAlpha && batch.Length > 0)
+        for (var u = 0; u < utd; u++)
         {
-            var meanEntropy = entropySum / batch.Length;
-            _logAlpha -= _trainerConfig.LearningRate * (meanEntropy - _targetEntropy);
-            _logAlpha = Math.Clamp(_logAlpha, -20f, 4f);
+            var batch = _buffer.SampleBatch(_trainerConfig.SacBatchSize, _rng);
+            var alpha = MathF.Exp(_logAlpha);
+
+            var (policyLossSum, valueLossSum, entropySum) = _isContinuous
+                ? BatchUpdateContinuous(_network, batch, alpha, _trainerConfig, _rng)
+                : BatchUpdateDiscrete(_network, batch, alpha, _trainerConfig);
+
+            if (_trainerConfig.SacAutoTuneAlpha && batch.Length > 0)
+            {
+                var meanEntropy = entropySum / batch.Length;
+                _logAlpha -= _trainerConfig.LearningRate * (meanEntropy - _targetEntropy);
+                _logAlpha = Math.Clamp(_logAlpha, -20f, 4f);
+            }
+
+            _network.SoftUpdateTargets(_trainerConfig.SacTau);
+
+            var n = Math.Max(1, batch.Length);
+            totalPolicyLoss += policyLossSum / n;
+            totalValueLoss  += valueLossSum  / n;
+            totalEntropy    += entropySum    / n;
         }
 
-        _network.SoftUpdateTargets(_trainerConfig.SacTau);
-
-        var n = Math.Max(1, batch.Length);
         return new TrainerUpdateStats
         {
-            PolicyLoss = policyLossSum / n,
-            ValueLoss  = valueLossSum  / n,
-            Entropy    = entropySum    / n,
+            PolicyLoss   = totalPolicyLoss / utd,
+            ValueLoss    = totalValueLoss  / utd,
+            Entropy      = totalEntropy    / utd,
             ClipFraction = 0f,
-            Checkpoint = CreateCheckpoint(groupId, totalSteps, episodeCount, 0),
+            Checkpoint   = CreateCheckpoint(groupId, totalSteps, episodeCount, 0),
         };
     }
 
@@ -233,9 +271,10 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
         var isContinuous = _isContinuous;
         var logAlpha = _logAlpha;
         var targetEntropy = _targetEntropy;
+        var utd = ResolveUtd();
         var rng = new Random(); // dedicated RNG — System.Random is not thread-safe
 
-        _pendingUpdate = Task.Run(() => RunBackgroundUpdate(shadow, batch, config, isContinuous, logAlpha, targetEntropy, rng));
+        _pendingUpdate = Task.Run(() => RunBackgroundUpdate(shadow, batch, config, isContinuous, logAlpha, targetEntropy, utd, rng));
         return true;
     }
 
@@ -288,29 +327,44 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
         bool isContinuous,
         float logAlpha,
         float targetEntropy,
+        int utd,
         Random rng)
     {
-        var alpha = MathF.Exp(logAlpha);
+        var totalPolicyLoss = 0f;
+        var totalValueLoss  = 0f;
+        var totalEntropy    = 0f;
 
-        var (policyLossSum, valueLossSum, entropySum) = isContinuous
-            ? BatchUpdateContinuous(network, batch, alpha, config, rng)
-            : BatchUpdateDiscrete(network, batch, alpha, config);
-
-        if (config.SacAutoTuneAlpha && batch.Length > 0)
+        for (var u = 0; u < utd; u++)
         {
-            var meanEntropy = entropySum / batch.Length;
-            logAlpha -= config.LearningRate * (meanEntropy - targetEntropy);
-            logAlpha = Math.Clamp(logAlpha, -20f, 4f);
+            // First UTD step uses the pre-sampled batch; subsequent steps re-use the same
+            // batch (background thread cannot safely access the replay buffer). This gives
+            // meaningful multi-step gradient updates without requiring thread-safe sampling.
+            var alpha = MathF.Exp(logAlpha);
+
+            var (policyLossSum, valueLossSum, entropySum) = isContinuous
+                ? BatchUpdateContinuous(network, batch, alpha, config, rng)
+                : BatchUpdateDiscrete(network, batch, alpha, config);
+
+            if (config.SacAutoTuneAlpha && batch.Length > 0)
+            {
+                var meanEntropy = entropySum / batch.Length;
+                logAlpha -= config.LearningRate * (meanEntropy - targetEntropy);
+                logAlpha = Math.Clamp(logAlpha, -20f, 4f);
+            }
+
+            network.SoftUpdateTargets(config.SacTau);
+
+            var n = Math.Max(1, batch.Length);
+            totalPolicyLoss += policyLossSum / n;
+            totalValueLoss  += valueLossSum  / n;
+            totalEntropy    += entropySum    / n;
         }
 
-        network.SoftUpdateTargets(config.SacTau);
-
-        var n = Math.Max(1, batch.Length);
         return new SacAsyncResult
         {
-            PolicyLoss  = policyLossSum / n,
-            ValueLoss   = valueLossSum  / n,
-            Entropy     = entropySum    / n,
+            PolicyLoss  = totalPolicyLoss / utd,
+            ValueLoss   = totalValueLoss  / utd,
+            Entropy     = totalEntropy    / utd,
             NewLogAlpha = logAlpha,
         };
     }
