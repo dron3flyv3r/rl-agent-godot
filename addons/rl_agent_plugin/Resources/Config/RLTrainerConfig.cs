@@ -38,4 +38,9 @@ public partial class RLTrainerConfig
     public bool SacAutoTuneAlpha { get; set; } = true;
     public int SacUpdateEverySteps { get; set; } = 1;
     public float SacTargetEntropyFraction { get; set; } = 0.5f;
+    /// <summary>
+    /// Gradient updates per environment step (UTD ratio).
+    /// 0 = auto: equals the number of active data sources (master + connected workers).
+    /// </summary>
+    public int SacUpdatesPerStep { get; set; } = 0;
 }

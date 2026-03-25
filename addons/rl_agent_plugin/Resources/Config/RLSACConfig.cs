@@ -31,6 +31,13 @@ public partial class RLSACConfig : RLAlgorithmConfig
     /// <summary>Run one gradient update every N environment steps.</summary>
     [Export] public int   UpdateEverySteps      { get; set; } = 1;
     /// <summary>
+    /// Number of gradient updates performed per environment step (Updates-To-Data ratio).
+    /// 0 (default) = auto: scales with the number of active data sources (1 master + N workers).
+    /// Set to a fixed value (e.g. 4) to override for reproducible experiments.
+    /// Higher values improve sample efficiency at the cost of more compute per step.
+    /// </summary>
+    [Export(PropertyHint.Range, "0,32,or_greater")] public int UpdatesPerStep { get; set; } = 0;
+    /// <summary>
     /// Fraction of maximum entropy used as the discrete-action target entropy.
     /// 1.0 = fully random (uniform policy); 0.5 = half of maximum entropy.
     /// Lower values make the policy converge to more deterministic behaviour.
@@ -55,6 +62,7 @@ public partial class RLSACConfig : RLAlgorithmConfig
         config.SacAutoTuneAlpha           = AutoTuneAlpha;
         config.SacUpdateEverySteps        = UpdateEverySteps;
         config.SacTargetEntropyFraction   = TargetEntropyFraction;
+        config.SacUpdatesPerStep          = UpdatesPerStep;
         config.StatusWriteIntervalSteps   = StatusWriteIntervalSteps;
     }
 }

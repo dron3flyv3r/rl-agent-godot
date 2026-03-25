@@ -451,6 +451,11 @@ public partial class TrainingBootstrap : Node
             GD.Print($"[RL]   Metrics:    {metricsPath}");
         }
 
+        // Inform SAC trainers how many parallel envs are running per process so the
+        // auto UTD formula can scale gradient updates to match the full data rate.
+        foreach (var trainer in _trainersByGroup.Values)
+            if (trainer is SacTrainer sac) sac.EnvBatchSize = _batchSize;
+
         if (!TryConfigureSelfPlay(out var selfPlayError))
         {
             GD.PushError($"[RL] {selfPlayError}");
