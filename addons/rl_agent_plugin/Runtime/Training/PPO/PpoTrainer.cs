@@ -198,7 +198,7 @@ public sealed class PpoTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
 
     // ── IAsyncTrainer ─────────────────────────────────────────────────────────
 
-    public bool TryScheduleBackgroundUpdate(string groupId, long totalSteps, long episodeCount)
+    public bool TryScheduleBackgroundUpdate(string groupId, long totalSteps, long episodeCount, int maxTransitions = int.MaxValue)
     {
         // Reject if a job is running or a completed result hasn't been polled yet.
         if (_pendingUpdate is not null)
@@ -207,8 +207,9 @@ public sealed class PpoTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
         if (_transitions.Count < _trainerConfig.RolloutLength)
             return false;
 
-        // Snapshot transitions and clear the live buffer so the main thread can keep filling it.
-        var transitions = _transitions.ToList();
+        // Snapshot transitions (capped) and clear the live buffer so the main thread can keep filling it.
+        var count = Math.Min(_transitions.Count, maxTransitions);
+        var transitions = _transitions.GetRange(0, count);
         _transitions.Clear();
 
         // Lazy-create shadow network with identical architecture.

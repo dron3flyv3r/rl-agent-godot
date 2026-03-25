@@ -1,0 +1,122 @@
+[gd_scene format=3 uid="uid://djwkxiydah2ed"]
+
+[ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/Core/RLAcademy.cs" id="1_rlacad"]
+[ext_resource type="Resource" path="res://demo/05 Crawler/SAC.tres" id="2_sacc"]
+[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl_agent_plugin/Resources/Config/RLPolicyGroupConfig.cs" id="3_pgcfg"]
+[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl_agent_plugin/Resources/Config/RLTrainingConfig.cs" id="4_trcfg"]
+[ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl_agent_plugin/Resources/Config/RLRunConfig.cs" id="5_runcfg"]
+[ext_resource type="Script" uid="uid://iq6ldrfkfev8" path="res://addons/rl_agent_plugin/Resources/Config/RLDistributedConfig.cs" id="6_distcfg"]
+[ext_resource type="Script" uid="uid://brs4lafydld4i" path="res://demo/05 Crawler/Scripts/CrawlerBody.cs" id="7_body"]
+[ext_resource type="Script" uid="uid://cmbq207kreiu" path="res://demo/05 Crawler/Scripts/CrawlerAgent.cs" id="8_agent"]
+[ext_resource type="Script" uid="uid://oouep3l8683y" path="res://addons/rl_agent_plugin/Resources/Models/RLDenseLayerDef.cs" id="8_jw6wg"]
+[ext_resource type="Script" uid="uid://n4fexef4ftko" path="res://addons/rl_agent_plugin/Resources/Models/RLDropoutLayerDef.cs" id="9_1tb6g"]
+[ext_resource type="Script" uid="uid://covgl5skelf7g" path="res://addons/rl_agent_plugin/Resources/Models/RLNetworkGraph.cs" id="10_jlelm"]
+
+[sub_resource type="Resource" id="TrainingConfig"]
+script = ExtResource("4_trcfg")
+Algorithm = ExtResource("2_sacc")
+
+[sub_resource type="Resource" id="RunConfig"]
+script = ExtResource("5_runcfg")
+RunPrefix = "Crawler"
+SimulationSpeed = 4.0
+BatchSize = 4
+ActionRepeat = 1
+CheckpointInterval = 20
+AsyncGradientUpdates = true
+
+[sub_resource type="Resource" id="DistributedConfig"]
+script = ExtResource("6_distcfg")
+metadata/_custom_type_script = "uid://iq6ldrfkfev8"
+
+[sub_resource type="BoxMesh" id="GroundMesh"]
+size = Vector3(20, 0.2, 20)
+
+[sub_resource type="StandardMaterial3D" id="GroundMat"]
+albedo_color = Color(0.35, 0.55, 0.35, 1)
+
+[sub_resource type="BoxShape3D" id="GroundShape"]
+size = Vector3(20, 0.2, 20)
+
+[sub_resource type="Resource" id="Resource_uydov"]
+script = ExtResource("8_jw6wg")
+Size = 128
+metadata/_custom_type_script = "uid://oouep3l8683y"
+
+[sub_resource type="Resource" id="Resource_rbaes"]
+script = ExtResource("8_jw6wg")
+Size = 128
+metadata/_custom_type_script = "uid://oouep3l8683y"
+
+[sub_resource type="Resource" id="Resource_kfcm2"]
+script = ExtResource("9_1tb6g")
+metadata/_custom_type_script = "uid://n4fexef4ftko"
+
+[sub_resource type="Resource" id="Resource_d6yrf"]
+script = ExtResource("8_jw6wg")
+metadata/_custom_type_script = "uid://oouep3l8683y"
+
+[sub_resource type="Resource" id="Resource_62g4e"]
+script = ExtResource("8_jw6wg")
+metadata/_custom_type_script = "uid://oouep3l8683y"
+
+[sub_resource type="Resource" id="Resource_i1i2p"]
+script = ExtResource("10_jlelm")
+TrunkLayers = Array[Resource]([SubResource("Resource_uydov"), SubResource("Resource_rbaes"), SubResource("Resource_kfcm2"), SubResource("Resource_d6yrf"), SubResource("Resource_62g4e")])
+metadata/_custom_type_script = "uid://covgl5skelf7g"
+
+[sub_resource type="Resource" id="PolicyGroupConfig"]
+resource_name = "crawler"
+script = ExtResource("3_pgcfg")
+AgentId = "crawler"
+InferenceModelPath = "res://demo/05 Crawler/model/crawler.rlmodel"
+NetworkGraph = SubResource("Resource_i1i2p")
+
+[sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
+
+[sub_resource type="Sky" id="Sky"]
+sky_material = SubResource("SkyMat")
+
+[sub_resource type="Environment" id="Env"]
+background_mode = 2
+sky = SubResource("Sky")
+
+[node name="CrawlerDemo" type="Node3D" unique_id=1544530698]
+
+[node name="Academy" type="Node" parent="." unique_id=1764906572]
+script = ExtResource("1_rlacad")
+TrainingConfig = SubResource("TrainingConfig")
+MaxEpisodeSteps = 1000
+RunConfig = SubResource("RunConfig")
+DistributedConfig = SubResource("DistributedConfig")
+EnableSpyOverlay = true
+
+[node name="Arena" type="Node3D" parent="." unique_id=1266303911]
+
+[node name="Ground" type="StaticBody3D" parent="Arena" unique_id=1137566489]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="Arena/Ground" unique_id=1995467611]
+mesh = SubResource("GroundMesh")
+surface_material_override/0 = SubResource("GroundMat")
+
+[node name="Collision" type="CollisionShape3D" parent="Arena/Ground" unique_id=925171222]
+shape = SubResource("GroundShape")
+
+[node name="Creature" type="Node3D" parent="Arena" unique_id=956991449]
+script = ExtResource("7_body")
+
+[node name="CrawlerAgent" type="Node3D" parent="Arena/Creature" unique_id=1172886549]
+script = ExtResource("8_agent")
+PolicyGroupConfig = SubResource("PolicyGroupConfig")
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=21532159]
+transform = Transform3D(0.66390014, -0.5287895, 0.52878946, 0, 0.70710677, 0.7071068, -0.74782133, -0.46944827, 0.46944824, 8.304151, 8.999999, 7.0724573)
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=746154590]
+transform = Transform3D(0.8332012, -0.3910088, 0.3910088, 0, 0.7071068, 0.7071068, -0.55297, -0.5891623, 0.5891623, 0, 10, 10)
+light_energy = 1.2
+shadow_enabled = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=136267669]
+environment = SubResource("Env")

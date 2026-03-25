@@ -90,7 +90,12 @@ public interface IAsyncTrainer : ITrainer
     /// Returns <c>true</c> if a job was queued, <c>false</c> if the buffer isn't full yet or
     /// a job is already in flight / awaiting poll.
     /// </summary>
-    bool TryScheduleBackgroundUpdate(string groupId, long totalSteps, long episodeCount);
+    /// <param name="maxTransitions">
+    /// Maximum number of transitions to include in this update's batch.
+    /// Transitions beyond the cap are discarded when the snapshot is taken.
+    /// Defaults to <see cref="int.MaxValue"/> (no cap).
+    /// </param>
+    bool TryScheduleBackgroundUpdate(string groupId, long totalSteps, long episodeCount, int maxTransitions = int.MaxValue);
 
     /// <summary>
     /// Returns training stats if the background job completed since the last poll; <c>null</c>

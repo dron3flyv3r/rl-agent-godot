@@ -202,7 +202,7 @@ public sealed class SacTrainer : ITrainer, IAsyncTrainer, IDistributedTrainer
 
     // ── IAsyncTrainer ─────────────────────────────────────────────────────────
 
-    public bool TryScheduleBackgroundUpdate(string groupId, long totalSteps, long episodeCount)
+    public bool TryScheduleBackgroundUpdate(string groupId, long totalSteps, long episodeCount, int maxTransitions = int.MaxValue)
     {
         if (_pendingUpdate is not null)
             return false;

@@ -95,16 +95,22 @@ public sealed class DistributedMaster : IDisposable
     private readonly bool _verbose;
     private readonly Dictionary<string, IDistributedTrainer> _trainers;
     private readonly Dictionary<string, IAsyncTrainer>       _asyncTrainers = new(StringComparer.Ordinal);
+    private readonly RLAsyncRolloutPolicy _asyncRolloutPolicy;
+    private readonly int                  _rolloutLength;
 
     private TcpListener?  _listener;
     private Thread?       _acceptThread;
     private volatile bool _running;
+    private volatile int  _pendingRelaunches;
 
     private readonly List<WorkerConnection> _connections     = new();
     private readonly object                 _connectionsLock = new();
 
     private readonly Queue<(string groupId, byte[] data)>                        _pendingRollouts         = new();
     private readonly Queue<(string groupId, List<WorkerEpisodeSummary> items)>  _pendingEpisodeSummaries = new();
+    // Hello requests are queued by the read thread and processed on the main thread so that
+    // ExportWeights() never races with SampleAction() (both use the TorchSharp network).
+    private readonly Queue<(WorkerConnection conn, string groupId)>             _pendingHellos           = new();
     private readonly object                                                      _rolloutsLock            = new();
 
     // Per-group counters (current round).
@@ -135,13 +141,17 @@ public sealed class DistributedMaster : IDisposable
         int  workerCount,
         int  monitorInterval,
         bool verbose,
-        Dictionary<string, IDistributedTrainer> trainers)
+        Dictionary<string, IDistributedTrainer> trainers,
+        RLAsyncRolloutPolicy asyncRolloutPolicy = RLAsyncRolloutPolicy.Pause,
+        int  rolloutLength = 256)
     {
-        _port            = port;
-        _workerCount     = workerCount;
-        _monitorInterval = monitorInterval;
-        _verbose         = verbose;
-        _trainers        = trainers;
+        _port               = port;
+        _workerCount        = workerCount;
+        _monitorInterval    = monitorInterval;
+        _verbose            = verbose;
+        _trainers           = trainers;
+        _asyncRolloutPolicy = asyncRolloutPolicy;
+        _rolloutLength      = rolloutLength;
 
         foreach (var (g, t) in trainers)
         {
@@ -161,6 +171,12 @@ public sealed class DistributedMaster : IDisposable
 
     public int  ConnectedWorkers { get { lock (_connectionsLock) return _connections.Count; } }
     public bool IsTraining       => _trainingInProgress.Count > 0;
+
+    /// <summary>
+    /// Returns how many workers have disconnected since the last call and resets the counter.
+    /// Call from the main thread to decide whether to relaunch replacement processes.
+    /// </summary>
+    public int DrainPendingRelaunches() => Interlocked.Exchange(ref _pendingRelaunches, 0);
 
     /// <summary>Cumulative episodes completed by all worker processes (counted from Done flags in rollouts).</summary>
     public long TotalWorkerEpisodes { get; private set; }
@@ -298,9 +314,10 @@ public sealed class DistributedMaster : IDisposable
                 switch (type)
                 {
                     case DistributedMessageType.Hello:
-                        if (_trainers.TryGetValue(groupId, out var t))
-                            conn.Send(DistributedMessageType.Weights, groupId, t.ExportWeights());
-                        if (_verbose) GD.Print($"[RL Distributed] Worker hello '{groupId}'.");
+                        // Queue for the main thread — ExportWeights() touches the TorchSharp
+                        // network and must not race with SampleAction() on the physics thread.
+                        lock (_rolloutsLock) _pendingHellos.Enqueue((conn, groupId));
+                        if (_verbose) GD.Print($"[RL Distributed] Worker hello '{groupId}' queued.");
                         break;
                     case DistributedMessageType.Rollout:
                         lock (_rolloutsLock) _pendingRollouts.Enqueue((groupId, payload));
@@ -319,6 +336,7 @@ public sealed class DistributedMaster : IDisposable
             lock (_connectionsLock) _connections.Remove(conn);
             conn.Close();
             GD.Print($"[RL Distributed] Worker removed ({ConnectedWorkers} remaining).");
+            Interlocked.Increment(ref _pendingRelaunches);
         }
     }
 
@@ -328,10 +346,35 @@ public sealed class DistributedMaster : IDisposable
     {
         lock (_rolloutsLock)
         {
+            // Handle Hello requests on the main thread so ExportWeights() never races
+            // with SampleAction() — both access the shared TorchSharp network.
+            while (_pendingHellos.Count > 0)
+            {
+                var (hConn, hGroup) = _pendingHellos.Dequeue();
+                if (_trainers.TryGetValue(hGroup, out var ht))
+                    hConn.Send(DistributedMessageType.Weights, hGroup, ht.ExportWeights());
+                if (_verbose) GD.Print($"[RL Distributed] Sent initial weights to worker for '{hGroup}'.");
+            }
+
             while (_pendingRollouts.Count > 0)
             {
                 var (groupId, data) = _pendingRollouts.Dequeue();
                 if (!_trainers.TryGetValue(groupId, out var trainer)) continue;
+
+                // In Pause mode, discard rollouts that arrive while an on-policy training job is
+                // in flight so the transition buffer does not grow unboundedly between updates.
+                // Off-policy trainers (SAC) are never paused: they benefit from a larger replay
+                // buffer and sample a fixed mini-batch regardless of how many transitions exist.
+                var discard = _asyncRolloutPolicy == RLAsyncRolloutPolicy.Pause
+                              && _trainingInProgress.Contains(groupId)
+                              && !trainer.IsOffPolicy;
+                if (discard)
+                {
+                    if (_verbose)
+                        GD.Print($"[RL Distributed] Rollout '{groupId}' discarded (Pause policy — training in progress).");
+                    continue;
+                }
+
                 trainer.InjectRollout(data);
                 var steps    = data.Length >= 4 ? BitConverter.ToInt32(data, 0) : 0;
                 var episodes = DistributedProtocol.CountEpisodesInRollout(data);
@@ -384,7 +427,14 @@ public sealed class DistributedMaster : IDisposable
         // Prefer async (non-blocking backprop).
         if (_asyncTrainers.TryGetValue(groupId, out var asyncT))
         {
-            if (asyncT.TryScheduleBackgroundUpdate(groupId, totalSteps, episodeCount))
+            // In Cap mode, limit the on-policy snapshot to one full round of rollouts so that
+            // excess transitions accumulated while waiting for workers do not inflate the batch.
+            // Off-policy trainers (SAC) sample a fixed mini-batch internally; the cap is a no-op for them.
+            var maxTransitions = _asyncRolloutPolicy == RLAsyncRolloutPolicy.Cap && !trainer.IsOffPolicy
+                ? (_workerCount + 1) * _rolloutLength
+                : int.MaxValue;
+
+            if (asyncT.TryScheduleBackgroundUpdate(groupId, totalSteps, episodeCount, maxTransitions))
             {
                 _trainingInProgress.Add(groupId);
                 _trainStartTime[groupId] = DateTime.UtcNow;
