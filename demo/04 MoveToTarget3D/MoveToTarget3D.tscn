@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://coukl5mxo6pw2"]
 
 [ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/Core/RLAcademy.cs" id="1_rlacad"]
-[ext_resource type="Resource" uid="uid://cslj70l6lnc0m" path="res://demo/04 MoveToTarget3D/PPO.tres" id="2_i24df"]
+[ext_resource type="Script" uid="uid://dg2me1qyyu7fl" path="res://addons/rl_agent_plugin/Resources/Config/RLSACConfig.cs" id="2_ci1xl"]
 [ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl_agent_plugin/Resources/Config/RLPolicyGroupConfig.cs" id="3_pgcfg"]
 [ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl_agent_plugin/Resources/Config/RLTrainingConfig.cs" id="4_trcfg"]
 [ext_resource type="Script" uid="uid://iq6ldrfkfev8" path="res://addons/rl_agent_plugin/Resources/Config/RLDistributedConfig.cs" id="5_i24df"]
@@ -9,9 +9,13 @@
 [ext_resource type="Script" uid="uid://do7qa2y5uje2v" path="res://demo/04 MoveToTarget3D/Scripts/MoveToTarget3DPlayer.cs" id="6_player"]
 [ext_resource type="Script" uid="uid://w0fm3b0ljdgi" path="res://demo/04 MoveToTarget3D/Scripts/MoveToTarget3DAgent.cs" id="7_agent"]
 
+[sub_resource type="Resource" id="Resource_i24df"]
+script = ExtResource("2_ci1xl")
+metadata/_custom_type_script = "uid://dg2me1qyyu7fl"
+
 [sub_resource type="Resource" id="TrainingConfig"]
 script = ExtResource("4_trcfg")
-Algorithm = ExtResource("2_i24df")
+Algorithm = SubResource("Resource_i24df")
 
 [sub_resource type="Resource" id="RunConfig"]
 script = ExtResource("5_runcfg")
@@ -20,10 +24,11 @@ SimulationSpeed = 4.0
 BatchSize = 4
 ActionRepeat = 2
 CheckpointInterval = 50
+AsyncGradientUpdates = true
 
-[sub_resource type="Resource" id="Resource_i24df"]
+[sub_resource type="Resource" id="Resource_28n2c"]
 script = ExtResource("5_i24df")
-EngineExecutablePath = "godot-mono"
+WorkerCount = 1
 metadata/_custom_type_script = "uid://iq6ldrfkfev8"
 
 [sub_resource type="BoxMesh" id="PlatformMesh"]
@@ -78,7 +83,7 @@ script = ExtResource("1_rlacad")
 TrainingConfig = SubResource("TrainingConfig")
 MaxEpisodeSteps = 500
 RunConfig = SubResource("RunConfig")
-DistributedConfig = SubResource("Resource_i24df")
+DistributedConfig = SubResource("Resource_28n2c")
 EnableSpyOverlay = true
 
 [node name="Arena" type="Node3D" parent="." unique_id=1847465851]

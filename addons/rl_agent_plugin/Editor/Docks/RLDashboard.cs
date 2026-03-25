@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using Godot;
 using RlAgentPlugin.Runtime;
@@ -45,6 +46,17 @@ public partial class RLDashboard : Control
 
     private sealed record RunMeta(string DisplayName, string[] AgentNames, string[] AgentGroups, bool HasCurriculum);
 
+    private enum CheckpointSortMode
+    {
+        NewestUpdate = 0,
+        OldestUpdate = 1,
+        MostSteps = 2,
+        MostEpisodes = 3,
+        BestReward = 4,
+        Algorithm = 5,
+        Type = 6,
+    }
+
     // ── UI handles ───────────────────────────────────────────────────────────
     private OptionButton?   _runDropdown;
     private LineEdit?       _prefixFilter;
@@ -73,9 +85,10 @@ public partial class RLDashboard : Control
     private Control?         _checkpointHistoryPanel;
     private VBoxContainer?   _checkpointRowContainer;
     private Label?           _checkpointStatusLabel;
+    private OptionButton?    _checkpointSortDropdown;
     private List<CheckpointHistoryEntry> _checkpointEntries = new();
     private FileDialog?      _checkpointExportDialog;
-    private string           _pendingExportCheckpointPath = "";
+    private CheckpointHistoryEntry? _pendingExportCheckpointEntry;
 
     // ── State ────────────────────────────────────────────────────────────────
     private readonly List<Metric>              _metrics            = new();
@@ -93,6 +106,8 @@ public partial class RLDashboard : Control
     private double _livePulseAccum;
     private bool   _isLive;
     private int    _lastKnownRunCount = -1;
+    private string _activeRunId = "";
+    private CheckpointSortMode _checkpointSortMode = CheckpointSortMode.NewestUpdate;
 
     private const double PollInterval      = 2.0;
     private const double LivePulseInterval = 0.8;
@@ -162,6 +177,7 @@ public partial class RLDashboard : Control
     /// </summary>
     public void OnTrainingStarted(string runId)
     {
+        _activeRunId = runId;
         DiscoverAndSelectLatestRun();
 
         if (!_runIds.Contains(runId))
@@ -174,6 +190,20 @@ public partial class RLDashboard : Control
         SelectRun(runId);
         _isLive = true;
         ShowLiveBadge();
+    }
+
+    public void OnTrainingStopped()
+    {
+        _activeRunId = "";
+        _isLive = false;
+        HideLiveBadge();
+
+        if (string.IsNullOrEmpty(_selectedRunId))
+            return;
+
+        var status = NormalizeStatus(ReadStatusFile($"res://RL-Agent-Training/runs/{_selectedRunId}/status.json"));
+        SetStatusUi(status);
+        RefreshStats(status);
     }
 
     // ── UI construction ──────────────────────────────────────────────────────
@@ -237,6 +267,7 @@ public partial class RLDashboard : Control
             CustomMinimumSize = new Vector2(250, 0),
             TooltipText       = "Select a training run to inspect",
         };
+        _runDropdown.GetPopup().MaxSize = new Vector2I(1600, 360);
         _runDropdown.ItemSelected += OnRunSelected;
         row1.AddChild(_runDropdown);
 
@@ -453,7 +484,8 @@ public partial class RLDashboard : Control
             .Where(n => !string.IsNullOrEmpty(n))
             .Where(n => string.IsNullOrEmpty(filterPrefix)
                         || ExtractRunPrefix(n).Contains(filterPrefix, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(n => n)
+            .OrderByDescending(n => GetRunSortValue(n, System.IO.Path.Combine(absDir, n)))
+            .ThenByDescending(n => n, StringComparer.Ordinal)
             .ToList();
 
         foreach (var id in dirs)
@@ -571,7 +603,7 @@ public partial class RLDashboard : Control
             foreach (var file in System.IO.Directory.GetFiles(runDirAbs, "metrics__*.jsonl"))
                 ReadNewMetrics(file, absolute: true);
         }
-        var status = ReadStatusFile($"{runDir}/status.json");
+        var status = NormalizeStatus(ReadStatusFile($"{runDir}/status.json"));
         SetStatusUi(status);
         RefreshPolicyFilterDropdown();
         RefreshCharts();
@@ -875,6 +907,22 @@ public partial class RLDashboard : Control
         }
     }
 
+    private RunStatus NormalizeStatus(RunStatus status)
+    {
+        status.Status = (status.Status ?? string.Empty).Trim().ToLowerInvariant();
+        if (status.Status == "live")
+            status.Status = "running";
+
+        var isSelectedRunActive = !string.IsNullOrEmpty(_activeRunId)
+            && string.Equals(_selectedRunId, _activeRunId, StringComparison.Ordinal)
+            && EditorInterface.Singleton.IsPlayingScene();
+
+        if (status.Status == "running" && !isSelectedRunActive)
+            status.Status = "stopped";
+
+        return status;
+    }
+
     private void RefreshPolicyFilterDropdown()
     {
         if (_policyFilterDropdown is null) return;
@@ -930,7 +978,7 @@ public partial class RLDashboard : Control
         _lossSeriesLabels.Clear();
 
         RefreshCharts();
-        var status = ReadStatusFile($"res://RL-Agent-Training/runs/{_selectedRunId}/status.json");
+        var status = NormalizeStatus(ReadStatusFile($"res://RL-Agent-Training/runs/{_selectedRunId}/status.json"));
         RefreshStats(status);
     }
 
@@ -1109,7 +1157,8 @@ public partial class RLDashboard : Control
         var prefix       = runId[..lastUnderscore];
         var timestampStr = runId[(lastUnderscore + 1)..];
 
-        if (!double.TryParse(timestampStr, out var unixSeconds)) return runId;
+        if (!double.TryParse(timestampStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var unixSeconds))
+            return runId;
 
         var dto   = DateTimeOffset.FromUnixTimeSeconds((long)unixSeconds).ToLocalTime();
         var today = DateTimeOffset.Now.Date;
@@ -1125,6 +1174,21 @@ public partial class RLDashboard : Control
     {
         var last = runId.LastIndexOf('_');
         return last > 0 ? runId[..last] : runId;
+    }
+
+    private static double GetRunSortValue(string runId, string runDirAbsPath)
+    {
+        var lastUnderscore = runId.LastIndexOf('_');
+        if (lastUnderscore > 0 && lastUnderscore < runId.Length - 1)
+        {
+            var timestampStr = runId[(lastUnderscore + 1)..];
+            if (double.TryParse(timestampStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var unixSeconds))
+                return unixSeconds;
+        }
+
+        return System.IO.Directory.Exists(runDirAbsPath)
+            ? System.IO.Directory.GetLastWriteTimeUtc(runDirAbsPath).Ticks
+            : 0d;
     }
 
     private static string SanitizeFileName(string name)
@@ -1190,6 +1254,28 @@ public partial class RLDashboard : Control
         _checkpointStatusLabel.Modulate = new Color(0.6f, 0.6f, 0.6f);
         headerRow.AddChild(_checkpointStatusLabel);
 
+        headerRow.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
+
+        var sortLabel = new Label { Text = "Sort:", VerticalAlignment = VerticalAlignment.Center };
+        sortLabel.AddThemeFontSizeOverride("font_size", 11);
+        sortLabel.Modulate = new Color(0.7f, 0.7f, 0.7f);
+        headerRow.AddChild(sortLabel);
+
+        _checkpointSortDropdown = new OptionButton
+        {
+            CustomMinimumSize = new Vector2(160, 0),
+            TooltipText = "Sort checkpoints by a selected field",
+        };
+        _checkpointSortDropdown.AddItem("Newest Update");
+        _checkpointSortDropdown.AddItem("Oldest Update");
+        _checkpointSortDropdown.AddItem("Most Steps");
+        _checkpointSortDropdown.AddItem("Most Episodes");
+        _checkpointSortDropdown.AddItem("Best Reward");
+        _checkpointSortDropdown.AddItem("Algorithm");
+        _checkpointSortDropdown.AddItem("Type");
+        _checkpointSortDropdown.ItemSelected += OnCheckpointSortSelected;
+        headerRow.AddChild(_checkpointSortDropdown);
+
         outer.AddChild(headerRow);
 
         _checkpointHistoryPanel = new VBoxContainer();
@@ -1237,7 +1323,10 @@ public partial class RLDashboard : Control
         }
 
         var runDirAbs = ProjectSettings.GlobalizePath($"res://RL-Agent-Training/runs/{_selectedRunId}");
-        _checkpointEntries = CheckpointRegistry.ListHistoryEntries(runDirAbs);
+        _checkpointEntries = CheckpointRegistry.ListHistoryEntries(runDirAbs)
+            .GroupBy(entry => entry.AbsolutePath, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToList();
 
         RebuildCheckpointRows();
 
@@ -1254,7 +1343,10 @@ public partial class RLDashboard : Control
         if (_checkpointRowContainer is null) return;
 
         foreach (var child in _checkpointRowContainer.GetChildren())
+        {
+            _checkpointRowContainer.RemoveChild(child);
             child.QueueFree();
+        }
 
         if (_checkpointEntries.Count == 0) return;
 
@@ -1273,7 +1365,7 @@ public partial class RLDashboard : Control
 
             _checkpointRowContainer.AddChild(BuildCheckpointColumnHeader());
 
-            foreach (var entry in group.OrderByDescending(e => e.UpdateCount))
+            foreach (var entry in SortCheckpointEntries(group))
                 _checkpointRowContainer.AddChild(BuildCheckpointRow(entry));
 
             _checkpointRowContainer.AddChild(new HSeparator());
@@ -1334,15 +1426,13 @@ public partial class RLDashboard : Control
 
         row.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
 
-        var capturedPath = entry.AbsolutePath;
-
         var exportBtn = new Button
         {
             Text        = "Export",
-            TooltipText = $"Export as .rlmodel: {System.IO.Path.GetFileName(capturedPath)}",
+            TooltipText = $"Export as .rlmodel: {System.IO.Path.GetFileName(entry.AbsolutePath)}",
             CustomMinimumSize = new Vector2(64, 0),
         };
-        exportBtn.Pressed += () => OnExportCheckpointPressed(capturedPath);
+        exportBtn.Pressed += () => OnExportCheckpointPressed(entry);
         row.AddChild(exportBtn);
 
         var inferBtn = new Button
@@ -1351,21 +1441,65 @@ public partial class RLDashboard : Control
             TooltipText = "Copy res:// path to clipboard for use in InferenceCheckpointPath",
             CustomMinimumSize = new Vector2(98, 0),
         };
-        inferBtn.Pressed += () => OnSetInferencePressed(capturedPath);
+        inferBtn.Pressed += () => OnSetInferencePressed(entry.AbsolutePath);
         row.AddChild(inferBtn);
 
         return row;
     }
 
-    private void OnExportCheckpointPressed(string checkpointAbsPath)
+    private void OnCheckpointSortSelected(long index)
     {
-        if (!System.IO.File.Exists(checkpointAbsPath))
+        if (index < 0)
+            return;
+
+        _checkpointSortMode = (CheckpointSortMode)index;
+        RebuildCheckpointRows();
+    }
+
+    private IEnumerable<CheckpointHistoryEntry> SortCheckpointEntries(IEnumerable<CheckpointHistoryEntry> entries)
+    {
+        return _checkpointSortMode switch
         {
-            SetHeaderStatus($"Checkpoint not found: {checkpointAbsPath}");
+            CheckpointSortMode.OldestUpdate => entries
+                .OrderBy(e => e.UpdateCount)
+                .ThenBy(e => e.TotalSteps)
+                .ThenBy(e => e.AbsolutePath, StringComparer.Ordinal),
+            CheckpointSortMode.MostSteps => entries
+                .OrderByDescending(e => e.TotalSteps)
+                .ThenByDescending(e => e.UpdateCount)
+                .ThenBy(e => e.AbsolutePath, StringComparer.Ordinal),
+            CheckpointSortMode.MostEpisodes => entries
+                .OrderByDescending(e => e.EpisodeCount)
+                .ThenByDescending(e => e.UpdateCount)
+                .ThenBy(e => e.AbsolutePath, StringComparer.Ordinal),
+            CheckpointSortMode.BestReward => entries
+                .OrderByDescending(e => e.RewardSnapshot)
+                .ThenByDescending(e => e.UpdateCount)
+                .ThenBy(e => e.AbsolutePath, StringComparer.Ordinal),
+            CheckpointSortMode.Algorithm => entries
+                .OrderBy(e => e.Algorithm, StringComparer.OrdinalIgnoreCase)
+                .ThenByDescending(e => e.UpdateCount)
+                .ThenBy(e => e.AbsolutePath, StringComparer.Ordinal),
+            CheckpointSortMode.Type => entries
+                .OrderByDescending(e => e.IsSelfPlayFrozen)
+                .ThenByDescending(e => e.UpdateCount)
+                .ThenBy(e => e.AbsolutePath, StringComparer.Ordinal),
+            _ => entries
+                .OrderByDescending(e => e.UpdateCount)
+                .ThenByDescending(e => e.TotalSteps)
+                .ThenBy(e => e.AbsolutePath, StringComparer.Ordinal),
+        };
+    }
+
+    private void OnExportCheckpointPressed(CheckpointHistoryEntry entry)
+    {
+        if (!System.IO.File.Exists(entry.AbsolutePath))
+        {
+            SetHeaderStatus($"Checkpoint not found: {entry.AbsolutePath}");
             return;
         }
 
-        _pendingExportCheckpointPath = checkpointAbsPath;
+        _pendingExportCheckpointEntry = entry;
         EnsureCheckpointExportDialog();
         _checkpointExportDialog!.PopupCentered(new Vector2I(700, 450));
     }
@@ -1376,24 +1510,45 @@ public partial class RLDashboard : Control
 
         _checkpointExportDialog = new FileDialog
         {
-            FileMode = FileDialog.FileModeEnum.SaveFile,
+            FileMode = FileDialog.FileModeEnum.OpenDir,
             Access = FileDialog.AccessEnum.Filesystem,
-            Title = "Export Checkpoint as .rlmodel",
-            Filters = ["*.rlmodel ; RL Model"]
+            Title = "Select Export Folder",
         };
-        _checkpointExportDialog.FileSelected += OnCheckpointExportFileSelected;
+        _checkpointExportDialog.DirSelected += OnCheckpointExportDirSelected;
         AddChild(_checkpointExportDialog);
     }
 
-    private void OnCheckpointExportFileSelected(string destPath)
+    private void OnCheckpointExportDirSelected(string dir)
     {
-        if (string.IsNullOrEmpty(_pendingExportCheckpointPath)) return;
+        if (_pendingExportCheckpointEntry is null)
+            return;
 
-        var result = RLModelExporter.Export(_pendingExportCheckpointPath, destPath);
+        var checkpointPath = _pendingExportCheckpointEntry.AbsolutePath;
+        var exportName = BuildCheckpointExportName(_pendingExportCheckpointEntry);
+        var destPath = System.IO.Path.Combine(dir, $"{SanitizeFileName(exportName)}.rlmodel");
+        var result = RLModelExporter.Export(checkpointPath, destPath);
         SetHeaderStatus(result == Error.Ok
             ? $"Exported → {destPath}"
-            : $"Export failed for {System.IO.Path.GetFileName(_pendingExportCheckpointPath)}");
-        _pendingExportCheckpointPath = "";
+            : $"Export failed for {System.IO.Path.GetFileName(checkpointPath)}");
+        _pendingExportCheckpointEntry = null;
+    }
+
+    private string BuildCheckpointExportName(CheckpointHistoryEntry entry)
+    {
+        var policyName = entry.PolicyGroupId;
+        for (var i = 0; i < _selectedRunMeta.AgentGroups.Length; i++)
+        {
+            if (i < _selectedRunMeta.AgentNames.Length
+                && string.Equals(_selectedRunMeta.AgentGroups[i], entry.PolicyGroupId, StringComparison.Ordinal)
+                && !string.IsNullOrWhiteSpace(_selectedRunMeta.AgentNames[i]))
+            {
+                policyName = _selectedRunMeta.AgentNames[i];
+                break;
+            }
+        }
+
+        var suffix = entry.IsSelfPlayFrozen ? $"selfplay_u{entry.UpdateCount:D6}" : $"u{entry.UpdateCount:D6}";
+        return $"{policyName}_{suffix}";
     }
 
     private void OnSetInferencePressed(string checkpointAbsPath)

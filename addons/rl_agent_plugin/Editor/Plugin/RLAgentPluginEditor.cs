@@ -387,7 +387,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
         var checkpointFileName = string.IsNullOrWhiteSpace(runPrefix) ? "checkpoint.json" : $"{runPrefix}_checkpoint.json";
         manifest.ScenePath = scenePath;
         manifest.AcademyNodePath = validation.AcademyPath;
-        manifest.RunId = $"{runIdPrefix}_{Time.GetUnixTimeFromSystem()}";
+        manifest.RunId = $"{runIdPrefix}_{BuildRunTimestampSuffix()}";
         manifest.RunDirectory = $"res://RL-Agent-Training/runs/{manifest.RunId}";
         manifest.CheckpointPath = $"{manifest.RunDirectory}/{checkpointFileName}";
         manifest.TrainingConfigPath = validation.TrainingConfigPath;
@@ -458,7 +458,7 @@ public partial class RLAgentPluginEditor : EditorPlugin
             : $"{runPrefixBase}_quick_test";
         manifest.ScenePath = scenePath;
         manifest.AcademyNodePath = validation.AcademyPath;
-        manifest.RunId = $"{runPrefix}_{Time.GetUnixTimeFromSystem()}";
+        manifest.RunId = $"{runPrefix}_{BuildRunTimestampSuffix()}";
         manifest.RunDirectory = "user://rl_agent_plugin/quick_test";
         manifest.CheckpointPath = string.Empty;
         manifest.TrainingConfigPath = validation.TrainingConfigPath;
@@ -594,6 +594,12 @@ public partial class RLAgentPluginEditor : EditorPlugin
         }
     }
 
+    private static string BuildRunTimestampSuffix()
+    {
+        var rounded = (long)Math.Round(Time.GetUnixTimeFromSystem(), 0, MidpointRounding.AwayFromZero);
+        return rounded.ToString();
+    }
+
     private void OnStopTrainingRequested()
     {
         if (!_launchedTrainingRun && !_launchedQuickTestRun)
@@ -601,12 +607,46 @@ public partial class RLAgentPluginEditor : EditorPlugin
             return;
         }
 
+        MarkActiveRunStopped();
         EditorInterface.Singleton.StopPlayingScene();
+        _dashboard?.OnTrainingStopped();
         var stoppedQuickTest = _launchedQuickTestRun;
         _launchedTrainingRun = false;
         _launchedQuickTestRun = false;
         _activeStatusPath = string.Empty;
         _setupDock?.SetLaunchStatus(stoppedQuickTest ? "Quick test stopped." : "Training run stopped.");
+    }
+
+    private void MarkActiveRunStopped()
+    {
+        if (string.IsNullOrWhiteSpace(_activeStatusPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var absolutePath = ProjectSettings.GlobalizePath(_activeStatusPath);
+            if (!System.IO.File.Exists(absolutePath))
+            {
+                return;
+            }
+
+            var variant = Json.ParseString(System.IO.File.ReadAllText(absolutePath));
+            if (variant.VariantType != Variant.Type.Dictionary)
+            {
+                return;
+            }
+
+            var payload = variant.AsGodotDictionary();
+            payload["status"] = "stopped";
+            payload["message"] = "Training stopped by editor.";
+            System.IO.File.WriteAllText(absolutePath, Json.Stringify(payload));
+        }
+        catch (Exception ex)
+        {
+            GD.PushWarning($"[RLAgentPluginEditor] Failed to mark run as stopped: {ex.Message}");
+        }
     }
 
     private void UpdateValidationUi(TrainingSceneValidation validation)
