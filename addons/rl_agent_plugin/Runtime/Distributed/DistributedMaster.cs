@@ -103,6 +103,10 @@ public sealed class DistributedMaster : IDisposable
     private volatile bool _running;
     private volatile int  _pendingRelaunches;
 
+    // Diagnostic: log the first N rollouts received from workers to verify data quality.
+    private const int DiagnosticRolloutCount = 6;
+    private int _diagnosticRolloutsLogged;
+
     private readonly List<WorkerConnection> _connections     = new();
     private readonly object                 _connectionsLock = new();
 
@@ -376,6 +380,13 @@ public sealed class DistributedMaster : IDisposable
                 }
 
                 trainer.InjectRollout(data);
+
+                if (_diagnosticRolloutsLogged < DiagnosticRolloutCount)
+                {
+                    LogRolloutDiagnostic(groupId, data, _diagnosticRolloutsLogged + 1);
+                    _diagnosticRolloutsLogged++;
+                }
+
                 var steps    = data.Length >= 4 ? BitConverter.ToInt32(data, 0) : 0;
                 var episodes = DistributedProtocol.CountEpisodesInRollout(data);
                 _rolloutsThisRound[groupId]    = _rolloutsThisRound.GetValueOrDefault(groupId) + 1;
@@ -517,6 +528,93 @@ public sealed class DistributedMaster : IDisposable
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static void LogRolloutDiagnostic(string groupId, byte[] data, int rolloutIndex)
+    {
+        List<DistributedTransition> transitions;
+        try { transitions = DistributedProtocol.DeserializeRollout(data); }
+        catch (Exception ex)
+        {
+            GD.PushError($"[RL Diagnostic] Failed to deserialize rollout #{rolloutIndex}: {ex.Message}");
+            return;
+        }
+
+        if (transitions.Count == 0)
+        {
+            GD.PushWarning($"[RL Diagnostic] Rollout #{rolloutIndex} '{groupId}' is empty.");
+            return;
+        }
+
+        var n           = transitions.Count;
+        var rewardSum   = 0f;
+        var rewardMin   = float.MaxValue;
+        var rewardMax   = float.MinValue;
+        var nonZero     = 0;
+        var doneCount   = 0;
+        var nanCount    = 0;
+        var infCount    = 0;
+        var nextObsLen  = transitions[0].NextObservation.Length;
+
+        // Action accumulators — sized from first transition.
+        var actionDims = transitions[0].ContinuousActions.Length;
+        var actionAbsSum = new float[actionDims];
+
+        foreach (var t in transitions)
+        {
+            rewardSum += t.Reward;
+            if (t.Reward < rewardMin) rewardMin = t.Reward;
+            if (t.Reward > rewardMax) rewardMax = t.Reward;
+            if (Math.Abs(t.Reward) > 1e-6f) nonZero++;
+            if (t.Done) doneCount++;
+
+            for (var i = 0; i < t.ContinuousActions.Length && i < actionDims; i++)
+                actionAbsSum[i] += Math.Abs(t.ContinuousActions[i]);
+
+            foreach (var v in t.Observation)
+            {
+                if (float.IsNaN(v))        nanCount++;
+                else if (float.IsInfinity(v)) infCount++;
+            }
+        }
+
+        var sb = new StringBuilder();
+        sb.AppendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        sb.AppendLine($"[RL Diagnostic] Worker rollout #{rolloutIndex}/{DiagnosticRolloutCount}  |  group '{groupId}'");
+        sb.AppendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        sb.AppendLine($"  Transitions     : {n}");
+        sb.AppendLine($"  Episodes done   : {doneCount}");
+        sb.AppendLine($"  Reward  mean    : {rewardSum / n:F5}   min: {rewardMin:F5}   max: {rewardMax:F5}");
+        sb.AppendLine($"  Non-zero rewards: {nonZero}/{n}  ({100f * nonZero / n:F1}%)");
+
+        if (actionDims > 0)
+        {
+            var parts = new string[actionDims];
+            for (var i = 0; i < actionDims; i++)
+                parts[i] = (actionAbsSum[i] / n).ToString("F3");
+            sb.AppendLine($"  |Action| means  : [{string.Join(", ", parts)}]  (each joint 0-1)");
+
+            var maxAbsMean = 0f;
+            foreach (var v in actionAbsSum) if (v / n > maxAbsMean) maxAbsMean = v / n;
+            if (maxAbsMean < 0.01f)
+                sb.AppendLine("  *** WARNING: all actions near zero — policy may not be applied on workers ***");
+        }
+
+        sb.Append($"  Obs NaN / Inf   : {nanCount} / {infCount}");
+        if (nanCount > 0 || infCount > 0)
+            sb.Append("  ← PROBLEM: physics exploded or observations are broken");
+        sb.AppendLine();
+
+        sb.Append($"  NextObs present : {(nextObsLen > 0 ? $"yes ({nextObsLen} floats)" : "NO — SAC Bellman targets will be zero!")}");
+        if (nextObsLen == 0)
+            sb.Append("  ← PROBLEM");
+        sb.AppendLine();
+
+        if (nonZero == 0)
+            sb.AppendLine("  *** WARNING: ALL rewards are zero — check reward function or env state ***");
+
+        sb.AppendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        GD.Print(sb.ToString());
+    }
 
     private void BroadcastWeights(string groupId, IDistributedTrainer trainer)
     {

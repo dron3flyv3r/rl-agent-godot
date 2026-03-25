@@ -20,7 +20,7 @@ public partial class LineChartPanel : Control
 
     public string ChartTitle { get; set; } = "";
     public bool ShowSmoothed { get; set; } = true;
-    public float SmoothAlpha { get; set; } = 0.13f;
+    public float SmoothAlpha { get; set; } = 0.08f;
 
     // ── Layout constants ────────────────────────────────────────────────────
     private const float TitleH = 24f;
@@ -45,7 +45,6 @@ public partial class LineChartPanel : Control
     private static readonly Color CAxisLabel = new(0.48f, 0.48f, 0.48f);
     private static readonly Color CTitle = new(0.88f, 0.88f, 0.88f);
     private static readonly Color CLegend = new(0.70f, 0.70f, 0.70f);
-    private static readonly Color CSmoothed = new(1f, 1f, 1f, 0.82f);
     private static readonly Color CNoData = new(0.38f, 0.38f, 0.38f);
 
     // ── Hover / crosshair state ──────────────────────────────────────────────
@@ -103,9 +102,9 @@ public partial class LineChartPanel : Control
         _contextMenu.AddSeparator();
         _contextMenu.AddCheckItem("Show Smoothing",     CmdToggleSmooth);
         _contextMenu.AddSeparator();
-        _contextMenu.AddItem("Smooth: Fast   (α = 0.30)", CmdSmoothFast);
-        _contextMenu.AddItem("Smooth: Medium (α = 0.13)", CmdSmoothMedium);
-        _contextMenu.AddItem("Smooth: Slow   (α = 0.05)", CmdSmoothSlow);
+        _contextMenu.AddItem("Smooth: Fast   (α = 0.20)", CmdSmoothFast);
+        _contextMenu.AddItem("Smooth: Medium (α = 0.08)", CmdSmoothMedium);
+        _contextMenu.AddItem("Smooth: Slow   (α = 0.04)", CmdSmoothSlow);
         _contextMenu.IdPressed += OnContextMenuIdPressed;
     }
 
@@ -175,17 +174,17 @@ public partial class LineChartPanel : Control
                 QueueRedraw();
                 break;
             case CmdSmoothFast:
-                SmoothAlpha = 0.30f;
+                SmoothAlpha = 0.20f;
                 ShowSmoothed = true;
                 QueueRedraw();
                 break;
             case CmdSmoothMedium:
-                SmoothAlpha = 0.13f;
+                SmoothAlpha = 0.08f;
                 ShowSmoothed = true;
                 QueueRedraw();
                 break;
             case CmdSmoothSlow:
-                SmoothAlpha = 0.05f;
+                SmoothAlpha = 0.04f;
                 ShowSmoothed = true;
                 QueueRedraw();
                 break;
@@ -295,8 +294,8 @@ public partial class LineChartPanel : Control
 
         // ── Series: gradient fill + line (windowed view) ──────────────────
         // When smoothing is active, dim the raw line so the EMA overlay stands out.
-        float rawAlpha = ShowSmoothed ? 0.45f : 1.0f;
-        float rawWidth = ShowSmoothed ? 1.2f : 1.7f;
+        float rawAlpha = ShowSmoothed ? 0.18f : 1.0f;
+        float rawWidth = ShowSmoothed ? 0.9f : 1.7f;
 
         int viewStart = 0, viewEnd = 0;
         foreach (var s in _series)
@@ -306,7 +305,7 @@ public partial class LineChartPanel : Control
             viewStart = startIdx;
             viewEnd = startIdx + slice.Count;
             var pts = BuildPoints(plot, Downsample(slice, MaxDrawPoints), gMin, range);
-            DrawFill(plot, pts, s.LineColor);
+            DrawFill(plot, pts, s.LineColor, ShowSmoothed ? 0.08f : 0.20f);
             var lineColor = new Color(s.LineColor.R, s.LineColor.G, s.LineColor.B, rawAlpha);
             DrawPolyline(pts, lineColor, rawWidth, antialiased: true);
         }
@@ -321,7 +320,7 @@ public partial class LineChartPanel : Control
                 if (slice.Count < 12) continue;
                 var smoothed = Ema(Downsample(slice, MaxDrawPoints), SmoothAlpha);
                 var smPts = BuildPoints(plot, smoothed, gMin, range);
-                DrawPolyline(smPts, CSmoothed, 2.3f, antialiased: true);
+                DrawPolyline(smPts, GetSmoothedColor(s.LineColor), 2.6f, antialiased: true);
             }
         }
 
@@ -483,11 +482,11 @@ public partial class LineChartPanel : Control
     /// Each segment is a convex quad so there are no polygon self-intersection artifacts.
     /// The fill fades from semi-opaque at the data line to transparent at the baseline.
     /// </summary>
-    private void DrawFill(Rect2 area, Vector2[] pts, Color color)
+    private void DrawFill(Rect2 area, Vector2[] pts, Color color, float topAlpha)
     {
         if (pts.Length < 2) return;
         float baseY = area.Position.Y + area.Size.Y;
-        var topColor = new Color(color.R, color.G, color.B, 0.20f);
+        var topColor = new Color(color.R, color.G, color.B, topAlpha);
         var botColor = new Color(color.R, color.G, color.B, 0.00f);
 
         for (int i = 0; i < pts.Length - 1; i++)
@@ -497,6 +496,16 @@ public partial class LineChartPanel : Control
                 new[] { topColor, topColor, botColor, botColor }
             );
         }
+    }
+
+    private static Color GetSmoothedColor(Color baseColor)
+    {
+        const float lift = 0.38f;
+        return new Color(
+            baseColor.R + (1f - baseColor.R) * lift,
+            baseColor.G + (1f - baseColor.G) * lift,
+            baseColor.B + (1f - baseColor.B) * lift,
+            0.96f);
     }
 
     private static List<float> Ema(List<float> data, float alpha)
