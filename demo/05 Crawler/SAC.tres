@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="RLSACConfig" format=3]
+
+[ext_resource type="Script" uid="uid://dg2me1qyyu7fl" path="res://addons/rl_agent_plugin/Resources/Config/RLSACConfig.cs" id="1_sacc"]
+
+[resource]
+script = ExtResource("1_sacc")
+LearningRate = 0.0003
+Gamma = 0.99
+ReplayBufferCapacity = 100000
+BatchSize = 256
+WarmupSteps = 1000
+Tau = 0.005
+InitAlpha = 0.2
+AutoTuneAlpha = true
+UpdateEverySteps = 1
+metadata/_custom_type_script = "uid://dg2me1qyyu7fl"

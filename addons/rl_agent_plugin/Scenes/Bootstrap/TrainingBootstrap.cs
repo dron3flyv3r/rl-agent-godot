@@ -59,6 +59,7 @@ public partial class TrainingBootstrap : Node
     private bool _showBatchGrid;
     private bool _asyncGradientUpdates;
     private bool _parallelPolicyGroups;
+    private RLAsyncRolloutPolicy _asyncRolloutPolicy = RLAsyncRolloutPolicy.Pause;
     private bool _quickTestMode;
     private int _quickTestEpisodeLimit;
     private bool _quickTestShowSpyOverlay;
@@ -71,9 +72,11 @@ public partial class TrainingBootstrap : Node
     private bool _isWorkerMode;
     private int  _workerId;
     private int  _masterPort = 7890;
-    private DistributedMaster? _distributedMaster;
-    private DistributedWorker? _distributedWorker;
-    private CanvasLayer?       _trainingOverlay;
+    private DistributedMaster?    _distributedMaster;
+    private DistributedWorker?    _distributedWorker;
+    private CanvasLayer?          _trainingOverlay;
+    private RLDistributedConfig?  _distributedConfig;
+    private int                   _nextWorkerId;
 
     // Self-play bank rescan (workers only): rate-limit disk scans to once per N steps.
     private long _lastSelfPlayBankScanStep = long.MinValue;
@@ -179,6 +182,7 @@ public partial class TrainingBootstrap : Node
         _showBatchGrid = firstAcademy.ShowBatchGrid;
         _asyncGradientUpdates = firstAcademy.AsyncGradientUpdates;
         _parallelPolicyGroups = firstAcademy.ParallelPolicyGroups;
+        _asyncRolloutPolicy   = firstAcademy.AsyncRolloutPolicy;
         if (_quickTestMode)
         {
             _batchSize = 1;
@@ -481,8 +485,12 @@ public partial class TrainingBootstrap : Node
                     distCfg.WorkerCount,
                     distCfg.MonitorIntervalUpdates,
                     distCfg.VerboseLog,
-                    distributedTrainers);
+                    distributedTrainers,
+                    _asyncRolloutPolicy,
+                    _trainerConfig?.RolloutLength ?? 256);
                 _distributedMaster.Start();
+                _distributedConfig = distCfg;
+                _nextWorkerId      = distCfg.WorkerCount;
                 if (distCfg.AutoLaunchWorkers)
                     LaunchDistributedWorkers(distCfg);
                 if (distCfg.ShowTrainingOverlay)
@@ -679,7 +687,11 @@ public partial class TrainingBootstrap : Node
             {
                 // Poll for any result completed since last frame, then schedule the next job.
                 updateStats = asyncTrainer.TryPollResult(groupId, _totalSteps, episodeCount);
-                asyncTrainer.TryScheduleBackgroundUpdate(groupId, _totalSteps, episodeCount);
+                // Cap the snapshot to one rollout so transitions that accumulated during
+                // training do not inflate the next batch (Pause and Cap both cap here;
+                // there are no workers to discard from in the single-process async path).
+                var maxT = _trainerConfig?.RolloutLength ?? int.MaxValue;
+                asyncTrainer.TryScheduleBackgroundUpdate(groupId, _totalSteps, episodeCount, maxT);
             }
             else
             {
@@ -2004,38 +2016,39 @@ public partial class TrainingBootstrap : Node
     /// </summary>
     private void LaunchDistributedWorkers(RLDistributedConfig config)
     {
-        var executable = !string.IsNullOrWhiteSpace(config.EngineExecutablePath)
+        GD.Print($"[RL Distributed] Executable : {(string.IsNullOrWhiteSpace(config.EngineExecutablePath) ? OS.GetExecutablePath() : config.EngineExecutablePath)}");
+        GD.Print($"[RL Distributed] Project    : {ProjectSettings.GlobalizePath("res://")}");
+        GD.Print($"[RL Distributed] Bootstrap  : res://addons/rl_agent_plugin/Scenes/Bootstrap/TrainingBootstrap.tscn");
+
+        for (var i = 0; i < config.WorkerCount; i++)
+            LaunchSingleWorker(config, i);
+    }
+
+    private void LaunchSingleWorker(RLDistributedConfig config, int workerId)
+    {
+        var executable     = !string.IsNullOrWhiteSpace(config.EngineExecutablePath)
             ? config.EngineExecutablePath
             : OS.GetExecutablePath();
         var projectPath    = ProjectSettings.GlobalizePath("res://");
-        // Workers must run the bootstrap scene so they load the manifest and enter training mode.
-        // Godot 4 CLI: godot4 --headless --path /project res://scene.tscn -- [user args]
         var bootstrapScene = "res://addons/rl_agent_plugin/Scenes/Bootstrap/TrainingBootstrap.tscn";
 
-        GD.Print($"[RL Distributed] Executable : {executable}");
-        GD.Print($"[RL Distributed] Project    : {projectPath}");
-        GD.Print($"[RL Distributed] Bootstrap  : {bootstrapScene}");
-
-        for (var i = 0; i < config.WorkerCount; i++)
+        var args = new[]
         {
-            var args = new[]
-            {
-                "--headless",
-                "--path", projectPath,
-                bootstrapScene,
-                "--",
-                "--rl-worker",
-                $"--master-port={config.MasterPort}",
-                $"--worker-id={i}",
-            };
+            "--headless",
+            "--path", projectPath,
+            bootstrapScene,
+            "--",
+            "--rl-worker",
+            $"--master-port={config.MasterPort}",
+            $"--worker-id={workerId}",
+        };
 
-            GD.Print($"[RL Distributed] Launching worker {i}: {executable} {string.Join(" ", args)}");
-            var pid = OS.CreateProcess(executable, args);
-            if (pid > 0)
-                GD.Print($"[RL Distributed] Worker {i} launched (PID {pid}).");
-            else
-                GD.PushError($"[RL Distributed] Failed to launch worker {i} — OS.CreateProcess returned -1.");
-        }
+        GD.Print($"[RL Distributed] Launching worker {workerId}: {executable} {string.Join(" ", args)}");
+        var pid = OS.CreateProcess(executable, args);
+        if (pid > 0)
+            GD.Print($"[RL Distributed] Worker {workerId} launched (PID {pid}).");
+        else
+            GD.PushError($"[RL Distributed] Failed to launch worker {workerId} — OS.CreateProcess returned -1.");
     }
 
     public override void _Process(double delta)
@@ -2046,6 +2059,17 @@ public partial class TrainingBootstrap : Node
             GD.Print("[RL Distributed] Worker shutting down — master is gone.");
             GetTree().Quit();
             return;
+        }
+
+        // Relaunch any workers that crashed or disconnected.
+        if (_distributedMaster is not null && _distributedConfig is { AutoLaunchWorkers: true })
+        {
+            var crashed = _distributedMaster.DrainPendingRelaunches();
+            for (var i = 0; i < crashed; i++)
+            {
+                GD.Print($"[RL Distributed] Relaunching crashed worker as worker {_nextWorkerId}.");
+                LaunchSingleWorker(_distributedConfig, _nextWorkerId++);
+            }
         }
 
         if (_trainingOverlay is null || _distributedMaster is null) return;

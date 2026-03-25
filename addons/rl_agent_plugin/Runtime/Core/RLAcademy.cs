@@ -69,6 +69,7 @@ public partial class RLAcademy : Node
     public bool   ShowBatchGrid         => RunConfig?.ShowBatchGrid         ?? false;
     public bool   AsyncGradientUpdates  => RunConfig?.AsyncGradientUpdates  ?? false;
     public bool   ParallelPolicyGroups  => RunConfig?.ParallelPolicyGroups  ?? false;
+    public RLAsyncRolloutPolicy AsyncRolloutPolicy => RunConfig?.AsyncRolloutPolicy ?? RLAsyncRolloutPolicy.Pause;
     public RLCurriculumMode CurriculumMode => Curriculum?.Mode ?? RLCurriculumMode.StepBased;
     public long   MaxCurriculumSteps    => Curriculum?.MaxSteps             ?? 0;
     public float  DebugCurriculumProgress => Curriculum?.DebugProgress  ?? 0f;

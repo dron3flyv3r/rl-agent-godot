@@ -248,21 +248,7 @@ public partial class RLDashboard : Control
         refreshBtn.Pressed += () => DiscoverAndSelectLatestRun();
         row1.AddChild(refreshBtn);
 
-        // Status indicator
-        var statusBox = new HBoxContainer();
-        statusBox.AddThemeConstantOverride("separation", 5);
 
-        _statusDot = new ColorRect
-        {
-            Color             = CIdle,
-            CustomMinimumSize = new Vector2(10, 10),
-        };
-        _statusDot.SizeFlagsVertical = SizeFlags.ShrinkCenter;
-        statusBox.AddChild(_statusDot);
-
-        _statusLabel = new Label { Text = "Idle", VerticalAlignment = VerticalAlignment.Center };
-        statusBox.AddChild(_statusLabel);
-        row1.AddChild(statusBox);
 
         // LIVE badge (hidden until training starts)
         _liveBadge = new Label
@@ -279,6 +265,8 @@ public partial class RLDashboard : Control
 
         // ── Row 2: rename + export ────────────────────────────────────────────
         var row2 = new HBoxContainer();
+
+
         row2.AddThemeConstantOverride("separation", 6);
         row2.CustomMinimumSize = new Vector2(0, 24);
 
@@ -296,6 +284,21 @@ public partial class RLDashboard : Control
         _renameBtn = new Button { Text = "Rename", Visible = false };
         _renameBtn.Pressed += () => SaveDisplayName(_renameEdit?.Text ?? "");
         row2.AddChild(_renameBtn);
+
+        // Status indicator
+        var statusBox = new HBoxContainer();
+        statusBox.AddThemeConstantOverride("separation", 5);
+
+        _statusDot = new ColorRect
+        {
+            Color = CIdle,
+            CustomMinimumSize = new Vector2(10, 10),
+            SizeFlagsVertical = SizeFlags.ShrinkCenter
+        };
+        statusBox.AddChild(_statusDot);
+        _statusLabel = new Label { Text = "Idle", VerticalAlignment = VerticalAlignment.Center };
+        statusBox.AddChild(_statusLabel);
+        row2.AddChild(statusBox);
 
         _policyFilterLabel = new Label
         {

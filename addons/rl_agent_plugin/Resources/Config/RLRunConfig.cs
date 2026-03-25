@@ -48,4 +48,16 @@ public partial class RLRunConfig : Resource
     /// remain on the main thread. Opt-in; has no effect with a single policy group.
     /// </summary>
     [Export] public bool ParallelPolicyGroups { get; set; } = false;
+    /// <summary>
+    /// Controls how rollout data is handled while an async gradient update is in flight.
+    /// Only applies when <see cref="AsyncGradientUpdates"/> is enabled.
+    /// <list type="bullet">
+    ///   <item><b>Pause</b> (default) — incoming worker rollouts are discarded during training;
+    ///   a fresh batch is gathered after each update so batch sizes stay consistent.</item>
+    ///   <item><b>Cap</b> — rollouts are always accepted but the training batch is capped at
+    ///   <c>RolloutLength × (WorkerCount + 1)</c>; prevents unbounded growth while retaining
+    ///   recently collected data.</item>
+    /// </list>
+    /// </summary>
+    [Export] public RLAsyncRolloutPolicy AsyncRolloutPolicy { get; set; } = RLAsyncRolloutPolicy.Pause;
 }

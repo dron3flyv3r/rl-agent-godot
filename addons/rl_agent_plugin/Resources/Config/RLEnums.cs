@@ -1,5 +1,24 @@
 namespace RlAgentPlugin.Runtime;
 
+public enum RLAsyncRolloutPolicy
+{
+    /// <summary>
+    /// While a background gradient update is in flight, incoming worker rollouts are drained
+    /// from the network queue but discarded — they are not injected into the trainer.
+    /// After training completes, a fresh batch is gathered before the next update.
+    /// Keeps update sizes consistent at the cost of dropping transitions collected during training.
+    /// </summary>
+    Pause = 0,
+
+    /// <summary>
+    /// Incoming rollouts are always injected into the trainer buffer.
+    /// The training batch is capped at <c>RolloutLength × (WorkerCount + 1)</c> transitions;
+    /// anything beyond the cap is discarded when the update is scheduled.
+    /// Retains the most recent data while preventing unbounded buffer growth.
+    /// </summary>
+    Cap = 1,
+}
+
 public enum RLActivationKind
 {
     Tanh = 0,
