@@ -57,7 +57,7 @@ TrainingScene (Node)
     └── Arena/Obstacles/...
 ```
 
-`TrainingBootstrap` (launched by **Start Training** from the toolbar or RL Setup dock) instantiates your scene **BatchSize times** side-by-side, so 4 parallel environments run simultaneously inside one process.
+`TrainingBootstrap` (launched by **Start Training** from the toolbar or RL Setup dock) instantiates your scene **BatchSize times** side-by-side, so **BatchSize** parallel environments (e.g., 4 when `BatchSize` = 4) run simultaneously inside one process.
 
 ---
 
