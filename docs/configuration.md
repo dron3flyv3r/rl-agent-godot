@@ -2,6 +2,8 @@
 
 All configuration in the RL Agent Plugin is done through **Godot Resources** attached to the `RLAcademy` node in the Inspector. Every parameter described here can be set without writing code.
 
+If you are new to the plugin, start with the **Get Started Guide** (`get-started.md`) first, then use this page as a parameter-by-parameter reference.
+
 ---
 
 ## Overview: Config Hierarchy

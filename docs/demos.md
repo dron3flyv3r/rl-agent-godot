@@ -50,8 +50,8 @@ This demo is the "hello world" of the plugin. Use it to verify your setup is wor
 
 ### Running It
 
-1. Open `demo/01 SingleAgent/TrainingScene.tscn`
-2. In the Dashboard dock, click **Launch Training**
+1. Open `demo/01 SingleAgent/ReachTargetDemo.tscn`
+2. Click **Start Training** (top toolbar or RL Setup dock)
 3. The reward should start rising within a few hundred episodes
 
 ### Training Tips
@@ -122,8 +122,8 @@ RLSelfPlayConfig:
 
 ### Running It
 
-1. Open `demo/02 MultiAgentSelfPlay/TrainingScene.tscn`
-2. Launch training from the Dashboard
+1. Open `demo/02 MultiAgentSelfPlay/TagDemo.tscn`
+2. Click **Start Training** (top toolbar or RL Setup dock)
 3. Watch the Elo chart — it should rise as the learner improves
 
 ### Training Tips
@@ -209,8 +209,8 @@ RLCurriculumConfig:
 
 ### Running It
 
-1. Open `demo/03 WallClimbCurriculum/TrainingScene.tscn`
-2. Launch training
+1. Open `demo/03 WallClimbCurriculum/WallClimbDemo.tscn`
+2. Click **Start Training** (top toolbar or RL Setup dock)
 3. Watch both the reward chart and the curriculum progress chart
 4. Expect training to take longer than simpler tasks (the agent needs to master each difficulty level)
 

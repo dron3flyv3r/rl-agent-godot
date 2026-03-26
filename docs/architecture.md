@@ -57,7 +57,7 @@ TrainingScene (Node)
     └── Arena/Obstacles/...
 ```
 
-`TrainingBootstrap` (a separate autoloaded scene launched by the dashboard) instantiates your scene **BatchSize times** side-by-side, so 4 parallel environments run simultaneously inside one process.
+`TrainingBootstrap` (launched by **Start Training** from the toolbar or RL Setup dock) instantiates your scene **BatchSize times** side-by-side, so 4 parallel environments run simultaneously inside one process.
 
 ---
 
@@ -69,7 +69,7 @@ TrainingScene (Node)
 
 - Holds all configuration resources (algorithm, run, curriculum, distributed, self-play).
 - Discovers every `RLAgent2D`/`RLAgent3D` in its subtree.
-- Loads inference checkpoints and creates `IInferencePolicy` instances when in **Inference** mode.
+- Loads `.rlmodel` inference assets and creates `IInferencePolicy` instances when in **Inference** mode.
 - Broadcasts curriculum progress to every agent each step.
 - Hosts the spy overlay (debug visualization of observations/rewards/actions at runtime).
 
@@ -167,7 +167,7 @@ This architecture keeps training on the master GPU/CPU while workers focus purel
 
 ### Inference
 
-For deployment (or testing during development), set `ControlMode = Inference` on your agent and provide a `.rlmodel` path. The plugin loads the checkpoint and creates an `IInferencePolicy` that runs deterministic forward passes (no gradient tracking, no buffer writes).
+For deployment (or testing during development), set `ControlMode = Inference` on your agent and provide a `.rlmodel` path. The plugin loads the model and creates an `IInferencePolicy` that runs deterministic forward passes (no gradient tracking, no buffer writes).
 
 ```
 RLAcademy (Inference mode)
