@@ -1,19 +1,23 @@
-# Documentation Index
+# Workspace Documentation
 
-## New users
-1. [Get Started Guide](get-started.md)
-2. [Demo Environments](demos.md)
-3. [Configuration Reference](configuration.md)
-4. [Get Started Tips & Tricks](get-started.md#tips--tricks)
+This documentation set is for the `rl-agent-godot` workspace repository.
 
-## Deep dives
-- [Algorithms (PPO & SAC)](algorithms.md)
-- [Tuning Guide](tuning.md)
-- [Architecture Overview](architecture.md)
+Use this repo for:
 
-## Common tasks
-- **First agent structure**: keep movement on a player node and put `RLAgent2D/RLAgent3D` as a child agent node
-- **Start training**: top toolbar **Start Training** or right-side **RL Setup** dock
-- **Watch metrics**: open **RLDash**
-- **Export model**: in RLDash, use **Export Run** (or checkpoint-row **Export**) to create `.rlmodel`
-- **Run inference**: set `PolicyGroupConfig.InferenceModelPath` and click **Run Inference**
+- Running and modifying demo scenes
+- Testing exported models in playable Godot scenes
+- Integrating addons in one Godot project (`rl-agent-plugin` + `godot_mcp`)
+
+## Doc index
+
+- [Demo Environments](demos.md)
+- [Repository Layout](repo-layout.md)
+
+## Plugin docs moved
+
+Core RL plugin documentation now lives in the standalone plugin repository:
+
+- `addons/rl-agent-plugin/README.md`
+- `addons/rl-agent-plugin/docs/README.md`
+
+If you are working on training internals, algorithm configs, network graphs, distributed workers, or editor RL tooling (`RLDash`, `RL Setup`), read the plugin docs first.

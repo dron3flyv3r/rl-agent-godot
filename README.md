@@ -1,88 +1,48 @@
-# RL Agent Plugin for Godot 4
+# RL Agent Godot Workspace
 
-A reinforcement learning plugin for Godot 4 with in-editor training, live metrics, curriculum learning, self-play, and `.rlmodel` export for deployment.
+This repository is the Godot project workspace used to run demos, iterate on scenes, and integrate addons.
 
----
+The RL plugin itself now lives in its own repository:
 
-## What this plugin gives you
+- `addons/rl-agent-plugin` (Git submodule): https://github.com/dron3flyv3r/rl-agent-plugin
 
-- Train agents in-editor with **PPO** or **SAC**
-- Use the **Start Training** button in the top toolbar or in the **RL Setup** dock
-- Monitor live reward/loss/entropy charts in **RLDash**
-- Scale data collection with distributed worker processes
-- Build 2D/3D agents with discrete or continuous actions
-- Export trained policies as portable **`.rlmodel`** files
+## What is in this repo
 
----
+- Demo environments for single-agent, self-play, curriculum, and locomotion workflows
+- Exported `.rlmodel` assets used by demo scenes
+- `godot_mcp` editor addon for MCP tooling inside Godot
+- Godot project files and integration glue around the standalone plugin repo
 
-## Requirements
+## Repository split
 
-- Godot **4.6+** with C#/.NET support
-- .NET SDK **8.0+**
+- `rl-agent-godot` (this repo): demo project, sample scenes, integration, MCP addon
+- `rl-agent-plugin` (submodule): RL runtime, editor tooling, training/inference implementation, plugin docs
 
----
+## Getting started
 
-## Installation
+1. Clone with submodules:
+	- `git clone --recurse-submodules https://github.com/dron3flyv3r/rl-agent-godot.git`
+2. If already cloned:
+	- `git submodule update --init --recursive`
+3. Open this folder in Godot 4.6+ with C# support.
+4. Enable plugins in Project Settings -> Plugins:
+	- `RL Agent Plugin`
+	- `Godot MCP` (optional)
+5. Build once with `Alt+B`.
 
-1. Copy `addons/rl_agent_plugin` into your project's `addons/` folder.
-2. In Godot: **Project → Project Settings → Plugins**.
-3. Enable **RL Agent Plugin**.
-4. Build once: **Build → Build Solution** (`Alt+B`).
-
-After enabling the plugin you should see:
-- **RLDash** as an editor main screen tab.
-- **RL Setup** dock on the right side.
-- Toolbar buttons: **Start Training**, **Stop Training**, and **Run Inference**.
-
----
-
-## Fast start
-
-For a full beginner walkthrough (including a Demo 04-style cube-to-target example), read **[Get Started Guide](docs/get-started.md)**.
-
-Quick version:
+## Demo quick run
 
 1. Open `demo/01 SingleAgent/ReachTargetDemo.tscn`.
-2. In the top toolbar, click **Start Training**.
-3. Open **RLDash** to monitor reward/loss charts.
-4. Export the trained run to `.rlmodel` from RLDash (**Export Run** or checkpoint-row **Export**).
-5. Assign the exported model path to your agent's `PolicyGroupConfig.InferenceModelPath`.
-6. Click **Run Inference**.
+2. Click `Start Training` from the top toolbar (or `RL Setup` dock).
+3. Open `RLDash` to monitor reward/loss/entropy.
 
----
+## Documentation
 
-## Documentation map
-
-### Start here
-- **Get Started Guide**: `docs/get-started.md`
-- **Demos overview**: `docs/demos.md`
-
-### Core concepts
-- **Architecture**: `docs/architecture.md`
-- **Algorithms (PPO/SAC)**: `docs/algorithms.md`
-- **Configuration reference**: `docs/configuration.md`
-- **Tuning guide**: `docs/tuning.md`
-
-### Recommended reading order for new users
-1. `docs/get-started.md`
-2. `docs/demos.md`
-3. `docs/configuration.md`
-4. `docs/tuning.md`
-5. `docs/architecture.md`
-
----
-
-## Project layout
-
-```text
-addons/rl_agent_plugin/
-├── Editor/            # RLDash, RL Setup dock, model import/export
-├── Resources/         # Config, model graph, schedules
-└── Runtime/           # Agents, training, inference, distributed runtime
-```
-
----
+- Workspace docs: `docs/README.md`
+- Demo catalog: `docs/demos.md`
+- Plugin docs: `addons/rl-agent-plugin/docs/README.md`
+- Plugin repo README: `addons/rl-agent-plugin/README.md`
 
 ## License
 
-MIT
+MIT (workspace content). The plugin submodule has its own license and release cadence.
