@@ -13,7 +13,7 @@ This guide walks a new user through:
 
 ### Prerequisites
 
-- Godot 4.3+ with C# enabled
+- Godot 4.6+ with C# enabled
 - .NET 8 SDK installed
 
 ### Install plugin
