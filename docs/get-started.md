@@ -125,8 +125,8 @@ public partial class MoveToPointAgent3D : RLAgent3D
     public override void DefineActions(ActionSpaceBuilder builder)
     {
         // 2 continuous actions: move X and move Z in [-1, 1]
-        builder.AddContinuous("MoveX", -1f, 1f);
-        builder.AddContinuous("MoveZ", -1f, 1f);
+        builder.AddContinuous("MoveX", 1, -1f, 1f);
+        builder.AddContinuous("MoveZ", 1, -1f, 1f);
     }
 
     public override void CollectObservations(ObservationBuffer obs)
