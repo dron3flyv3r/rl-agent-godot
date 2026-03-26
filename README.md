@@ -17,7 +17,7 @@ A reinforcement learning plugin for Godot 4 with in-editor training, live metric
 
 ## Requirements
 
-- Godot **4.3+** with C#/.NET support
+- Godot **4.6+** with C#/.NET support
 - .NET SDK **8.0+**
 
 ---
