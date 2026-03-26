@@ -153,8 +153,8 @@ public partial class MoveToPointAgent3D : RLAgent3D
 
         // Forward RL decision to parent player node
         var move = new Vector2(
-            actions.GetContinuous("MoveX"),
-            actions.GetContinuous("MoveZ"));
+            actions.GetContinuous("MoveX")[0],
+            actions.GetContinuous("MoveZ")[0]);
 
         _player.SetAgentMoveInput(move);
     }
