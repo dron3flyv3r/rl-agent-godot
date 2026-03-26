@@ -1,12 +1,12 @@
 [gd_scene format=3 uid="uid://b7b6n8vwv7x5w"]
 
-[ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl_agent_plugin/Runtime/Core/RLAcademy.cs" id="1_bsb0r"]
-[ext_resource type="Script" uid="uid://ire111rjxew5" path="res://addons/rl_agent_plugin/Resources/Config/RLPPOConfig.cs" id="2_0uc76"]
-[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl_agent_plugin/Resources/Config/RLTrainingConfig.cs" id="2_38ip2"]
+[ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl-agent-plugin/Runtime/Core/RLAcademy.cs" id="1_bsb0r"]
+[ext_resource type="Script" uid="uid://ire111rjxew5" path="res://addons/rl-agent-plugin/Resources/Config/RLPPOConfig.cs" id="2_0uc76"]
+[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl-agent-plugin/Resources/Config/RLTrainingConfig.cs" id="2_38ip2"]
 [ext_resource type="Script" uid="uid://c4u7ptb63mnta" path="res://demo/02 MultiAgentSelfPlay/Scripts/ReachTargetPlayer.cs" id="3_lghqt"]
 [ext_resource type="Script" uid="uid://erru8n4gpbsv" path="res://demo/01 SingleAgent/Scripts/ReachTargetAgent.cs" id="4_4cfab"]
-[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl_agent_plugin/Resources/Config/RLPolicyGroupConfig.cs" id="5_hx405"]
-[ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl_agent_plugin/Resources/Config/RLRunConfig.cs" id="6_runcfg"]
+[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl-agent-plugin/Resources/Config/RLPolicyGroupConfig.cs" id="5_hx405"]
+[ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl-agent-plugin/Resources/Config/RLRunConfig.cs" id="6_runcfg"]
 
 [sub_resource type="Resource" id="Resource_671jg"]
 script = ExtResource("2_0uc76")

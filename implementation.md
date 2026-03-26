@@ -32,7 +32,7 @@ These three are treated as one unit because each depends on the others:
 
 ### 1.1 Add metadata fields to `RLCheckpoint`
 
-File: `addons/rl_agent_plugin/Resources/RLCheckpoint.cs`
+File: `addons/rl-agent-plugin/Resources/RLCheckpoint.cs`
 
 Add the following properties alongside the existing ones:
 
@@ -63,7 +63,7 @@ public int[] HiddenLayerSizes { get; set; } = Array.Empty<int>();
 
 ### 1.2 Update `RLCheckpoint.SaveToFile()`
 
-File: `addons/rl_agent_plugin/Resources/RLCheckpoint.cs:21-62`
+File: `addons/rl-agent-plugin/Resources/RLCheckpoint.cs:21-62`
 
 Write all new fields into the JSON dict under a `"meta"` key so the format is clearly versioned:
 
@@ -91,7 +91,7 @@ Write all new fields into the JSON dict under a `"meta"` key so the format is cl
 
 ### 1.3 Update `RLCheckpoint.LoadFromFile()`
 
-File: `addons/rl_agent_plugin/Resources/RLCheckpoint.cs:67-115`
+File: `addons/rl-agent-plugin/Resources/RLCheckpoint.cs:67-115`
 
 - Read `format_version`. If it is `1` (old format), fill in defaults and derive `ObservationSize` / `DiscreteActionCount` from `LayerShapeBuffer` as before (backward-compat path).
 - If `format_version >= 2`, read the `"meta"` block and populate all new fields.
@@ -124,7 +124,7 @@ When `CreateCheckpoint(...)` or `SaveCheckpoint(...)` is called, pass through th
 
 ### 2.1 Define the interface
 
-New file: `addons/rl_agent_plugin/Runtime/IInferencePolicy.cs`
+New file: `addons/rl-agent-plugin/Runtime/IInferencePolicy.cs`
 
 ```csharp
 public interface IInferencePolicy
@@ -139,7 +139,7 @@ public interface IInferencePolicy
 
 ### 2.2 Implement `PpoInferencePolicy`
 
-New file: `addons/rl_agent_plugin/Runtime/PpoInferencePolicy.cs`
+New file: `addons/rl-agent-plugin/Runtime/PpoInferencePolicy.cs`
 
 Wraps the existing `PolicyValueNetwork`:
 
@@ -168,7 +168,7 @@ This is a thin wrapper — no logic change to `PolicyValueNetwork`.
 
 ### 2.3 Implement `SacInferencePolicy` for continuous actions
 
-New file: `addons/rl_agent_plugin/Runtime/SacInferencePolicy.cs`
+New file: `addons/rl-agent-plugin/Runtime/SacInferencePolicy.cs`
 
 `SacNetwork` already exists and is used by `SacTrainer`. Re-use it for inference:
 
@@ -212,7 +212,7 @@ public class SacInferencePolicy : IInferencePolicy
 
 ### 2.4 Add `InferencePolicyFactory`
 
-New file: `addons/rl_agent_plugin/Runtime/InferencePolicyFactory.cs`
+New file: `addons/rl-agent-plugin/Runtime/InferencePolicyFactory.cs`
 
 ```csharp
 public static class InferencePolicyFactory
@@ -324,7 +324,7 @@ Action repeat stays the same — the pending action fields on the agent already 
 
 ## Step 4 — Extend `SacNetwork` to support deterministic inference
 
-File: `addons/rl_agent_plugin/Runtime/SacNetwork.cs`
+File: `addons/rl-agent-plugin/Runtime/SacNetwork.cs`
 
 ### 4.1 Add `DeterministicContinuousAction(float[] obs)`
 
@@ -366,7 +366,7 @@ If the checkpoint format is not already split by component, the simplest change 
 
 ### 5.1 Editor validation: check algorithm/checkpoint compatibility
 
-File: `addons/rl_agent_plugin/Editor/RLAgentPluginEditor.cs` (or wherever scene validation runs)
+File: `addons/rl-agent-plugin/Editor/RLAgentPluginEditor.cs` (or wherever scene validation runs)
 
 When an agent has `ControlMode == Inference` and a `InferenceCheckpointPath` is set, load the checkpoint header and check:
 - `ObservationSize` matches the agent's declared/inferred observation size.
@@ -392,7 +392,7 @@ if (checkpoint.ContinuousActionDimensions > 0
 
 ## Step 6 — Update `RLModelExporter` and binary format
 
-File: `addons/rl_agent_plugin/Runtime/RLModelExporter.cs:40-100`
+File: `addons/rl-agent-plugin/Runtime/RLModelExporter.cs:40-100`
 
 The `.rlmodel` binary export is what end-users ship. It must also be self-describing.
 

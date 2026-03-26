@@ -1,6 +1,6 @@
 [gd_resource type="Resource" script_class="RLPolicyGroupConfig" format=3 uid="uid://b3ipgpbt331i1"]
 
-[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl_agent_plugin/Resources/Config/RLPolicyGroupConfig.cs" id="1_v6o3x"]
+[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl-agent-plugin/Resources/Config/RLPolicyGroupConfig.cs" id="1_v6o3x"]
 
 [resource]
 resource_name = "runners"

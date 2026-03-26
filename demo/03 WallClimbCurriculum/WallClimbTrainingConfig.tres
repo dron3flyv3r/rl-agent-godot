@@ -1,6 +1,6 @@
 [gd_resource type="Resource" script_class="RLTrainingConfig" format=3 uid="uid://dq8wg3yf4clj5"]
 
-[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl_agent_plugin/Resources/Config/RLTrainingConfig.cs" id="1_trcfg"]
+[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl-agent-plugin/Resources/Config/RLTrainingConfig.cs" id="1_trcfg"]
 
 [resource]
 script = ExtResource("1_trcfg")
