@@ -6,7 +6,7 @@ This guide explains how to read your training charts, what healthy vs. unhealthy
 
 ## The Dashboard
 
-Open **RLDash** from the editor main-screen tabs. It polls `RL-Agent-Training/<RunId>/metrics.jsonl` every 2 seconds and displays live charts.
+Open **RLDash** from the editor main-screen tabs. It polls `RL-Agent-Training/runs/<RunId>/metrics__*.jsonl` (one file per policy group) every 2 seconds and displays live charts.
 
 ![Dashboard charts screenshot](images/dashboard_charts.png)
 > **[Image placeholder]** Screenshot of the dashboard showing episode reward, policy loss, entropy, and episode length charts for a healthy training run.
