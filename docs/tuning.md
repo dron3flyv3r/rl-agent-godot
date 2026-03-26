@@ -32,14 +32,14 @@ The episode reward chart is your primary signal.
 ### Healthy reward curve
 
 ```
-Reward
-  │
+ Reward
+   │
 1.0┤                              ████████████
-  │                          █████
+   │                          █████
 0.5┤                    █████
-  │              ██████
+   │              ██████
 0.0┤  ████████████
-  └─────────────────────────────────── Steps
+   └─────────────────────────────────── Steps
     0      100k    200k    300k    400k
 ```
 
@@ -51,10 +51,10 @@ Reward
 ### Flat reward curve (not learning)
 
 ```
-Reward
+ Reward
 0.05┤  ─────────────────────────────────────
 0.00┤
-   └─────────────────────────────────────── Steps
+    └─────────────────────────────────────── Steps
 ```
 
 **Causes and fixes:**
@@ -73,10 +73,10 @@ Reward
 ```
 Reward
 1.0┤         ██
-  │       ██    ██
+   │       ██   ██
 0.5┤     ██        ██    ██
-  │   ██              ██    ██
-0.0┤ ██                         ▼▼▼
+   │   ██             ██    ██
+0.0┤ ██                        ▼▼▼
    └─────────────────────────────────── Steps
 ```
 
@@ -100,9 +100,9 @@ Entropy measures how random the policy is. A policy with maximum entropy takes u
 ```
 Entropy
 1.5┤  ████
-  │      ████
+   │      ████
 1.0┤          ████████
-  │                  ████████████
+   │                  ████████████
 0.5┤                              ████████
    └──────────────────────────────────── Steps
 ```
@@ -174,7 +174,7 @@ The clip fraction (not always charted, but logged) is the fraction of transition
 ```
 Length
 500┤  ████████
-  │          █████
+   │          █████
 250┤               ████████████████
    └──────────────────────────────── Steps
 ```
@@ -365,11 +365,11 @@ When using curriculum learning, the key question is: *how fast should the agent 
 A healthy self-play Elo curve rises steadily:
 
 ```
-Elo
+   Elo
 1500┤                    ████████
-  │              ████████
+    │              ████████
 1200┤  ████████████
-   └──────────────────────────────── Steps
+    └──────────────────────────────── Steps
 ```
 
 If Elo is flat, the learner isn't improving against its current opponent pool. Try increasing `HistoricalOpponentRate` so it faces more diverse opponents.
