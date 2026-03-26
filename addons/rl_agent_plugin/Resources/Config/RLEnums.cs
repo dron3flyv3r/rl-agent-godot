@@ -40,3 +40,11 @@ public enum RLLayerKind
     LayerNorm = 2,
     Flatten  = 3,
 }
+
+public enum RLStoppingCombineMode
+{
+    /// <summary>Stop when ANY enabled condition becomes true (OR logic).</summary>
+    Any = 0,
+    /// <summary>Stop only when ALL enabled conditions are true simultaneously (AND logic).</summary>
+    All = 1,
+}

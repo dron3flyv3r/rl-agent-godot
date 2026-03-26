@@ -60,4 +60,11 @@ public partial class RLRunConfig : Resource
     /// </list>
     /// </summary>
     [Export] public RLAsyncRolloutPolicy AsyncRolloutPolicy { get; set; } = RLAsyncRolloutPolicy.Pause;
+
+    /// <summary>
+    /// Optional stopping conditions for this training run.
+    /// When null, training continues indefinitely until manually stopped.
+    /// </summary>
+    [Export(PropertyHint.ResourceType, nameof(RLStoppingConfig))]
+    public RLStoppingConfig? StoppingConditions { get; set; }
 }

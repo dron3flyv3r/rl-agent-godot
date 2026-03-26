@@ -48,6 +48,9 @@ public partial class TrainingBootstrap : Node
     private readonly Dictionary<IRLAgent, AgentRuntimeState> _agentStates = new();
 
     private long _totalSteps;
+    private RLStoppingConfig? _stoppingConfig;
+    private double _trainingElapsedSeconds;
+    private readonly Dictionary<string, Queue<float>> _rewardWindowByGroup = new(StringComparer.Ordinal);
     private RLTrainingConfig? _trainingConfig;
     private RLTrainerConfig?  _trainerConfig;
     private double _previousTimeScale = 1.0;
@@ -183,6 +186,7 @@ public partial class TrainingBootstrap : Node
         _asyncGradientUpdates = firstAcademy.AsyncGradientUpdates;
         _parallelPolicyGroups = firstAcademy.ParallelPolicyGroups;
         _asyncRolloutPolicy   = firstAcademy.AsyncRolloutPolicy;
+        _stoppingConfig = firstAcademy.RunConfig?.StoppingConditions;
         if (_quickTestMode)
         {
             _batchSize = 1;
@@ -556,6 +560,9 @@ public partial class TrainingBootstrap : Node
             return;
         }
 
+        if (!_isWorkerMode)
+            _trainingElapsedSeconds += delta;
+
         // Workers receive curriculum progress from master; apply it before episode processing
         // so OnEpisodeBegin sees the correct difficulty this frame.
         if (_distributedWorker is not null)
@@ -754,6 +761,11 @@ public partial class TrainingBootstrap : Node
                 CompleteQuickTest();
             }
         }
+
+        if (!_quickTestMode && !_isWorkerMode && ShouldStopTraining())
+        {
+            TriggerStoppingConditionShutdown();
+        }
     }
 
     public override void _ExitTree()
@@ -797,6 +809,73 @@ public partial class TrainingBootstrap : Node
             _statusWriter?.WriteStatus(_finalStatus, _manifest.ScenePath, finalReportedSteps, totalEpisodes,
                 _finalStatusMessage, workerEpisodes);
         }
+    }
+
+    private void TriggerStoppingConditionShutdown()
+    {
+        var totalEpisodes = _episodeCountByGroup.Values.Sum();
+        _finalStatus = "done";
+        _finalStatusMessage =
+            $"Training stopped by stopping condition — steps: {_totalSteps}, " +
+            $"episodes: {totalEpisodes}, elapsed: {_trainingElapsedSeconds:0.#}s.";
+        GD.Print($"[RL] {_finalStatusMessage}");
+        GetTree().Quit();
+    }
+
+    private bool ShouldStopTraining()
+    {
+        var cfg = _stoppingConfig;
+        if (cfg is null) return false;
+
+        var totalEpisodes = _episodeCountByGroup.Values.Sum();
+        var results = new System.Collections.Generic.List<bool>();
+
+        if (cfg.MaxSteps > 0)
+            results.Add(_totalSteps >= cfg.MaxSteps);
+        if (cfg.MaxSeconds > 0.0)
+            results.Add(_trainingElapsedSeconds >= cfg.MaxSeconds);
+        if (cfg.MaxEpisodes > 0)
+            results.Add(totalEpisodes >= cfg.MaxEpisodes);
+        if (cfg.RewardThresholdWindow > 0)
+        {
+            var avg = ComputeRollingReward(cfg);
+            if (!float.IsNaN(avg))
+                results.Add(avg >= cfg.RewardThreshold);
+        }
+        if (cfg.CustomCondition is not null)
+        {
+            var avg = cfg.RewardThresholdWindow > 0 ? ComputeRollingReward(cfg) : float.NaN;
+            results.Add(cfg.CustomCondition.ShouldStop(_totalSteps, totalEpisodes, _trainingElapsedSeconds, avg));
+        }
+
+        if (results.Count == 0) return false;
+        return cfg.CombineMode == RLStoppingCombineMode.All
+            ? results.TrueForAll(r => r)
+            : results.Exists(r => r);
+    }
+
+    private float ComputeRollingReward(RLStoppingConfig cfg)
+    {
+        IEnumerable<Queue<float>> queues;
+        if (!string.IsNullOrEmpty(cfg.RewardThresholdGroup) &&
+            _rewardWindowByGroup.TryGetValue(cfg.RewardThresholdGroup, out var single))
+            queues = new[] { single };
+        else
+            queues = _rewardWindowByGroup.Values;
+
+        var all = new System.Collections.Generic.List<float>();
+        foreach (var q in queues)
+            foreach (var v in q)
+                all.Add(v);
+
+        var minSize = string.IsNullOrEmpty(cfg.RewardThresholdGroup)
+            ? cfg.RewardThresholdWindow * Math.Max(1, _rewardWindowByGroup.Count)
+            : cfg.RewardThresholdWindow;
+
+        if (all.Count < minSize) return float.NaN;
+        var sum = 0f;
+        foreach (var v in all) sum += v;
+        return sum / all.Count;
     }
 
     private void CompleteQuickTest()
@@ -1311,6 +1390,17 @@ public partial class TrainingBootstrap : Node
             {
                 _episodeCountByGroup[groupId] += 1;
                 _lastEpisodeRewardByGroup[groupId] = pending.Agent.EpisodeReward;
+                if (_stoppingConfig?.RewardThresholdWindow > 0)
+                {
+                    if (!_rewardWindowByGroup.TryGetValue(groupId, out var rewardWindow))
+                    {
+                        rewardWindow = new Queue<float>(_stoppingConfig.RewardThresholdWindow);
+                        _rewardWindowByGroup[groupId] = rewardWindow;
+                    }
+                    rewardWindow.Enqueue(pending.Agent.EpisodeReward);
+                    while (rewardWindow.Count > _stoppingConfig.RewardThresholdWindow)
+                        rewardWindow.Dequeue();
+                }
                 _quickTestRewardTotalsByGroup[groupId] = _quickTestRewardTotalsByGroup.GetValueOrDefault(groupId) + pending.Agent.EpisodeReward;
                 _quickTestEpisodeLengthTotalsByGroup[groupId] = _quickTestEpisodeLengthTotalsByGroup.GetValueOrDefault(groupId) + pending.Agent.EpisodeSteps;
                 var episodeCount = _episodeCountByGroup[groupId];
