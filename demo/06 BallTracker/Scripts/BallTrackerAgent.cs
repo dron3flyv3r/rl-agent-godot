@@ -41,7 +41,7 @@ public partial class BallTrackerAgent : RLAgent2D
     public override void CollectObservations(ObservationBuffer obs)
     {
         if (_camera is null) return;
-        obs.AddImage("camera", _camera);
+        obs.AddImage(_camera);
     }
 
     public override void OnStep()
