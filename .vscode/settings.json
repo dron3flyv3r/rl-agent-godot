@@ -28,5 +28,19 @@
         "**/Thumbs.db": true,
         "**/*.uid": true
     },
-    "peacock.remoteColor": "#c9af05"
+    "peacock.remoteColor": "#c9af05",
+    "cmake.sourceDirectory": "/home/kasper/gameProjects/rl-agent-godot/addons/rl-agent-plugin/native",
+    "cmake.buildDirectory": "${workspaceFolder}/addons/rl-agent-plugin/native/build",
+    "cmake.configureSettings": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+    },
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/addons/rl-agent-plugin/native/build/compile_commands.json",
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/addons/rl-agent-plugin/native/src",
+        "${workspaceFolder}/addons/rl-agent-plugin/native/godot-cpp/include",
+        "${workspaceFolder}/addons/rl-agent-plugin/native/build/godot-cpp/gen/include"
+    ],
+    "C_Cpp.default.cppStandard": "c++17",
+    "C_Cpp.default.intelliSenseMode": "linux-clang-x64"
 }

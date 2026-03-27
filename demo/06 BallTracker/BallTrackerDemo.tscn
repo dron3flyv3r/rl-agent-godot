@@ -9,6 +9,8 @@
 [ext_resource type="Script" uid="uid://degpqg213kser" path="res://demo/06 BallTracker/Scripts/BallTrackerAgent.cs" id="7_agent"]
 [ext_resource type="Script" uid="uid://bedtsee3ppq1f" path="res://demo/06 BallTracker/Scripts/BallTrackerBall.cs" id="8_ball"]
 [ext_resource type="Script" uid="uid://doexji1yufg6v" path="res://addons/rl-agent-plugin/Runtime/Observations/Sensors2D/RLCameraSensor2D.cs" id="9_camera"]
+[ext_resource type="Script" uid="uid://b47hqqld5f1s6" path="res://addons/rl-agent-plugin/Resources/Observations/RLGrayscaleTransform.cs" id="10_1p036"]
+[ext_resource type="Script" uid="uid://dasw5t85wsdy4" path="res://addons/rl-agent-plugin/Resources/Observations/RLResizeTransform.cs" id="11_1l51j"]
 
 [sub_resource type="Resource" id="PPOConfig"]
 script = ExtResource("2_ppo")
@@ -32,6 +34,14 @@ radius = 12.0
 
 [sub_resource type="Resource" id="Resource_mlwsk"]
 script = ExtResource("5_groupcfg")
+
+[sub_resource type="Resource" id="Resource_u4nhy"]
+script = ExtResource("10_1p036")
+metadata/_custom_type_script = "uid://b47hqqld5f1s6"
+
+[sub_resource type="Resource" id="Resource_dr5gd"]
+script = ExtResource("11_1l51j")
+metadata/_custom_type_script = "uid://dasw5t85wsdy4"
 
 [node name="BallTrackerDemo" type="Node2D" unique_id=1660471297]
 
@@ -88,3 +98,4 @@ PolicyGroupConfig = SubResource("Resource_mlwsk")
 [node name="Camera" type="Node2D" parent="Player/Agent" unique_id=710888149]
 script = ExtResource("9_camera")
 Zoom = 0.18
+Transforms = Array[Resource]([SubResource("Resource_u4nhy"), SubResource("Resource_dr5gd")])
