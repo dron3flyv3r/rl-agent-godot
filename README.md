@@ -4,7 +4,7 @@ This repository is the Godot project workspace used to run demos, iterate on sce
 
 The RL plugin itself now lives in its own repository:
 
-- `addons/rl-agent-plugin` (Git submodule): https://github.com/dron3flyv3r/rl-agent-plugin
+- `addons/rl-agent-plugin` (Git submodule): <https://github.com/dron3flyv3r/rl-agent-plugin>
 
 ## What is in this repo
 
@@ -19,14 +19,40 @@ The RL plugin itself now lives in its own repository:
 
 ## Getting started
 
+Choose one setup path:
+
+### Option 1: Clone (recommended)
+
 1. Clone with submodules:
-	- `git clone --recurse-submodules https://github.com/dron3flyv3r/rl-agent-godot.git`
-2. If already cloned:
-	- `git submodule update --init --recursive`
-3. Open this folder in Godot 4.6+ with C# support.
-4. Enable plugins in Project Settings -> Plugins:
-	- `RL Agent Plugin`
-5. Build once with `Alt+B`.
+
+``` bash
+git clone --recurse-submodules https://github.com/dron3flyv3r/rl-agent-godot.git
+```
+
+1. If already cloned, initialize submodules:
+
+``` bash
+git submodule update --init --recursive
+```
+
+1. Open this folder in Godot 4.6+ with C# support.
+2. Enable plugins in **Project Settings -> Plugins**:
+
+- `RL Agent Plugin`
+
+1. Build once with `Alt+B`.
+
+### Option 2: Download ZIP
+
+1. Download and extract this repository ZIP.
+2. Download and extract `rl-agent-plugin` from GitHub.
+3. Place the extracted plugin at:
+
+- `addons/rl-agent-plugin`
+
+4. Open the project in Godot 4.6+ with C# support.
+5. Enable **RL Agent Plugin** in **Project Settings -> Plugins**.
+6. Build once with `Alt+B`.
 
 ## Demo quick run
 

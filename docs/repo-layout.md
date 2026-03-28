@@ -9,8 +9,6 @@ This repo is a Godot workspace that consumes the RL plugin as a Git submodule.
   - Contains plugin runtime/editor code and plugin documentation
 - `demo/`
   - Demo training scenes and scripts
-- `AgentExports/` and `Demo2AgentExports/`
-  - Exported `.rlmodel` files used by demos
 
 ## Working with submodules
 
