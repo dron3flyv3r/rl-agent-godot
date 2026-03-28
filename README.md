@@ -10,12 +10,11 @@ The RL plugin itself now lives in its own repository:
 
 - Demo environments for single-agent, self-play, curriculum, and locomotion workflows
 - Exported `.rlmodel` assets used by demo scenes
-- `godot_mcp` editor addon for MCP tooling inside Godot
 - Godot project files and integration glue around the standalone plugin repo
 
 ## Repository split
 
-- `rl-agent-godot` (this repo): demo project, sample scenes, integration, MCP addon
+- `rl-agent-godot` (this repo): demo project, sample scenes, and integration
 - `rl-agent-plugin` (submodule): RL runtime, editor tooling, training/inference implementation, plugin docs
 
 ## Getting started
@@ -27,7 +26,6 @@ The RL plugin itself now lives in its own repository:
 3. Open this folder in Godot 4.6+ with C# support.
 4. Enable plugins in Project Settings -> Plugins:
 	- `RL Agent Plugin`
-	- `Godot MCP` (optional)
 5. Build once with `Alt+B`.
 
 ## Demo quick run

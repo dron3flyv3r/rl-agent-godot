@@ -6,7 +6,7 @@ Use this repo for:
 
 - Running and modifying demo scenes
 - Testing exported models in playable Godot scenes
-- Integrating addons in one Godot project (`rl-agent-plugin` + `godot_mcp`)
+- Integrating the RL plugin in one Godot project
 
 ## Doc index
 

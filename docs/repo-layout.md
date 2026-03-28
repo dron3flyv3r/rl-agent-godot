@@ -7,9 +7,6 @@ This repo is a Godot workspace that consumes the RL plugin as a Git submodule.
 - `addons/rl-agent-plugin/`
   - Separate Git repository (submodule)
   - Contains plugin runtime/editor code and plugin documentation
-- `addons/godot_mcp/`
-  - MCP integration plugin for AI-assisted project automation
-  - Connects to an MCP server over WebSocket and executes tool handlers
 - `demo/`
   - Demo training scenes and scripts
 - `AgentExports/` and `Demo2AgentExports/`
@@ -45,7 +42,6 @@ Edit `rl-agent-godot` when changing:
 
 - Demo scenes/scripts
 - Workspace-level Godot project setup
-- `godot_mcp` addon behavior
 
 Edit `rl-agent-plugin` when changing:
 

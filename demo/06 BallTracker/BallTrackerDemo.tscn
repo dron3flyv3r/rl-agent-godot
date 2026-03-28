@@ -5,10 +5,12 @@
 [ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl-agent-plugin/Resources/Config/RLTrainingConfig.cs" id="3_traincfg"]
 [ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl-agent-plugin/Resources/Config/RLRunConfig.cs" id="4_runcfg"]
 [ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl-agent-plugin/Resources/Config/RLPolicyGroupConfig.cs" id="5_groupcfg"]
+[ext_resource type="Script" uid="uid://iq6ldrfkfev8" path="res://addons/rl-agent-plugin/Resources/Config/RLDistributedConfig.cs" id="5_u4nhy"]
 [ext_resource type="Script" uid="uid://r1367y3hdo85" path="res://demo/06 BallTracker/Scripts/BallTrackerPlayer.cs" id="6_player"]
 [ext_resource type="Script" uid="uid://degpqg213kser" path="res://demo/06 BallTracker/Scripts/BallTrackerAgent.cs" id="7_agent"]
 [ext_resource type="Script" uid="uid://bedtsee3ppq1f" path="res://demo/06 BallTracker/Scripts/BallTrackerBall.cs" id="8_ball"]
 [ext_resource type="Script" uid="uid://doexji1yufg6v" path="res://addons/rl-agent-plugin/Runtime/Observations/Sensors2D/RLCameraSensor2D.cs" id="9_camera"]
+[ext_resource type="Script" uid="uid://cb4ho32jhok8u" path="res://addons/rl-agent-plugin/Resources/Observations/CameraBackground/RLSolidBackground.cs" id="10_1l51j"]
 [ext_resource type="Script" uid="uid://b47hqqld5f1s6" path="res://addons/rl-agent-plugin/Resources/Observations/RLGrayscaleTransform.cs" id="10_1p036"]
 [ext_resource type="Script" uid="uid://dasw5t85wsdy4" path="res://addons/rl-agent-plugin/Resources/Observations/RLResizeTransform.cs" id="11_1l51j"]
 
@@ -23,8 +25,17 @@ Algorithm = SubResource("PPOConfig")
 script = ExtResource("4_runcfg")
 RunPrefix = "BallTrackerDemo"
 SimulationSpeed = 2.0
-BatchSize = 2
+ActionRepeat = 2
 AsyncGradientUpdates = true
+
+[sub_resource type="Resource" id="Resource_nbk86"]
+script = ExtResource("5_u4nhy")
+WorkerCount = 8
+WorkersRequireRenderer = true
+WorkerSimulationSpeed = 6.0
+MonitorIntervalUpdates = 100
+ShowRolloutDiagnostics = false
+metadata/_custom_type_script = "uid://iq6ldrfkfev8"
 
 [sub_resource type="CircleShape2D" id="BallShape"]
 radius = 14.0
@@ -34,6 +45,11 @@ radius = 12.0
 
 [sub_resource type="Resource" id="Resource_mlwsk"]
 script = ExtResource("5_groupcfg")
+
+[sub_resource type="Resource" id="Resource_3ybyu"]
+script = ExtResource("10_1l51j")
+FillColor = Color(0.047058824, 0.08235294, 0.12941177, 1)
+metadata/_custom_type_script = "uid://cb4ho32jhok8u"
 
 [sub_resource type="Resource" id="Resource_u4nhy"]
 script = ExtResource("10_1p036")
@@ -52,14 +68,17 @@ color = Color(0.047, 0.082, 0.129, 1)
 
 [node name="ArenaBorder" type="Line2D" parent="." unique_id=356788279]
 points = PackedVector2Array(40, 40, 760, 40, 760, 560, 40, 560, 40, 40)
-width = 3.0
-default_color = Color(0.353, 0.537, 0.682, 1)
+width = 12.0
+default_color = Color(0.14283356, 0.24964577, 0.3325777, 1)
+begin_cap_mode = 1
+end_cap_mode = 1
 
 [node name="Academy" type="Node" parent="." unique_id=655799542]
 script = ExtResource("1_academy")
 TrainingConfig = SubResource("TrainingConfig")
 MaxEpisodeSteps = 512
 RunConfig = SubResource("RunConfig")
+DistributedConfig = SubResource("Resource_nbk86")
 EnableSpyOverlay = true
 EnableCameraDebug = true
 
@@ -74,7 +93,6 @@ offset_left = -14.0
 offset_top = -14.0
 offset_right = 14.0
 offset_bottom = 14.0
-color = Color(0.95, 0.35, 0.25, 1)
 
 [node name="Player" type="CharacterBody2D" parent="." unique_id=749512350]
 position = Vector2(400, 300)
@@ -88,7 +106,7 @@ offset_left = -12.0
 offset_top = -12.0
 offset_right = 12.0
 offset_bottom = 12.0
-color = Color(0.25, 0.65, 0.95, 1)
+color = Color(0, 0.5019608, 0.9490196, 1)
 
 [node name="Agent" type="Node2D" parent="Player" unique_id=184700571 node_paths=PackedStringArray("_camera")]
 script = ExtResource("7_agent")
@@ -98,4 +116,5 @@ PolicyGroupConfig = SubResource("Resource_mlwsk")
 [node name="Camera" type="Node2D" parent="Player/Agent" unique_id=710888149]
 script = ExtResource("9_camera")
 Zoom = 0.18
+Background = SubResource("Resource_3ybyu")
 Transforms = Array[Resource]([SubResource("Resource_u4nhy"), SubResource("Resource_dr5gd")])
