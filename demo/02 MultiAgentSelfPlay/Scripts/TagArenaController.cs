@@ -601,7 +601,7 @@ public partial class TagArenaController : Node2D
             _footerLabel.Text = IsTrainingRun()
                 ? "Training uses one chaser policy against two runner agents with shared arena resets."
                 : ControlledAgent == StandaloneControlledAgent.None
-                    ? "Controls: Enter resets the arena. Spy overlay stays visible; set ControlledAgent to a player to enable manual control."
+                    ? "Controls: Enter resets the arena."
                     : "Controls: arrows move the selected human agent, Enter resets the arena, Tab cycles the spy overlay.";
         }
     }

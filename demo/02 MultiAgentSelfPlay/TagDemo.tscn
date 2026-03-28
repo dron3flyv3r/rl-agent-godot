@@ -5,8 +5,8 @@
 [ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl-agent-plugin/Resources/Config/RLTrainingConfig.cs" id="3_650tm"]
 [ext_resource type="Script" uid="uid://ire111rjxew5" path="res://addons/rl-agent-plugin/Resources/Config/RLPPOConfig.cs" id="3_x3qrm"]
 [ext_resource type="Script" uid="uid://bl3qlpw5eopg4" path="res://addons/rl-agent-plugin/Resources/Config/RLPolicyPairingConfig.cs" id="4_rb47y"]
-[ext_resource type="Resource" uid="uid://borlltwsvuyg7" path="res://demo/02 MultiAgentSelfPlay/Policies/chasers.tres" id="5_fc5f6"]
-[ext_resource type="Resource" uid="uid://b3ipgpbt331i1" path="res://demo/02 MultiAgentSelfPlay/Policies/runners.tres" id="6_6walo"]
+[ext_resource type="Resource" uid="uid://borlltwsvuyg7" path="res://demo/02 MultiAgentSelfPlay/models/chasers.tres" id="5_fc5f6"]
+[ext_resource type="Resource" uid="uid://b3ipgpbt331i1" path="res://demo/02 MultiAgentSelfPlay/models/runners.tres" id="6_6walo"]
 [ext_resource type="Script" uid="uid://bdrwoeuh2mcbl" path="res://demo/02 MultiAgentSelfPlay/Scripts/TagPlayer.cs" id="7_3gkkj"]
 [ext_resource type="Script" uid="uid://cyyxb04k8uacu" path="res://demo/02 MultiAgentSelfPlay/Scripts/TagAgent.cs" id="8_h1ebu"]
 [ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl-agent-plugin/Resources/Config/RLRunConfig.cs" id="9_runcfg"]
@@ -24,7 +24,7 @@ Algorithm = SubResource("Resource_ruj3f")
 script = ExtResource("9_runcfg")
 RunPrefix = "TagDemo"
 SimulationSpeed = 4.0
-BatchSize = 24
+BatchSize = 16
 ActionRepeat = 2
 CheckpointInterval = 20
 AsyncGradientUpdates = true
@@ -57,6 +57,7 @@ ArenaMax = Vector2(708, 516)
 TagRadius = 32.0
 SpawnMargin = 60.0
 MinimumSpawnSeparation = 96.0
+ControlledAgent = 0
 
 [node name="Background" type="Polygon2D" parent="." unique_id=1192768225]
 color = Color(0.0431373, 0.0901961, 0.0745098, 1)
@@ -91,7 +92,6 @@ TrainingConfig = SubResource("TrainingConfig")
 MaxEpisodeSteps = 600
 RunConfig = SubResource("RunConfig_tag")
 SelfPlay = SubResource("SelfPlay_tag")
-EnableSpyOverlay = true
 
 [node name="ChaserA" type="CharacterBody2D" parent="." unique_id=1432916565]
 position = Vector2(238, 244)
@@ -173,6 +173,7 @@ text = "Status:"
 label_settings = SubResource("BodySettings")
 
 [node name="FooterLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=2042812781]
+custom_minimum_size = Vector2(0.025, 0)
 layout_mode = 2
 text = "Controls:"
 label_settings = SubResource("BodySettings")

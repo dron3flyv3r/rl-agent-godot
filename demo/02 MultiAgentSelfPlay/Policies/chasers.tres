@@ -1,8 +1,0 @@
-[gd_resource type="Resource" script_class="RLPolicyGroupConfig" format=3 uid="uid://borlltwsvuyg7"]
-
-[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl-agent-plugin/Resources/Config/RLPolicyGroupConfig.cs" id="1_cyhjx"]
-
-[resource]
-resource_name = "chasers"
-script = ExtResource("1_cyhjx")
-AgentId = "chasers"

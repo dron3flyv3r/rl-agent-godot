@@ -18,14 +18,12 @@ Algorithm = SubResource("Resource_671jg")
 [sub_resource type="Resource" id="RunConfig_reach"]
 script = ExtResource("6_runcfg")
 RunPrefix = "ReachTargetDemo"
-SimulationSpeed = 4.0
 BatchSize = 32
 
 [sub_resource type="Resource" id="Resource_dj21h"]
 resource_name = "reach_target"
 script = ExtResource("5_hx405")
 AgentId = "reach_target"
-InferenceModelPath = "res://demo/01 SingleAgent/model/reach_target.rlmodel"
 metadata/_custom_type_script = "uid://bniwqapplki00"
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_cuwb5"]
@@ -40,6 +38,12 @@ font_color = Color(0.796078, 0.835294, 0.882353, 1)
 
 [node name="ReachTargetDemo" type="Node2D" unique_id=1061837225]
 
+[node name="Academy" type="Node" parent="." unique_id=2119179183]
+script = ExtResource("1_bsb0r")
+TrainingConfig = SubResource("TrainingConfig")
+MaxEpisodeSteps = 48
+RunConfig = SubResource("RunConfig_reach")
+
 [node name="Background" type="Polygon2D" parent="." unique_id=1031762451]
 color = Color(0.0470588, 0.0823529, 0.129412, 1)
 polygon = PackedVector2Array(0, 0, 800, 0, 800, 600, 0, 600)
@@ -52,13 +56,8 @@ polygon = PackedVector2Array(72, 196, 728, 196, 728, 500, 72, 500)
 points = PackedVector2Array(72, 196, 728, 196, 728, 500, 72, 500, 72, 196)
 width = 3.0
 default_color = Color(0.352941, 0.537255, 0.682353, 1)
-
-[node name="Academy" type="Node" parent="." unique_id=2119179183]
-script = ExtResource("1_bsb0r")
-TrainingConfig = SubResource("TrainingConfig")
-MaxEpisodeSteps = 48
-RunConfig = SubResource("RunConfig_reach")
-EnableSpyOverlay = true
+begin_cap_mode = 1
+end_cap_mode = 1
 
 [node name="TrackGlow" type="Line2D" parent="." unique_id=102336968]
 points = PackedVector2Array(126, 338, 674, 338)
@@ -94,13 +93,13 @@ polygon = PackedVector2Array(0, -14, 14, 0, 0, 14, -14, 0)
 position = Vector2(400, 338)
 script = ExtResource("3_lghqt")
 
-[node name="BodyVisual" type="Polygon2D" parent="Player" unique_id=1201743833]
-color = Color(0.34902, 0.854902, 0.980392, 1)
-polygon = PackedVector2Array(-16, -16, 16, -16, 16, 16, -16, 16)
-
 [node name="Agent" type="Node2D" parent="Player" unique_id=527052923]
 script = ExtResource("4_4cfab")
 PolicyGroupConfig = SubResource("Resource_dj21h")
+
+[node name="BodyVisual" type="Polygon2D" parent="Player" unique_id=1201743833]
+color = Color(0.34902, 0.854902, 0.980392, 1)
+polygon = PackedVector2Array(-16, -16, 16, -16, 16, 16, -16, 16)
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Player" unique_id=1316757117]
 shape = SubResource("CircleShape2D_cuwb5")
