@@ -33,6 +33,8 @@ git clone --recurse-submodules https://github.com/dron3flyv3r/rl-agent-godot.git
 
 ``` bash
 git submodule update --init --recursive
+git -C addons/rl-agent-plugin fetch --tags
+git -C addons/rl-agent-plugin checkout v0.1.0-beta
 ```
 
 1. Open this folder in Godot 4.6+ with C# support.
@@ -45,7 +47,7 @@ git submodule update --init --recursive
 ### Option 2: Download ZIP
 
 1. Download and extract this repository ZIP.
-2. Download and extract `rl-agent-plugin` from GitHub.
+2. Download and extract `rl-agent-plugin` release `v0.1.0-beta` from GitHub.
 3. Place the extracted plugin at:
 
 - `addons/rl-agent-plugin`

@@ -24,15 +24,17 @@ If already cloned:
 git submodule update --init --recursive
 ```
 
-Update plugin submodule to latest main:
+Update plugin submodule to the latest released plugin version:
 
 ```bash
 cd addons/rl-agent-plugin
-git checkout main
-git pull
+git fetch --tags
+git checkout v0.1.0-beta
 cd ../..
 git add addons/rl-agent-plugin
 ```
+
+If you want bleeding-edge plugin changes instead, use `main`.
 
 ## Which repo should I edit?
 
