@@ -27,15 +27,15 @@ metadata/_custom_type_script = "uid://d2aynl2n7g0v"
 script = ExtResource("5_runcfg")
 RunPrefix = "MoveToTarget3D"
 SimulationSpeed = 4.0
-BatchSize = 4
 ActionRepeat = 2
 CheckpointInterval = 50
 AsyncGradientUpdates = true
+ResumeFromCheckpoint = true
 StoppingConditions = SubResource("Resource_2gheo")
 
 [sub_resource type="Resource" id="Resource_28n2c"]
 script = ExtResource("5_i24df")
-WorkerCount = 2
+WorkerSimulationSpeed = 8.0
 metadata/_custom_type_script = "uid://iq6ldrfkfev8"
 
 [sub_resource type="BoxMesh" id="PlatformMesh"]
