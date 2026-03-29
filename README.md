@@ -21,32 +21,9 @@ The RL plugin itself now lives in its own repository:
 
 Choose one setup path:
 
-### Option 1: Clone (recommended)
+### Option 1: Release version (recommended)
 
-1. Clone with submodules:
-
-``` bash
-git clone --recurse-submodules https://github.com/dron3flyv3r/rl-agent-godot.git
-```
-
-1. If already cloned, initialize submodules:
-
-``` bash
-git submodule update --init --recursive
-git -C addons/rl-agent-plugin fetch --tags
-git -C addons/rl-agent-plugin checkout v0.1.0-beta
-```
-
-1. Open this folder in Godot 4.6+ with C# support.
-2. Enable plugins in **Project Settings -> Plugins**:
-
-- `RL Agent Plugin`
-
-1. Build once with `Alt+B`.
-
-### Option 2: Download ZIP
-
-1. Download and extract this repository ZIP.
+1. Go to the [rl-agent-plugin](https://github.com/dron3flyv3r/rl-agent-plugin) repository.
 2. Download and extract `rl-agent-plugin` release `v0.1.0-beta` from GitHub.
 3. Place the extracted plugin at:
 
@@ -55,6 +32,36 @@ git -C addons/rl-agent-plugin checkout v0.1.0-beta
 4. Open the project in Godot 4.6+ with C# support.
 5. Enable **RL Agent Plugin** in **Project Settings -> Plugins**.
 6. Build once with `Alt+B`.
+7. Restart the editor if RLDash windows don't appear.
+
+
+### Option 2: Clone
+1a. Clone with submodules:
+
+``` bash
+git clone --recurse-submodules https://github.com/dron3flyv3r/rl-agent-godot.git
+```
+
+1b. If already cloned, initialize submodules:
+
+``` bash
+git submodule update --init --recursive
+git -C addons/rl-agent-plugin fetch --tags
+git -C addons/rl-agent-plugin checkout <release-tag>
+```
+
+Example:
+
+``` bash
+git -C addons/rl-agent-plugin fetch --tags
+git -C addons/rl-agent-plugin checkout v0.1.0-beta
+```
+
+2. Open this folder in Godot 4.6+ with C# support.
+3. Enable **RL Agent Plugin** in **Project Settings -> Plugins**.
+4. Build once with `Alt+B`.
+5. Restart the editor if RLDash windows don't appear.
+
 
 ## Demo quick run
 
