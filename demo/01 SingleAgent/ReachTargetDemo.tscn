@@ -7,9 +7,12 @@
 [ext_resource type="Script" uid="uid://erru8n4gpbsv" path="res://demo/01 SingleAgent/Scripts/ReachTargetAgent.cs" id="4_4cfab"]
 [ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl-agent-plugin/Resources/Config/RLPolicyGroupConfig.cs" id="5_hx405"]
 [ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl-agent-plugin/Resources/Config/RLRunConfig.cs" id="6_runcfg"]
+[ext_resource type="Script" uid="uid://oouep3l8683y" path="res://addons/rl-agent-plugin/Resources/Models/RLDenseLayerDef.cs" id="7_tox1n"]
+[ext_resource type="Script" uid="uid://covgl5skelf7g" path="res://addons/rl-agent-plugin/Resources/Models/RLNetworkGraph.cs" id="8_tpj7a"]
 
 [sub_resource type="Resource" id="Resource_671jg"]
 script = ExtResource("2_0uc76")
+EpochsPerUpdate = 3
 
 [sub_resource type="Resource" id="TrainingConfig"]
 script = ExtResource("2_38ip2")
@@ -19,6 +22,15 @@ Algorithm = SubResource("Resource_671jg")
 script = ExtResource("6_runcfg")
 RunPrefix = "ReachTargetDemo"
 BatchSize = 32
+
+[sub_resource type="Resource" id="Resource_y71jw"]
+script = ExtResource("7_tox1n")
+
+[sub_resource type="Resource" id="Resource_vep5f"]
+script = ExtResource("7_tox1n")
+
+[sub_resource type="Resource" id="Resource_m4w5g"]
+script = ExtResource("8_tpj7a")
 
 [sub_resource type="Resource" id="Resource_dj21h"]
 resource_name = "reach_target"
