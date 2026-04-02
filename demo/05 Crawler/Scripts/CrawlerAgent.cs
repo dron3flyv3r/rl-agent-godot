@@ -7,13 +7,14 @@ namespace RlAgentPlugin.Demo;
 /// <summary>
 /// SAC agent for the four-legged crawler locomotion demo.
 ///
-/// OBSERVATION LAYOUT (26 floats):
+/// OBSERVATION LAYOUT (30 floats):
 ///   [0-2]   Torso linear velocity         — normalized to [-1, 1] over ±5 m/s
 ///   [3-5]   Torso angular velocity        — normalized to [-1, 1] over ±5 rad/s
 ///   [6-8]   Torso up-vector (Basis.Y)     — raw unit vector, already in [-1, 1]
 ///   [9]     Torso height                  — normalized to [-1, 1] over 0–1.5 m
 ///   [10-17] Joint angles (8)              — normalized to [-1, 1] over ±π/2 rad
 ///   [18-25] Joint angular velocities (8)  — normalized to [-1, 1] over ±5 rad/s
+///   [26-29] Foot contact flags (4)        — 1 when the shin-tip ray sees non-self geometry
 ///
 /// ACTION LAYOUT (8 continuous, each in [-1, 1]):
 ///   [0] FL hip · [1] FL knee · [2] FR hip · [3] FR knee
@@ -23,8 +24,8 @@ namespace RlAgentPlugin.Demo;
 /// REWARD BREAKDOWN:
 ///   forward_vel — torso velocity in +X (walk direction); main training signal
 ///   upright     — bonus when Basis.Y·Up > 0.5; discourages tipping
+///   side_slip   — penalty for wasting motion laterally in Z
 ///   energy      — penalty proportional to mean squared joint command
-///   alive       — small constant per step to discourage instant collapse
 ///
 /// TERMINATION:
 ///   Torso Y drops below CollapseHeight (creature fell or tipped irrecoverably).
@@ -90,6 +91,10 @@ public partial class CrawlerAgent : RLAgent3D
         // [18-25] Joint angular velocities
         foreach (var v in _body.GetJointAngularVelocities())
             obs.AddNormalized(v, -5f, 5f);
+
+        // [26-29] Foot-ground contact bits
+        for (var i = 0; i < 4; i++)
+            obs.Add(_body.IsFootGrounded(i));
     }
 
     public override void OnStep()
@@ -107,6 +112,9 @@ public partial class CrawlerAgent : RLAgent3D
         var uprightDot = torso.GlobalBasis.Y.Dot(Vector3.Up);
         if (uprightDot > 0.5f)
             AddReward((uprightDot - 0.5f) * 0.05f, "upright");
+
+        // Penalize side-scrubbing so the policy favors forward gaits over noisy flailing.
+        AddReward(-Mathf.Abs(torso.LinearVelocity.Z) * 0.02f, "side_slip");
 
         // Energy penalty: discourages unnecessary motor activity and aids smooth gaits.
         var meanSqAction = 0f;

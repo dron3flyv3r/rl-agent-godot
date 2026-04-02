@@ -1,9 +1,22 @@
 [gd_resource type="Resource" script_class="RLPolicyGroupConfig" format=3 uid="uid://borlltwsvuyg7"]
 
 [ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl-agent-plugin/Resources/Config/RLPolicyGroupConfig.cs" id="1_02e8o"]
+[ext_resource type="Script" uid="uid://oouep3l8683y" path="res://addons/rl-agent-plugin/Resources/Models/RLDenseLayerDef.cs" id="1_fugcu"]
+[ext_resource type="Script" uid="uid://covgl5skelf7g" path="res://addons/rl-agent-plugin/Resources/Models/RLNetworkGraph.cs" id="2_41ks5"]
+
+[sub_resource type="Resource" id="Resource_ff4tu"]
+script = ExtResource("1_fugcu")
+
+[sub_resource type="Resource" id="Resource_ddymd"]
+script = ExtResource("1_fugcu")
+
+[sub_resource type="Resource" id="Resource_dma83"]
+script = ExtResource("2_41ks5")
+TrunkLayers = Array[Resource]([SubResource("Resource_ff4tu"), SubResource("Resource_ddymd")])
 
 [resource]
 resource_name = "chasers"
 script = ExtResource("1_02e8o")
 AgentId = "chasers"
 InferenceModelPath = "res://demo/02 MultiAgentSelfPlay/models/chasers.rlmodel"
+NetworkGraph = SubResource("Resource_dma83")

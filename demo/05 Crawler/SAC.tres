@@ -6,11 +6,12 @@
 script = ExtResource("1_sacc")
 LearningRate = 0.0003
 Gamma = 0.99
-ReplayBufferCapacity = 100000
+ReplayBufferCapacity = 500000
 BatchSize = 256
-WarmupSteps = 1000
+WarmupSteps = 10000
 Tau = 0.005
-InitAlpha = 0.2
+InitAlpha = 0.3
 AutoTuneAlpha = true
-UpdateEverySteps = 1
+UpdateEverySteps = 2
+UpdatesPerStep = 1
 metadata/_custom_type_script = "uid://dg2me1qyyu7fl"

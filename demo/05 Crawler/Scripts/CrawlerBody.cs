@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using Godot;
 
 namespace RlAgentPlugin.Demo;
@@ -13,6 +12,7 @@ namespace RlAgentPlugin.Demo;
 ///
 /// Each leg has two segments (hip + shin) connected by HingeJoint3D.
 /// All joints hinge around the world Z axis, so legs swing forward/backward in the XY plane.
+/// Each shin also carries a short ray sensor used to detect ground contact near the foot tip.
 ///
 /// JOINT ORDER (matches action and observation arrays):
 ///   0: FL hip · 1: FL knee · 2: FR hip · 3: FR knee
@@ -29,6 +29,15 @@ public partial class CrawlerBody : Node3D
     private const float HipHeight  = 0.35f;
     private const float ShinRadius = 0.045f;
     private const float ShinHeight = 0.30f;
+    private const float FootSensorLength = 0.12f;
+
+    // Separate limits keep hips away from the torso and bias knees toward flexion
+    // instead of hyperextension. This reduces self-intersection and makes the motion
+    // space easier for the policy to explore.
+    private const float HipLimitLower  = -0.80f;
+    private const float HipLimitUpper  =  0.80f;
+    private const float KneeLimitLower = -1.20f;
+    private const float KneeLimitUpper =  0.20f;
 
     // Leg attachment offsets from torso center (bottom corners)
     private static readonly Vector3[] LegCorners =
@@ -51,6 +60,7 @@ public partial class CrawlerBody : Node3D
     public RigidBody3D    Torso  { get; private set; } = null!;
     private RigidBody3D[] _hips  = new RigidBody3D[4];
     private RigidBody3D[] _shins = new RigidBody3D[4];
+    private RayCast3D[]   _footSensors = new RayCast3D[4];
 
     // Indexed as [i*2] = hip joint, [i*2+1] = knee joint for leg i in [FL, FR, BL, BR]
     private HingeJoint3D[] _joints = new HingeJoint3D[8];
@@ -102,6 +112,22 @@ public partial class CrawlerBody : Node3D
         return vels;
     }
 
+    public bool IsFootGrounded(int legIndex)
+    {
+        if ((uint)legIndex >= _footSensors.Length)
+            return false;
+
+        var sensor = _footSensors[legIndex];
+        if (sensor is null)
+            return false;
+
+        sensor.ForceRaycastUpdate();
+        if (!sensor.IsColliding())
+            return false;
+
+        return sensor.GetCollider() is Node collider && !IsOwnBodyNode(collider);
+    }
+
     /// <summary>Teleports all body parts back to their spawn transforms and zeroes out velocities.</summary>
     public void Reset()
     {
@@ -139,21 +165,23 @@ public partial class CrawlerBody : Node3D
             _hips[i]  = CreateCapsule($"{legLabel}Hip",  hipPos,  HipRadius,  HipHeight,  mass: 0.3f);
             _shins[i] = CreateCapsule($"{legLabel}Shin", shinPos, ShinRadius, ShinHeight, mass: 0.2f);
 
-            _joints[i * 2]     = CreateHingeJoint($"Joint_{legLabel}Hip",  Torso,    _hips[i],  corner);
-            _joints[i * 2 + 1] = CreateHingeJoint($"Joint_{legLabel}Knee", _hips[i], _shins[i], kneePos);
+            _joints[i * 2]     = CreateHingeJoint(
+                $"Joint_{legLabel}Hip", Torso, _hips[i], corner, HipLimitLower, HipLimitUpper);
+            _joints[i * 2 + 1] = CreateHingeJoint(
+                $"Joint_{legLabel}Knee", _hips[i], _shins[i], kneePos, KneeLimitLower, KneeLimitUpper);
+            _footSensors[i] = CreateFootSensor($"{legLabel}FootSensor", _shins[i]);
         }
     }
 
     private void ExcludeInternalCollisions()
     {
-        // Creature parts only collide with the ground, not with each other.
-        var all = new List<PhysicsBody3D> { Torso };
-        all.AddRange(_hips);
-        all.AddRange(_shins);
-
-        for (var i = 0; i < all.Count; i++)
-            for (var j = i + 1; j < all.Count; j++)
-                all[i].AddCollisionExceptionWith(all[j]);
+        // Exclude only directly connected pairs. This keeps the articulated chain stable
+        // without allowing distal leg parts to pass through the torso or other legs.
+        for (var i = 0; i < 4; i++)
+        {
+            Torso.AddCollisionExceptionWith(_hips[i]);
+            _hips[i].AddCollisionExceptionWith(_shins[i]);
+        }
     }
 
     private Transform3D[] CaptureTransforms()
@@ -188,7 +216,12 @@ public partial class CrawlerBody : Node3D
     }
 
     private HingeJoint3D CreateHingeJoint(
-        string name, RigidBody3D bodyA, RigidBody3D bodyB, Vector3 position)
+        string name,
+        RigidBody3D bodyA,
+        RigidBody3D bodyB,
+        Vector3 position,
+        float limitLower,
+        float limitUpper)
     {
         var joint = new HingeJoint3D { Name = name };
         AddChild(joint);
@@ -202,14 +235,28 @@ public partial class CrawlerBody : Node3D
         joint.NodeB = joint.GetPathTo(bodyB);
 
         joint.SetFlag(HingeJoint3D.Flag.UseLimit, true);
-        joint.SetParam(HingeJoint3D.Param.LimitLower, -Mathf.Pi / 2f);
-        joint.SetParam(HingeJoint3D.Param.LimitUpper,  Mathf.Pi / 2f);
+        joint.SetParam(HingeJoint3D.Param.LimitLower, limitLower);
+        joint.SetParam(HingeJoint3D.Param.LimitUpper, limitUpper);
 
         joint.SetFlag(HingeJoint3D.Flag.EnableMotor, true);
         joint.SetParam(HingeJoint3D.Param.MotorTargetVelocity, 0f);
         joint.SetParam(HingeJoint3D.Param.MotorMaxImpulse, MotorMaxImpulse);
 
         return joint;
+    }
+
+    private static RayCast3D CreateFootSensor(string name, RigidBody3D shin)
+    {
+        var sensor = new RayCast3D
+        {
+            Name           = name,
+            Position       = new Vector3(0f, -ShinHeight * 0.5f, 0f),
+            TargetPosition = new Vector3(0f, -FootSensorLength, 0f),
+            Enabled        = true,
+        };
+        shin.AddChild(sensor);
+        sensor.AddException(shin);
+        return sensor;
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
@@ -228,6 +275,17 @@ public partial class CrawlerBody : Node3D
         while (angle >  Mathf.Pi) angle -= Mathf.Tau;
         while (angle < -Mathf.Pi) angle += Mathf.Tau;
         return angle;
+    }
+
+    private bool IsOwnBodyNode(Node node)
+    {
+        for (Node? current = node; current is not null; current = current.GetParent())
+        {
+            if (current == this)
+                return true;
+        }
+
+        return false;
     }
 
     private static string LegLabel(int i) => i switch { 0 => "FL", 1 => "FR", 2 => "BL", _ => "BR" };

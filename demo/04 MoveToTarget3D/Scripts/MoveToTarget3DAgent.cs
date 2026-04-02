@@ -94,7 +94,7 @@ public partial class MoveToTarget3DAgent : RLAgent3D
     public override void DefineActions(ActionSpaceBuilder builder)
     {
         // Continuous 2D movement in [-1, 1] on the XZ plane
-        builder.AddContinuous("move", dimensions: 2);
+        builder.AddContinuous("move", 2);
     }
 
     protected override void OnActionsReceived(ActionBuffer actions)

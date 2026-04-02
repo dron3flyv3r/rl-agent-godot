@@ -1,10 +1,22 @@
 [gd_resource type="Resource" script_class="RLPolicyGroupConfig" format=3 uid="uid://b3ipgpbt331i1"]
 
+[ext_resource type="Script" uid="uid://oouep3l8683y" path="res://addons/rl-agent-plugin/Resources/Models/RLDenseLayerDef.cs" id="1_7gahy"]
 [ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl-agent-plugin/Resources/Config/RLPolicyGroupConfig.cs" id="1_ly7f4"]
+[ext_resource type="Script" uid="uid://covgl5skelf7g" path="res://addons/rl-agent-plugin/Resources/Models/RLNetworkGraph.cs" id="2_3l2sk"]
+
+[sub_resource type="Resource" id="Resource_i7nt8"]
+script = ExtResource("1_7gahy")
+
+[sub_resource type="Resource" id="Resource_4hqf3"]
+script = ExtResource("1_7gahy")
+
+[sub_resource type="Resource" id="Resource_uqkgb"]
+script = ExtResource("2_3l2sk")
+TrunkLayers = Array[Resource]([SubResource("Resource_i7nt8"), SubResource("Resource_4hqf3")])
 
 [resource]
 resource_name = "runners"
 script = ExtResource("1_ly7f4")
 AgentId = "runners"
 InferenceModelPath = "res://demo/02 MultiAgentSelfPlay/models/runners.rlmodel"
-StochasticInference = true
+NetworkGraph = SubResource("Resource_uqkgb")

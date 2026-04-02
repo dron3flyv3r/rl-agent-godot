@@ -62,8 +62,6 @@ This demo is the "hello world" of the plugin. Use it to verify your setup is wor
 - Try removing the distance observation and see how it affects learning speed — this shows the importance of informative observations.
 - Try removing the shaping reward (distance progress) and only rewarding goal-reaching — training will work but take much longer.
 
----
-
 ## Demo 02 — Multi-Agent Self-Play (TagDemo)
 
 **Scene:** `demo/02 MultiAgentSelfPlay/TagDemo.tscn` in the companion demo repository
@@ -372,6 +370,72 @@ RLDistributedConfig:
 
 ---
 
+## Demo 07 — Standalone HPO (ReachTargetHpoDemo)
+
+**Scene:** `demo/07 HPOBasic/ReachTargetHpoDemo.tscn`
+
+**Algorithm:** PPO (discrete actions) + HPO
+
+### What It Is
+
+A dedicated HPO scene based on the simple Reach Target task. This demo isolates hyperparameter optimization from the basic single-agent training demo so you can validate the HPO system without self-play or curriculum in the loop.
+
+### What It Shows
+
+- `RLHPOOrchestrator` attached directly under `RLAcademy`
+- `SearchSpace` configured with several trainer hyperparameters
+- `ObjectiveConfig` using a single policy-group source
+- Trial pruning and study progression in `RLDash`
+
+### Running It
+
+1. Open `ReachTargetHpoDemo.tscn`
+2. Click **Start Training**
+3. The academy runs an HPO study instead of a single training run
+
+### Recommended Use
+
+Use this scene when validating:
+
+- trial launch / shutdown
+- study-level metrics and dashboard views
+- basic objective scoring and pruning
+
+---
+
+## Demo 08 — Self-Play HPO (TagHpoDemo)
+
+**Scene:** `demo/08 HPOSelfPlay/TagHpoDemo.tscn`
+
+**Algorithm:** PPO (discrete actions) + Self-Play + HPO
+
+### What It Is
+
+A reduced 1v1 version of the Tag self-play setup, purpose-built for HPO. This scene keeps the competitive/self-play structure while lowering variance and compute cost compared with the full multi-runner Tag demo.
+
+### What It Shows
+
+- HPO running on a competitive self-play environment
+- Multi-source `ObjectiveConfig`
+- Balanced objective scoring using both `chasers` and `runners`
+- `Min` aggregation so a trial only scores well if both sides improve
+
+### Running It
+
+1. Open `TagHpoDemo.tscn`
+2. Click **Start Training**
+3. Watch the HPO dashboard views while trials run against the self-play setup
+
+### Recommended Use
+
+Use this scene when validating:
+
+- HPO objective aggregation across multiple policy groups
+- self-play behavior inside HPO trials
+- competitive study design before moving to larger self-play scenarios
+
+---
+
 ## Comparison Table
 
 | Demo | Dimensions | Actions | Algorithm | Difficulty | Key Feature |
@@ -381,6 +445,8 @@ RLDistributedConfig:
 | 03 Wall Climb | 3D | Continuous | PPO | Medium-Hard | Curriculum learning |
 | 04 Move to Target 3D | 3D | Continuous | PPO/SAC | Easy | 3D continuous control |
 | 05 Crawler | 3D | Continuous | SAC | Hard | Locomotion, proprioception |
+| 07 Reach Target HPO | 2D | Discrete | PPO + HPO | Easy | Standalone HPO |
+| 08 Tag Self-Play HPO | 2D | Discrete | PPO + Self-Play + HPO | Medium | Competitive HPO |
 
 ---
 
@@ -401,5 +467,7 @@ Start from the simplest demo that resembles your task:
 - **Competitive multiplayer** → start from Demo 02
 - **Gradually increasing difficulty** → start from Demo 03
 - **Locomotion or complex joints** → start from Demo 05
+- **Standalone hyperparameter search** → start from Demo 07
+- **Competitive self-play hyperparameter search** → start from Demo 08
 
 The key things to implement are `DefineActions()`, `CollectObservations()`, `OnActionsReceived()`, `OnStep()`, and `OnEpisodeBegin()`. Everything else is handled by the plugin.

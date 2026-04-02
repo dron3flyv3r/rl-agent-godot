@@ -21,21 +21,24 @@ Algorithm = SubResource("Resource_671jg")
 [sub_resource type="Resource" id="RunConfig_reach"]
 script = ExtResource("6_runcfg")
 RunPrefix = "ReachTargetDemo"
+SimulationSpeed = 2.0
 BatchSize = 32
 
+[sub_resource type="Resource" id="Resource_tox1n"]
+script = ExtResource("7_tox1n")
+
+[sub_resource type="Resource" id="Resource_tpj7a"]
+script = ExtResource("7_tox1n")
+
 [sub_resource type="Resource" id="Resource_y71jw"]
-script = ExtResource("7_tox1n")
-
-[sub_resource type="Resource" id="Resource_vep5f"]
-script = ExtResource("7_tox1n")
-
-[sub_resource type="Resource" id="Resource_m4w5g"]
 script = ExtResource("8_tpj7a")
+TrunkLayers = Array[Resource]([SubResource("Resource_tox1n"), SubResource("Resource_tpj7a")])
 
 [sub_resource type="Resource" id="Resource_dj21h"]
 resource_name = "reach_target"
 script = ExtResource("5_hx405")
 AgentId = "reach_target"
+InferenceModelPath = "uid://d2c8xjr6xw6et"
 metadata/_custom_type_script = "uid://bniwqapplki00"
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_cuwb5"]

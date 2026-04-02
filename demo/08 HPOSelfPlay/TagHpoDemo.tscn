@@ -1,0 +1,231 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://demo/02 MultiAgentSelfPlay/Scripts/TagArenaController.cs" id="1_arena"]
+[ext_resource type="Script" path="res://addons/rl-agent-plugin/Runtime/Core/RLAcademy.cs" id="2_academy"]
+[ext_resource type="Script" path="res://addons/rl-agent-plugin/Resources/Config/RLTrainingConfig.cs" id="3_traincfg"]
+[ext_resource type="Script" path="res://addons/rl-agent-plugin/Resources/Config/RLPPOConfig.cs" id="4_ppo"]
+[ext_resource type="Script" path="res://addons/rl-agent-plugin/Resources/Config/RLPolicyPairingConfig.cs" id="5_pairing"]
+[ext_resource type="Resource" path="res://demo/02 MultiAgentSelfPlay/models/chasers.tres" id="6_chasers"]
+[ext_resource type="Resource" path="res://demo/02 MultiAgentSelfPlay/models/runners.tres" id="7_runners"]
+[ext_resource type="Script" path="res://demo/02 MultiAgentSelfPlay/Scripts/TagPlayer.cs" id="8_player"]
+[ext_resource type="Script" path="res://demo/02 MultiAgentSelfPlay/Scripts/TagAgent.cs" id="9_agent"]
+[ext_resource type="Script" path="res://addons/rl-agent-plugin/Resources/Config/RLRunConfig.cs" id="10_runcfg"]
+[ext_resource type="Script" path="res://addons/rl-agent-plugin/Resources/Config/RLSelfPlayConfig.cs" id="11_selfplay"]
+[ext_resource type="Script" path="res://addons/rl-agent-plugin/Runtime/HPO/RLHPOOrchestrator.cs" id="12_orchestrator"]
+[ext_resource type="Script" path="res://addons/rl-agent-plugin/Resources/HPO/RLHPOParameter.cs" id="13_hpoparam"]
+[ext_resource type="Script" path="res://addons/rl-agent-plugin/Resources/HPO/RLHPOStudy.cs" id="14_hpostudy"]
+[ext_resource type="Script" path="res://addons/rl-agent-plugin/Resources/HPO/RLHPOObjectiveConfig.cs" id="15_objcfg"]
+[ext_resource type="Script" path="res://addons/rl-agent-plugin/Resources/HPO/RLHPOObjectiveSource.cs" id="16_objsrc"]
+
+[sub_resource type="Resource" id="PPOConfig"]
+script = ExtResource("4_ppo")
+Gamma = 0.97
+
+[sub_resource type="Resource" id="TrainingConfig"]
+script = ExtResource("3_traincfg")
+Algorithm = SubResource("PPOConfig")
+
+[sub_resource type="Resource" id="RunConfig_tag_hpo"]
+script = ExtResource("10_runcfg")
+RunPrefix = "TagHpoDemo"
+SimulationSpeed = 4.0
+BatchSize = 8
+ActionRepeat = 2
+CheckpointInterval = 20
+AsyncGradientUpdates = true
+
+[sub_resource type="Resource" id="SelfPlayPairing"]
+script = ExtResource("5_pairing")
+PairingId = "chasers_vs_runners_hpo"
+GroupA = ExtResource("6_chasers")
+GroupB = ExtResource("7_runners")
+
+[sub_resource type="Resource" id="SelfPlayConfig"]
+script = ExtResource("11_selfplay")
+Pairings = Array[ExtResource("5_pairing")]([SubResource("SelfPlayPairing")])
+
+[sub_resource type="Resource" id="HPOParam_learning_rate"]
+script = ExtResource("13_hpoparam")
+ParameterName = "LearningRate"
+Kind = 1
+Low = 0.0001
+High = 0.003
+
+[sub_resource type="Resource" id="HPOParam_gamma"]
+script = ExtResource("13_hpoparam")
+ParameterName = "Gamma"
+Low = 0.95
+High = 0.999
+
+[sub_resource type="Resource" id="HPOParam_entropy"]
+script = ExtResource("13_hpoparam")
+ParameterName = "EntropyCoefficient"
+Kind = 1
+Low = 0.0005
+High = 0.03
+
+[sub_resource type="Resource" id="HPOParam_minibatch"]
+script = ExtResource("13_hpoparam")
+ParameterName = "PpoMiniBatchSize"
+Kind = 2
+Low = 32.0
+High = 256.0
+
+[sub_resource type="Resource" id="ObjectiveSource_chasers"]
+script = ExtResource("16_objsrc")
+PolicyGroup = "chasers"
+
+[sub_resource type="Resource" id="ObjectiveSource_runners"]
+script = ExtResource("16_objsrc")
+PolicyGroup = "runners"
+
+[sub_resource type="Resource" id="ObjectiveConfig_tag_hpo"]
+script = ExtResource("15_objcfg")
+EvaluationWindow = 16
+Aggregation = 2
+Sources = Array[ExtResource("16_objsrc")]([SubResource("ObjectiveSource_chasers"), SubResource("ObjectiveSource_runners")])
+
+[sub_resource type="Resource" id="HPOStudy_tag_hpo"]
+script = ExtResource("14_hpostudy")
+StudyName = "tag_self_play_hpo"
+ObjectiveConfig = SubResource("ObjectiveConfig_tag_hpo")
+TrialBudget = 8
+MaxTrialSteps = 6000
+SamplerKind = 1
+PrunerKind = 1
+PruneAfterSteps = 4000
+PollIntervalSeconds = 3.0
+SearchSpace = Array[ExtResource("13_hpoparam")]([SubResource("HPOParam_learning_rate"), SubResource("HPOParam_gamma"), SubResource("HPOParam_entropy"), SubResource("HPOParam_minibatch")])
+
+[sub_resource type="CircleShape2D" id="PlayerCollision"]
+radius = 14.0
+
+[sub_resource type="LabelSettings" id="TitleSettings"]
+font_size = 22
+font_color = Color(0.968627, 0.976471, 0.956863, 1)
+
+[sub_resource type="LabelSettings" id="BodySettings"]
+font_size = 15
+font_color = Color(0.792157, 0.858824, 0.8, 1)
+
+[node name="TagHpoDemo" type="Node2D"]
+script = ExtResource("1_arena")
+ArenaMin = Vector2(92, 152)
+ArenaMax = Vector2(708, 516)
+TagRadius = 32.0
+SpawnMargin = 72.0
+MinimumSpawnSeparation = 128.0
+EpisodeStepLimit = 320
+ControlledAgent = 0
+
+[node name="Background" type="Polygon2D" parent="."]
+color = Color(0.0431373, 0.0901961, 0.0745098, 1)
+polygon = PackedVector2Array(0, 0, 800, 0, 800, 600, 0, 600)
+
+[node name="ArenaShadow" type="Polygon2D" parent="."]
+color = Color(0.0980392, 0.180392, 0.14902, 1)
+polygon = PackedVector2Array(78, 138, 722, 138, 722, 530, 78, 530)
+
+[node name="ArenaBackdrop" type="Polygon2D" parent="."]
+color = Color(0.0823529, 0.152941, 0.12549, 1)
+polygon = PackedVector2Array(92, 152, 708, 152, 708, 516, 92, 516)
+
+[node name="ArenaBorder" type="Line2D" parent="."]
+points = PackedVector2Array(92, 152, 708, 152, 708, 516, 92, 516, 92, 152)
+width = 4.0
+default_color = Color(0.596078, 0.882353, 0.65098, 1)
+
+[node name="CenterGlow" type="Line2D" parent="."]
+points = PackedVector2Array(400, 152, 400, 516)
+width = 42.0
+default_color = Color(0.352941, 0.596078, 0.423529, 0.12)
+
+[node name="CenterLine" type="Line2D" parent="."]
+points = PackedVector2Array(400, 152, 400, 516)
+width = 2.0
+default_color = Color(0.34902, 0.596078, 0.423529, 1)
+
+[node name="Academy" type="Node" parent="."]
+script = ExtResource("2_academy")
+TrainingConfig = SubResource("TrainingConfig")
+MaxEpisodeSteps = 320
+RunConfig = SubResource("RunConfig_tag_hpo")
+SelfPlay = SubResource("SelfPlayConfig")
+
+[node name="RLHPOOrchestrator" type="Node" parent="Academy"]
+script = ExtResource("12_orchestrator")
+Study = SubResource("HPOStudy_tag_hpo")
+
+[node name="ChaserA" type="CharacterBody2D" parent="."]
+position = Vector2(238, 334)
+script = ExtResource("8_player")
+Role = 0
+
+[node name="Agent" type="Node2D" parent="ChaserA"]
+script = ExtResource("9_agent")
+PolicyGroupConfig = ExtResource("6_chasers")
+
+[node name="Visual" type="Polygon2D" parent="ChaserA"]
+color = Color(0.937255, 0.4, 0.364706, 1)
+polygon = PackedVector2Array(0, -16, 14, 0, 0, 16, -14, 0)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="ChaserA"]
+shape = SubResource("PlayerCollision")
+
+[node name="RunnerA" type="CharacterBody2D" parent="."]
+position = Vector2(562, 334)
+script = ExtResource("8_player")
+
+[node name="Agent" type="Node2D" parent="RunnerA"]
+script = ExtResource("9_agent")
+PolicyGroupConfig = ExtResource("7_runners")
+
+[node name="Visual" type="Polygon2D" parent="RunnerA"]
+color = Color(0.298039, 0.741176, 0.941176, 1)
+polygon = PackedVector2Array(-14, -14, 14, -14, 14, 14, -14, 14)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="RunnerA"]
+shape = SubResource("PlayerCollision")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="Panel" type="PanelContainer" parent="CanvasLayer"]
+offset_left = 24.0
+offset_top = 24.0
+offset_right = 776.0
+offset_bottom = 164.0
+
+[node name="Margin" type="MarginContainer" parent="CanvasLayer/Panel"]
+layout_mode = 2
+theme_override_constants/margin_left = 22
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 22
+theme_override_constants/margin_bottom = 18
+
+[node name="VBox" type="VBoxContainer" parent="CanvasLayer/Panel/Margin"]
+layout_mode = 2
+
+[node name="TitleLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox"]
+layout_mode = 2
+text = "Tag HPO Self-Play Demo"
+label_settings = SubResource("TitleSettings")
+
+[node name="ModeLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox"]
+layout_mode = 2
+text = "1v1 self-play HPO: objective uses both `chasers` and `runners`."
+label_settings = SubResource("BodySettings")
+
+[node name="StatusLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox"]
+layout_mode = 2
+text = "Aggregation = Min so a trial only scores well when both sides improve."
+label_settings = SubResource("BodySettings")
+
+[node name="FooterLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox"]
+custom_minimum_size = Vector2(0.025, 0)
+layout_mode = 2
+text = "Use this scene to validate HPO with competitive self-play without the full multi-runner Tag setup."
+label_settings = SubResource("BodySettings")
+autowrap_mode = 3
+
+[node name="Camera2D" type="Camera2D" parent="."]
+offset = Vector2(400, 300)

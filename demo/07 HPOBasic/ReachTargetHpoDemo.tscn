@@ -1,0 +1,215 @@
+[gd_scene format=3 uid="uid://dh2em48u0hpjy"]
+
+[ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl-agent-plugin/Runtime/Core/RLAcademy.cs" id="1_academy"]
+[ext_resource type="Script" uid="uid://ire111rjxew5" path="res://addons/rl-agent-plugin/Resources/Config/RLPPOConfig.cs" id="2_ppo"]
+[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl-agent-plugin/Resources/Config/RLTrainingConfig.cs" id="3_traincfg"]
+[ext_resource type="Script" uid="uid://c4u7ptb63mnta" path="res://demo/02 MultiAgentSelfPlay/Scripts/ReachTargetPlayer.cs" id="4_player"]
+[ext_resource type="Script" uid="uid://erru8n4gpbsv" path="res://demo/01 SingleAgent/Scripts/ReachTargetAgent.cs" id="5_agent"]
+[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl-agent-plugin/Resources/Config/RLPolicyGroupConfig.cs" id="6_groupcfg"]
+[ext_resource type="Script" uid="uid://obl1fuohtv2q" path="res://addons/rl-agent-plugin/Runtime/HPO/RLHPOOrchestrator.cs" id="7_orchestrator"]
+[ext_resource type="Script" uid="uid://dqp3hq861elrq" path="res://addons/rl-agent-plugin/Resources/HPO/RLHPOParameter.cs" id="8_hpoparam"]
+[ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl-agent-plugin/Resources/Config/RLRunConfig.cs" id="9_runcfg"]
+[ext_resource type="Script" uid="uid://s3aben22vk8d" path="res://addons/rl-agent-plugin/Resources/HPO/RLHPOStudy.cs" id="10_hpostudy"]
+[ext_resource type="Script" uid="uid://bcwns40kdlqfq" path="res://addons/rl-agent-plugin/Resources/HPO/RLHPOObjectiveConfig.cs" id="11_objcfg"]
+[ext_resource type="Script" uid="uid://lv4sxut6b01m" path="res://addons/rl-agent-plugin/Resources/HPO/RLHPOObjectiveSource.cs" id="12_objsrc"]
+[ext_resource type="Script" uid="uid://oouep3l8683y" path="res://addons/rl-agent-plugin/Resources/Models/RLDenseLayerDef.cs" id="13_layer"]
+[ext_resource type="Script" uid="uid://covgl5skelf7g" path="res://addons/rl-agent-plugin/Resources/Models/RLNetworkGraph.cs" id="14_graph"]
+
+[sub_resource type="Resource" id="PPOConfig"]
+script = ExtResource("2_ppo")
+EpochsPerUpdate = 3
+
+[sub_resource type="Resource" id="TrainingConfig"]
+script = ExtResource("3_traincfg")
+Algorithm = SubResource("PPOConfig")
+
+[sub_resource type="Resource" id="RunConfig_hpo"]
+script = ExtResource("9_runcfg")
+RunPrefix = "ReachTargetHpoDemo"
+BatchSize = 32
+
+[sub_resource type="Resource" id="ObjectiveSource_reach_target"]
+script = ExtResource("12_objsrc")
+PolicyGroup = "reach_target"
+
+[sub_resource type="Resource" id="ObjectiveConfig_reach_target"]
+script = ExtResource("11_objcfg")
+EvaluationWindow = 12
+Sources = Array[ExtResource("12_objsrc")]([SubResource("ObjectiveSource_reach_target")])
+
+[sub_resource type="Resource" id="HPOParam_learning_rate"]
+script = ExtResource("8_hpoparam")
+ParameterName = "LearningRate"
+Low = 0.001
+High = 0.003
+
+[sub_resource type="Resource" id="HPOParam_gamma"]
+script = ExtResource("8_hpoparam")
+ParameterName = "Gamma"
+Low = 0.97
+High = 0.999
+
+[sub_resource type="Resource" id="HPOParam_entropy"]
+script = ExtResource("8_hpoparam")
+ParameterName = "EntropyCoefficient"
+Low = 0.0005
+High = 0.03
+
+[sub_resource type="Resource" id="HPOParam_minibatch"]
+script = ExtResource("8_hpoparam")
+ParameterName = "PpoMiniBatchSize"
+Kind = 2
+Low = 16.0
+High = 128.0
+
+[sub_resource type="Resource" id="HPOStudy_reach_target"]
+script = ExtResource("10_hpostudy")
+StudyName = "reach_target_hpo"
+ObjectiveConfig = SubResource("ObjectiveConfig_reach_target")
+TrialBudget = 12
+MaxTrialSteps = 8000
+PruneAfterSteps = 2500
+PollIntervalSeconds = 2.0
+SearchSpace = Array[ExtResource("8_hpoparam")]([SubResource("HPOParam_learning_rate"), SubResource("HPOParam_gamma"), SubResource("HPOParam_entropy"), SubResource("HPOParam_minibatch")])
+
+[sub_resource type="Resource" id="Layer_a"]
+script = ExtResource("13_layer")
+
+[sub_resource type="Resource" id="Layer_b"]
+script = ExtResource("13_layer")
+
+[sub_resource type="Resource" id="NetworkGraph"]
+script = ExtResource("14_graph")
+TrunkLayers = Array[Resource]([SubResource("Layer_a"), SubResource("Layer_b")])
+
+[sub_resource type="Resource" id="PolicyGroupConfig"]
+resource_name = "reach_target"
+script = ExtResource("6_groupcfg")
+AgentId = "reach_target"
+NetworkGraph = SubResource("NetworkGraph")
+
+[sub_resource type="CircleShape2D" id="PlayerCollision"]
+
+[sub_resource type="LabelSettings" id="TitleSettings"]
+font_size = 22
+font_color = Color(0.972549, 0.980392, 0.988235, 1)
+
+[sub_resource type="LabelSettings" id="BodySettings"]
+font_size = 15
+font_color = Color(0.796078, 0.835294, 0.882353, 1)
+
+[node name="ReachTargetHpoDemo" type="Node2D" unique_id=1043711834]
+
+[node name="Academy" type="Node" parent="." unique_id=2084037069]
+script = ExtResource("1_academy")
+TrainingConfig = SubResource("TrainingConfig")
+MaxEpisodeSteps = 48
+RunConfig = SubResource("RunConfig_hpo")
+
+[node name="RLHPOOrchestrator" type="Node" parent="Academy" unique_id=1891752593]
+script = ExtResource("7_orchestrator")
+Study = SubResource("HPOStudy_reach_target")
+
+[node name="Background" type="Polygon2D" parent="." unique_id=1831356710]
+color = Color(0.0470588, 0.0823529, 0.129412, 1)
+polygon = PackedVector2Array(0, 0, 800, 0, 800, 600, 0, 600)
+
+[node name="LanePanel" type="Polygon2D" parent="." unique_id=948195874]
+color = Color(0.0901961, 0.160784, 0.231373, 1)
+polygon = PackedVector2Array(72, 196, 728, 196, 728, 500, 72, 500)
+
+[node name="LaneBorder" type="Line2D" parent="." unique_id=997181108]
+points = PackedVector2Array(72, 196, 728, 196, 728, 500, 72, 500, 72, 196)
+width = 3.0
+default_color = Color(0.352941, 0.537255, 0.682353, 1)
+begin_cap_mode = 1
+end_cap_mode = 1
+
+[node name="TrackGlow" type="Line2D" parent="." unique_id=1468304210]
+points = PackedVector2Array(126, 338, 674, 338)
+width = 56.0
+default_color = Color(0.376471, 0.643137, 0.866667, 0.1)
+
+[node name="Track" type="Line2D" parent="." unique_id=956771763]
+points = PackedVector2Array(126, 338, 674, 338)
+default_color = Color(0.584314, 0.694118, 0.784314, 1)
+
+[node name="StartCap" type="Line2D" parent="." unique_id=486295335]
+points = PackedVector2Array(126, 304, 126, 372)
+width = 5.0
+default_color = Color(0.317647, 0.505882, 0.658824, 1)
+
+[node name="EndCap" type="Line2D" parent="." unique_id=1479868100]
+points = PackedVector2Array(674, 304, 674, 372)
+width = 5.0
+default_color = Color(0.317647, 0.505882, 0.658824, 1)
+
+[node name="GoalMarker" type="Node2D" parent="." unique_id=1786982231]
+position = Vector2(548, 338)
+
+[node name="GoalHalo" type="Polygon2D" parent="GoalMarker" unique_id=138034879]
+color = Color(1, 0.819608, 0.4, 0.18)
+polygon = PackedVector2Array(0, -28, 28, 0, 0, 28, -28, 0)
+
+[node name="GoalVisual" type="Polygon2D" parent="GoalMarker" unique_id=388843594]
+color = Color(1, 0.819608, 0.4, 1)
+polygon = PackedVector2Array(0, -14, 14, 0, 0, 14, -14, 0)
+
+[node name="Player" type="CharacterBody2D" parent="." unique_id=730312879]
+position = Vector2(400, 338)
+script = ExtResource("4_player")
+
+[node name="Agent" type="Node2D" parent="Player" unique_id=1254209082]
+script = ExtResource("5_agent")
+PolicyGroupConfig = SubResource("PolicyGroupConfig")
+
+[node name="BodyVisual" type="Polygon2D" parent="Player" unique_id=1745234874]
+color = Color(0.34902, 0.854902, 0.980392, 1)
+polygon = PackedVector2Array(-16, -16, 16, -16, 16, 16, -16, 16)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Player" unique_id=1534840645]
+shape = SubResource("PlayerCollision")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=620497423]
+
+[node name="Panel" type="PanelContainer" parent="CanvasLayer" unique_id=480032231]
+offset_left = 24.0
+offset_top = 24.0
+offset_right = 776.0
+offset_bottom = 172.0
+
+[node name="Margin" type="MarginContainer" parent="CanvasLayer/Panel" unique_id=535567069]
+layout_mode = 2
+theme_override_constants/margin_left = 22
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 22
+theme_override_constants/margin_bottom = 20
+
+[node name="VBox" type="VBoxContainer" parent="CanvasLayer/Panel/Margin" unique_id=1784509339]
+layout_mode = 2
+
+[node name="TitleLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=530151462]
+layout_mode = 2
+text = "Reach Target HPO Demo"
+label_settings = SubResource("TitleSettings")
+
+[node name="ObsLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=197846952]
+layout_mode = 2
+text = "Standalone HPO example: one policy group scored by mean episode reward."
+label_settings = SubResource("BodySettings")
+
+[node name="ActionLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=227053270]
+layout_mode = 2
+text = "Search space: LearningRate, Gamma, EntropyCoefficient, and PpoMiniBatchSize."
+label_settings = SubResource("BodySettings")
+
+[node name="DistanceLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=279999803]
+layout_mode = 2
+text = "Start Training to run the study instead of a single training session."
+label_settings = SubResource("BodySettings")
+
+[node name="FooterLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=931265045]
+layout_mode = 2
+text = "Use this scene to validate basic HPO behavior without self-play or curriculum."
+label_settings = SubResource("BodySettings")
+autowrap_mode = 3
