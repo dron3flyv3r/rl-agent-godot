@@ -1,8 +1,9 @@
 using Godot;
+using RlAgentPlugin.Runtime;
 
 namespace RlAgentPlugin.Demo;
 
-public partial class WallClimbArenaController : Node3D
+public partial class WallClimbArenaController : Node3D, IRLCurriculumConsumer
 {
     [Export] public float WallHeightMin { get; set; } = 0f;
     [Export] public float WallHeightMax { get; set; } = 3.0f;
@@ -59,7 +60,7 @@ public partial class WallClimbArenaController : Node3D
         CaptureWallAnchor();
     }
 
-    public void ApplyCurriculumProgress(float p)
+    public void NotifyCurriculumProgress(float p)
     {
         CurriculumProgress = Mathf.Clamp(p, 0f, 1f);
         SetWallHeight(Mathf.Lerp(WallHeightMin, WallHeightMax, CurriculumProgress));

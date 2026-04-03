@@ -20,6 +20,7 @@ config/icon="res://icon.svg"
 window/size/viewport_width=800
 window/size/viewport_height=600
 window/stretch/mode="viewport"
+window/vsync/vsync_mode=0
 
 [dotnet]
 
@@ -35,5 +36,4 @@ enabled=PackedStringArray("res://addons/rl-agent-plugin/plugin.cfg")
 
 [rendering]
 
-rendering_device/driver.windows="d3d12"
 viewport/transparent_background=true

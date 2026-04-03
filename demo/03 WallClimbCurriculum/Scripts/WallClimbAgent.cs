@@ -137,9 +137,4 @@ public partial class WallClimbAgent : RLAgent3D
         _pushBox ??= _arena?.GetNodeOrNull<RigidBody3D>("PushBox");
         _arena?.HandleAgentEpisodeBegin();
     }
-
-    public override void OnTrainingProgress(float progress)
-    {
-        _arena?.ApplyCurriculumProgress(progress);
-    }
 }
