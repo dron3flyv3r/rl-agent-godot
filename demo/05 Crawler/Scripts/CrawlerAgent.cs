@@ -23,9 +23,11 @@ namespace RlAgentPlugin.Demo;
 ///
 /// REWARD BREAKDOWN:
 ///   forward_vel — torso velocity in +X (walk direction); main training signal
-///   upright     — bonus when Basis.Y·Up > 0.5; discourages tipping
+///   upright     — small bonus for staying aligned while also making forward progress
+///   stall       — penalty when the body is upright but not translating forward
 ///   side_slip   — penalty for wasting motion laterally in Z
 ///   energy      — penalty proportional to mean squared joint command
+///   fall        — terminal penalty when the torso collapses below the height threshold
 ///
 /// TERMINATION:
 ///   Torso Y drops below CollapseHeight (creature fell or tipped irrecoverably).
@@ -103,30 +105,37 @@ public partial class CrawlerAgent : RLAgent3D
         if (_body is null) return;
 
         var torso = _body.Torso;
+        var forwardSpeed = torso.LinearVelocity.X;
+        var uprightDot = torso.GlobalBasis.Y.Dot(Vector3.Up);
 
         // Forward velocity in +X is the primary training signal.
-        // Doubled scale so locomotion dominates over upright-only strategies.
-        AddReward(torso.LinearVelocity.X * 0.1f, "forward_vel");
+        AddReward(forwardSpeed * 0.15f, "forward_vel");
 
-        // Upright bonus: smooth gradient above 0.5 alignment to discourage tipping.
-        var uprightDot = torso.GlobalBasis.Y.Dot(Vector3.Up);
-        if (uprightDot > 0.5f)
-            AddReward((uprightDot - 0.5f) * 0.05f, "upright");
+        // Reward posture only when it supports actual locomotion instead of standing still.
+        if (uprightDot > 0.65f && forwardSpeed > 0.05f)
+            AddReward((uprightDot - 0.65f) * 0.015f, "upright");
+
+        // Explicitly punish the "stand upright and do nothing" local minimum.
+        if (uprightDot > 0.9f && Mathf.Abs(forwardSpeed) < 0.04f)
+            AddReward(-0.003f, "stall");
 
         // Penalize side-scrubbing so the policy favors forward gaits over noisy flailing.
-        AddReward(-Mathf.Abs(torso.LinearVelocity.Z) * 0.02f, "side_slip");
+        AddReward(-Mathf.Abs(torso.LinearVelocity.Z) * 0.01f, "side_slip");
 
         // Energy penalty: discourages unnecessary motor activity and aids smooth gaits.
         var meanSqAction = 0f;
         foreach (var a in _lastActions) meanSqAction += a * a;
-        AddReward(-(meanSqAction / 8f) * 0.005f, "energy");
+        AddReward(-(meanSqAction / 8f) * 0.004f, "energy");
 
         // NOTE: alive bonus removed — it rewarded doing nothing (standing still upright
         // was near-optimal), trapping the policy in a local minimum with no locomotion.
 
         // Terminate when the torso is too close to the ground (tipped/collapsed).
         if (torso.GlobalPosition.Y < CollapseHeight)
+        {
+            AddReward(-1.0f, "fall");
             EndEpisode();
+        }
     }
 
     public override void OnEpisodeBegin()

@@ -23,7 +23,9 @@ public partial class Main : Node
         LogHeader(startedAt);
 
         TestClassAvailability();
+        TestWizardDefaultsHelpers();
         TestDenseLayer();
+        TestAdamWLayer();
         TestLayerNormLayer();
         TestLstmLayer();
         TestGruLayer();
@@ -47,6 +49,34 @@ public partial class Main : Node
                 return "instantiation ok";
             });
         }
+    }
+
+    private void TestWizardDefaultsHelpers()
+    {
+        RunTest("Wizard sanitize identifier", () =>
+        {
+            var sanitized = Runtime.RLSetupWizardDefaults.SanitizeIdentifier("Boss Agent#1");
+            Ensure(sanitized == "bossagent1", $"Expected 'bossagent1', got '{sanitized}'.");
+            return sanitized;
+        });
+
+        RunTest("Wizard unique identifier suffix", () =>
+        {
+            var unique = Runtime.RLSetupWizardDefaults.MakeUniqueIdentifier(
+                "Agent",
+                new[] { "agent", "agent_2", "runner" });
+            Ensure(unique == "agent_3", $"Expected 'agent_3', got '{unique}'.");
+            return unique;
+        });
+
+        RunTest("Wizard unique file name suffix", () =>
+        {
+            var unique = Runtime.RLSetupWizardDefaults.MakeUniqueFileName(
+                "TagDemo.runner.policy.tres",
+                new[] { "TagDemo.runner.policy.tres", "TagDemo.runner.policy_2.tres" });
+            Ensure(unique == "TagDemo.runner.policy_3.tres", $"Expected 'TagDemo.runner.policy_3.tres', got '{unique}'.");
+            return unique;
+        });
     }
 
     private void TestDenseLayer()
@@ -220,6 +250,121 @@ public partial class Main : Node
             ReleaseGodotObject(dense);
             ReleaseGodotObject(denseCopy);
             ReleaseGodotObject(denseSource);
+        }
+    }
+
+    private void TestAdamWLayer()
+    {
+        GodotObject? adamw = null;
+        GodotObject? adam  = null;
+
+        try
+        {
+            var inputA  = new float[] { 0.2f, -0.1f, 0.5f, 1.0f };
+            var outGrad = new float[] { 0.8f, -0.4f, 0.3f };
+
+            RunTest("AdamW backward changes output", () =>
+            {
+                adamw = RequireInstance("RlDenseLayer");
+                adamw.Call("initialize", 4, 3, 1, 2);  // optimizer=2 = AdamW
+                adamw.Call("set_weight_decay", 0.01f);
+
+                var before = RequireFloatArray(adamw.Call("forward", inputA));
+                _ = RequireFloatArray(adamw.Call("forward", inputA));
+                _ = RequireFloatArray(adamw.Call("backward", outGrad, 0.002f, 1.0f));
+                var after = RequireFloatArray(adamw.Call("forward", inputA));
+                var delta = MaxAbsDiff(before, after);
+                Ensure(delta > 1e-7f, "Expected output to change after AdamW backward.");
+                return $"max_abs_delta={delta.ToString("0.######", CultureInfo.InvariantCulture)}";
+            });
+
+            RunTest("AdamW apply_gradients changes output", () =>
+            {
+                adamw ??= RequireInstance("RlDenseLayer");
+                adamw.Call("initialize", 4, 3, 1, 2);
+                adamw.Call("set_weight_decay", 0.01f);
+
+                var before     = RequireFloatArray(adamw.Call("forward", inputA));
+                Variant gradBuf = adamw.Call("create_gradient_buffer");
+                _ = AccumulateWithBuffer(adamw, outGrad, ref gradBuf);
+                adamw.Call("apply_gradients", gradBuf, 0.002f, 1.0f);
+                var after = RequireFloatArray(adamw.Call("forward", inputA));
+                var delta = MaxAbsDiff(before, after);
+                Ensure(delta > 1e-7f, "Expected output to change after AdamW apply_gradients.");
+                return $"max_abs_delta={delta.ToString("0.######", CultureInfo.InvariantCulture)}";
+            });
+
+            RunTest("AdamW weight decay reduces weight norm vs Adam", () =>
+            {
+                // Two identical layers (no activation for clean norm comparison).
+                adam  = RequireInstance("RlDenseLayer");
+                adamw = RequireInstance("RlDenseLayer");
+                adam.Call("initialize",  4, 3, 0, 0);  // Adam,  no activation
+                adamw.Call("initialize", 4, 3, 0, 2);  // AdamW, no activation
+                adamw.Call("set_weight_decay", 0.1f);
+
+                // Copy Adam's initial weights into AdamW so both start identical.
+                var weights = adam.Call("get_weights");
+                var shapes  = adam.Call("get_shapes");
+                adamw.Call("set_weights", weights, shapes);
+
+                // Run the same gradient steps on both.
+                var stepInput   = new float[] { 0.5f, -0.3f, 0.4f, 0.8f };
+                var stepOutGrad = new float[] { 0.5f, -0.3f, 0.4f };
+                for (var i = 0; i < 30; i++)
+                {
+                    _ = RequireFloatArray(adam.Call("forward",  stepInput));
+                    _ = RequireFloatArray(adamw.Call("forward", stepInput));
+                    _ = RequireFloatArray(adam.Call("backward",  stepOutGrad, 0.01f, 1.0f));
+                    _ = RequireFloatArray(adamw.Call("backward", stepOutGrad, 0.01f, 1.0f));
+                }
+
+                var wAdam  = RequireFloatArray(adam.Call("get_weights"));
+                var wAdamW = RequireFloatArray(adamw.Call("get_weights"));
+                var normAdam  = L2Norm(wAdam);
+                var normAdamW = L2Norm(wAdamW);
+                Ensure(normAdamW < normAdam,
+                    $"Expected AdamW weight norm ({normAdamW.ToString("0.####", CultureInfo.InvariantCulture)}) " +
+                    $"< Adam weight norm ({normAdam.ToString("0.####", CultureInfo.InvariantCulture)}) with wd=0.1.");
+                return $"norm_adam={normAdam.ToString("0.####", CultureInfo.InvariantCulture)} norm_adamw={normAdamW.ToString("0.####", CultureInfo.InvariantCulture)}";
+            });
+
+            RunTest("AdamW biases not decayed (match Adam biases within threshold)", () =>
+            {
+                // With wd applied only to weights, biases should evolve the same as standard Adam.
+                adam  = RequireInstance("RlDenseLayer");
+                adamw = RequireInstance("RlDenseLayer");
+                adam.Call("initialize",  4, 3, 0, 0);
+                adamw.Call("initialize", 4, 3, 0, 2);
+                adamw.Call("set_weight_decay", 0.5f);   // large wd to amplify any accidental bias decay
+
+                var weights = adam.Call("get_weights");
+                var shapes  = adam.Call("get_shapes");
+                adamw.Call("set_weights", weights, shapes);
+
+                // One update step with an all-ones input so bias grad == outGrad.
+                var onesInput   = new float[] { 1f, 1f, 1f, 1f };
+                var stepOutGrad = new float[] { 0.5f, -0.3f, 0.4f };
+                _ = RequireFloatArray(adam.Call("forward",  onesInput));
+                _ = RequireFloatArray(adamw.Call("forward", onesInput));
+                _ = RequireFloatArray(adam.Call("backward",  stepOutGrad, 0.01f, 1.0f));
+                _ = RequireFloatArray(adamw.Call("backward", stepOutGrad, 0.01f, 1.0f));
+
+                // Bias values live at the END of get_weights() — last 3 floats for a 4→3 layer.
+                var wAdam  = RequireFloatArray(adam.Call("get_weights"));
+                var wAdamW = RequireFloatArray(adamw.Call("get_weights"));
+                var bAdam  = new float[] { wAdam[wAdam.Length - 3],  wAdam[wAdam.Length - 2],  wAdam[wAdam.Length - 1]  };
+                var bAdamW = new float[] { wAdamW[wAdamW.Length - 3], wAdamW[wAdamW.Length - 2], wAdamW[wAdamW.Length - 1] };
+                var maxBiasDiff = MaxAbsDiff(bAdam, bAdamW);
+                Ensure(maxBiasDiff < 1e-6f,
+                    $"Biases differ between Adam and AdamW (max_diff={maxBiasDiff.ToString("0.######", CultureInfo.InvariantCulture)}); biases should not be decayed.");
+                return $"max_bias_diff={maxBiasDiff.ToString("0.######", CultureInfo.InvariantCulture)}";
+            });
+        }
+        finally
+        {
+            ReleaseGodotObject(adamw);
+            ReleaseGodotObject(adam);
         }
     }
 
@@ -573,6 +718,7 @@ public partial class Main : Node
                 var payload = RequireArray(gru.Call(
                     "accumulate_sequence_gradients",
                     new float[] { 0.2f, -0.1f, -0.3f, 0.15f },
+                    2,
                     gradBuffer,
                     h0));
                 Ensure(payload.Count == 2, "GRU accumulate_sequence_gradients returned invalid payload.");
@@ -596,6 +742,7 @@ public partial class Main : Node
                 var payload = RequireArray(gru.Call(
                     "accumulate_sequence_gradients",
                     new float[] { 0.3f, -0.2f, 0.1f, 0.05f },
+                    2,
                     gradBuffer,
                     h0));
                 gradBuffer = (Variant)RequireFloatArray((Variant)payload[1]);
@@ -1010,6 +1157,14 @@ public partial class Main : Node
             if (d > max) max = d;
         }
         return max;
+    }
+
+    private static float L2Norm(float[] a)
+    {
+        var sum = 0f;
+        for (var i = 0; i < a.Length; i++)
+            sum += a[i] * a[i];
+        return Mathf.Sqrt(sum);
     }
 
     private static float MaxAbs(float[] a)
