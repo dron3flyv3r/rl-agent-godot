@@ -9,6 +9,8 @@
 [ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl-agent-plugin/Resources/Config/RLRunConfig.cs" id="5_runcfg"]
 [ext_resource type="Script" uid="uid://do7qa2y5uje2v" path="res://demo/04 MoveToTarget3D/Scripts/MoveToTarget3DPlayer.cs" id="6_player"]
 [ext_resource type="Script" uid="uid://w0fm3b0ljdgi" path="res://demo/04 MoveToTarget3D/Scripts/MoveToTarget3DAgent.cs" id="7_agent"]
+[ext_resource type="Script" uid="uid://oouep3l8683y" path="res://addons/rl-agent-plugin/Resources/Models/RLDenseLayerDef.cs" id="9_5k1sj"]
+[ext_resource type="Script" uid="uid://covgl5skelf7g" path="res://addons/rl-agent-plugin/Resources/Models/RLNetworkGraph.cs" id="10_wvbox"]
 
 [sub_resource type="Resource" id="Resource_i24df"]
 script = ExtResource("2_ci1xl")
@@ -68,11 +70,22 @@ albedo_color = Color(0.2, 0.4, 1, 1)
 radius = 0.3
 height = 0.8
 
+[sub_resource type="Resource" id="Resource_u3mxr"]
+script = ExtResource("9_5k1sj")
+
+[sub_resource type="Resource" id="Resource_saybe"]
+script = ExtResource("9_5k1sj")
+
+[sub_resource type="Resource" id="Resource_63wvi"]
+script = ExtResource("10_wvbox")
+TrunkLayers = Array[Resource]([SubResource("Resource_u3mxr"), SubResource("Resource_saybe")])
+
 [sub_resource type="Resource" id="PolicyGroupConfig"]
 resource_name = "mtt3d"
 script = ExtResource("3_pgcfg")
 AgentId = "mtt3d"
 InferenceModelPath = "uid://2q0h3iy84hbk"
+NetworkGraph = SubResource("Resource_63wvi")
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 

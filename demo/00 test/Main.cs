@@ -26,6 +26,7 @@ public partial class Main : Node
         TestWizardDefaultsHelpers();
         TestDenseLayer();
         TestAdamWLayer();
+        TestRMSPropLayer();
         TestLayerNormLayer();
         TestLstmLayer();
         TestGruLayer();
@@ -364,6 +365,117 @@ public partial class Main : Node
         finally
         {
             ReleaseGodotObject(adamw);
+            ReleaseGodotObject(adam);
+        }
+    }
+
+    private void TestRMSPropLayer()
+    {
+        GodotObject? rmsprop = null;
+        GodotObject? adam    = null;
+
+        try
+        {
+            var inputA  = new float[] { 0.2f, -0.1f, 0.5f, 1.0f };
+            var outGrad = new float[] { 0.8f, -0.4f, 0.3f };
+
+            RunTest("RMSProp backward changes output", () =>
+            {
+                rmsprop = RequireInstance("RlDenseLayer");
+                rmsprop.Call("initialize", 4, 3, 1, 3);  // optimizer=3 = RMSProp
+
+                var before = RequireFloatArray(rmsprop.Call("forward", inputA));
+                _ = RequireFloatArray(rmsprop.Call("forward", inputA));
+                _ = RequireFloatArray(rmsprop.Call("backward", outGrad, 0.002f, 1.0f));
+                var after = RequireFloatArray(rmsprop.Call("forward", inputA));
+                var delta = MaxAbsDiff(before, after);
+                Ensure(delta > 1e-7f, "Expected output to change after RMSProp backward.");
+                return $"max_abs_delta={delta.ToString("0.######", CultureInfo.InvariantCulture)}";
+            });
+
+            RunTest("RMSProp apply_gradients changes output", () =>
+            {
+                rmsprop ??= RequireInstance("RlDenseLayer");
+                rmsprop.Call("initialize", 4, 3, 1, 3);
+
+                var before      = RequireFloatArray(rmsprop.Call("forward", inputA));
+                Variant gradBuf = rmsprop.Call("create_gradient_buffer");
+                _ = AccumulateWithBuffer(rmsprop, outGrad, ref gradBuf);
+                rmsprop.Call("apply_gradients", gradBuf, 0.002f, 1.0f);
+                var after = RequireFloatArray(rmsprop.Call("forward", inputA));
+                var delta = MaxAbsDiff(before, after);
+                Ensure(delta > 1e-7f, "Expected output to change after RMSProp apply_gradients.");
+                return $"max_abs_delta={delta.ToString("0.######", CultureInfo.InvariantCulture)}";
+            });
+
+            RunTest("RMSProp variance accumulation reduces effective step size", () =>
+            {
+                // With a fixed gradient, RMSProp step size shrinks as variance accumulates.
+                // Early step should be larger than a later step taken with the same gradient.
+                rmsprop = RequireInstance("RlDenseLayer");
+                rmsprop.Call("initialize", 4, 3, 0, 3);  // no activation for clean measurement
+
+                var stepInput   = new float[] { 1f, 0f, 0f, 0f };
+                var stepOutGrad = new float[] { 1f, 0f, 0f };
+
+                _ = RequireFloatArray(rmsprop.Call("forward", stepInput));
+                var w0 = RequireFloatArray(rmsprop.Call("get_weights"));
+                _ = RequireFloatArray(rmsprop.Call("backward", stepOutGrad, 0.1f, 1.0f));
+                var w1 = RequireFloatArray(rmsprop.Call("get_weights"));
+                var step1 = Mathf.Abs(w1[0] - w0[0]);
+
+                // Run 50 more identical steps to build up variance.
+                for (var i = 0; i < 50; i++)
+                {
+                    _ = RequireFloatArray(rmsprop.Call("forward", stepInput));
+                    _ = RequireFloatArray(rmsprop.Call("backward", stepOutGrad, 0.1f, 1.0f));
+                }
+
+                var wN = RequireFloatArray(rmsprop.Call("get_weights"));
+                _ = RequireFloatArray(rmsprop.Call("forward", stepInput));
+                var wN1 = RequireFloatArray(rmsprop.Call("get_weights"));
+                _ = RequireFloatArray(rmsprop.Call("backward", stepOutGrad, 0.1f, 1.0f));
+                var wN2 = RequireFloatArray(rmsprop.Call("get_weights"));
+                var stepN = Mathf.Abs(wN2[0] - wN1[0]);
+
+                Ensure(stepN < step1,
+                    $"Expected later RMSProp step ({stepN.ToString("0.######", CultureInfo.InvariantCulture)}) " +
+                    $"< first step ({step1.ToString("0.######", CultureInfo.InvariantCulture)}) as variance accumulates.");
+                return $"step1={step1.ToString("0.######", CultureInfo.InvariantCulture)} stepN={stepN.ToString("0.######", CultureInfo.InvariantCulture)}";
+            });
+
+            RunTest("RMSProp vs Adam produce different weight updates", () =>
+            {
+                adam    = RequireInstance("RlDenseLayer");
+                rmsprop = RequireInstance("RlDenseLayer");
+                adam.Call("initialize",    4, 3, 0, 0);  // Adam
+                rmsprop.Call("initialize", 4, 3, 0, 3);  // RMSProp
+
+                // Start both from the same weights.
+                var weights = adam.Call("get_weights");
+                var shapes  = adam.Call("get_shapes");
+                rmsprop.Call("set_weights", weights, shapes);
+
+                var stepInput   = new float[] { 0.5f, -0.3f, 0.4f, 0.8f };
+                var stepOutGrad = new float[] { 0.5f, -0.3f, 0.4f };
+                for (var i = 0; i < 10; i++)
+                {
+                    _ = RequireFloatArray(adam.Call("forward",    stepInput));
+                    _ = RequireFloatArray(rmsprop.Call("forward", stepInput));
+                    _ = RequireFloatArray(adam.Call("backward",    stepOutGrad, 0.01f, 1.0f));
+                    _ = RequireFloatArray(rmsprop.Call("backward", stepOutGrad, 0.01f, 1.0f));
+                }
+
+                var wAdam    = RequireFloatArray(adam.Call("get_weights"));
+                var wRmsProp = RequireFloatArray(rmsprop.Call("get_weights"));
+                var diff = MaxAbsDiff(wAdam, wRmsProp);
+                Ensure(diff > 1e-5f, $"Expected Adam and RMSProp to diverge after 10 steps (max_diff={diff.ToString("0.######", CultureInfo.InvariantCulture)}).");
+                return $"max_weight_diff={diff.ToString("0.######", CultureInfo.InvariantCulture)}";
+            });
+        }
+        finally
+        {
+            ReleaseGodotObject(rmsprop);
             ReleaseGodotObject(adam);
         }
     }

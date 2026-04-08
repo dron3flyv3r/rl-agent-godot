@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://mndfwomho6a1"]
+
+[ext_resource type="Script" uid="uid://bk1n5orw65bne" path="res://demo/00 test/BenchMain.cs" id="1_main"]
+
+[node name="AlgorithmBench" type="Node" unique_id=805197720]
+script = ExtResource("1_main")
+RunMode = 2
+QuitWhenFinished = true

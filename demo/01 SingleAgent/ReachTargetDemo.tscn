@@ -39,6 +39,7 @@ resource_name = "reach_target"
 script = ExtResource("5_hx405")
 AgentId = "reach_target"
 InferenceModelPath = "uid://d2c8xjr6xw6et"
+NetworkGraph = SubResource("Resource_y71jw")
 metadata/_custom_type_script = "uid://bniwqapplki00"
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_cuwb5"]
