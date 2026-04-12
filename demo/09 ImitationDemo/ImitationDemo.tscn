@@ -1,0 +1,151 @@
+[gd_scene format=3 uid="uid://che3rkplg3mki"]
+
+[ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl-agent-plugin/Runtime/Core/RLAcademy.cs" id="1_acad"]
+[ext_resource type="Script" uid="uid://ire111rjxew5" path="res://addons/rl-agent-plugin/Resources/Config/RLPPOConfig.cs" id="2_ppo"]
+[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl-agent-plugin/Resources/Config/RLTrainingConfig.cs" id="3_train"]
+[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl-agent-plugin/Resources/Config/RLPolicyGroupConfig.cs" id="4_pgcfg"]
+[ext_resource type="Script" uid="uid://d2aynl2n7g0v" path="res://addons/rl-agent-plugin/Resources/Config/RLStoppingConfig.cs" id="4_u28ng"]
+[ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl-agent-plugin/Resources/Config/RLRunConfig.cs" id="5_runcfg"]
+[ext_resource type="Script" uid="uid://oouep3l8683y" path="res://addons/rl-agent-plugin/Resources/Models/RLDenseLayerDef.cs" id="6_dense"]
+[ext_resource type="Script" uid="uid://covgl5skelf7g" path="res://addons/rl-agent-plugin/Resources/Models/RLNetworkGraph.cs" id="7_netgraph"]
+[ext_resource type="Script" uid="uid://dw5tgy2ugmy6h" path="res://demo/09 ImitationDemo/Scripts/ImitationPlayer.cs" id="8_player"]
+[ext_resource type="Script" uid="uid://lyjmdkp75bqm" path="res://demo/09 ImitationDemo/Scripts/ImitationAgent.cs" id="9_agent"]
+
+[sub_resource type="Resource" id="PPOConfig_1"]
+script = ExtResource("2_ppo")
+
+[sub_resource type="Resource" id="TrainingConfig_1"]
+script = ExtResource("3_train")
+Algorithm = SubResource("PPOConfig_1")
+
+[sub_resource type="Resource" id="Resource_h265x"]
+script = ExtResource("4_u28ng")
+MaxSteps = 45000
+metadata/_custom_type_script = "uid://d2aynl2n7g0v"
+
+[sub_resource type="Resource" id="RunConfig_1"]
+script = ExtResource("5_runcfg")
+RunPrefix = "ImitationDemo"
+SimulationSpeed = 8.0
+BatchSize = 32
+StoppingConditions = SubResource("Resource_h265x")
+
+[sub_resource type="Resource" id="Dense_1"]
+script = ExtResource("6_dense")
+
+[sub_resource type="Resource" id="Dense_2"]
+script = ExtResource("6_dense")
+
+[sub_resource type="Resource" id="NetworkGraph_1"]
+script = ExtResource("7_netgraph")
+TrunkLayers = Array[Resource]([SubResource("Dense_1"), SubResource("Dense_2")])
+
+[sub_resource type="Resource" id="PolicyGroupConfig_1"]
+resource_name = "imitation_agent"
+script = ExtResource("4_pgcfg")
+AgentId = "imitation_agent"
+NetworkGraph = SubResource("NetworkGraph_1")
+metadata/_custom_type_script = "uid://bniwqapplki00"
+
+[sub_resource type="RectangleShape2D" id="PlayerShape_1"]
+
+[sub_resource type="LabelSettings" id="TitleLabel_1"]
+font_size = 22
+font_color = Color(0.972549, 0.980392, 0.988235, 1)
+
+[sub_resource type="LabelSettings" id="InfoLabel_1"]
+font_size = 15
+font_color = Color(0.796078, 0.835294, 0.882353, 1)
+
+[node name="ImitationDemo" type="Node2D" unique_id=1842113349]
+
+[node name="Academy" type="Node" parent="." unique_id=1443312916]
+script = ExtResource("1_acad")
+TrainingConfig = SubResource("TrainingConfig_1")
+MaxEpisodeSteps = 200
+RunConfig = SubResource("RunConfig_1")
+
+[node name="Background" type="Polygon2D" parent="." unique_id=305026248]
+color = Color(0.0470588, 0.0823529, 0.129412, 1)
+polygon = PackedVector2Array(0, 0, 800, 0, 800, 600, 0, 600)
+
+[node name="ArenaFill" type="Polygon2D" parent="." unique_id=460974574]
+color = Color(0.0588235, 0.109804, 0.164706, 1)
+polygon = PackedVector2Array(100, 60, 700, 60, 700, 540, 100, 540)
+
+[node name="ArenaBorder" type="Line2D" parent="." unique_id=1020381964]
+points = PackedVector2Array(100, 60, 700, 60, 700, 540, 100, 540, 100, 60)
+width = 2.5
+default_color = Color(0.352941, 0.537255, 0.682353, 1)
+begin_cap_mode = 1
+end_cap_mode = 1
+
+[node name="GoalMarker" type="Node2D" parent="." unique_id=977553168]
+position = Vector2(400, 300)
+
+[node name="GoalHalo" type="Polygon2D" parent="GoalMarker" unique_id=1173051645]
+color = Color(1, 0.819608, 0.4, 0.18)
+polygon = PackedVector2Array(0, -30, 30, 0, 0, 30, -30, 0)
+
+[node name="GoalVisual" type="Polygon2D" parent="GoalMarker" unique_id=1396584102]
+color = Color(1, 0.819608, 0.4, 1)
+polygon = PackedVector2Array(0, -15, 15, 0, 0, 15, -15, 0)
+
+[node name="Player" type="CharacterBody2D" parent="." unique_id=396281924]
+position = Vector2(400, 300)
+script = ExtResource("8_player")
+
+[node name="Agent" type="Node2D" parent="Player" unique_id=2099304442]
+script = ExtResource("9_agent")
+PolicyGroupConfig = SubResource("PolicyGroupConfig_1")
+
+[node name="BodyVisual" type="Polygon2D" parent="Player" unique_id=1181169712]
+color = Color(0.34902, 0.854902, 0.980392, 1)
+polygon = PackedVector2Array(-10, -10, 10, -10, 10, 10, -10, 10)
+
+[node name="DirectionArrow" type="Line2D" parent="Player" unique_id=649295234]
+points = PackedVector2Array(0, 0, 0, -14)
+width = 3.0
+default_color = Color(1, 1, 1, 0.6)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Player" unique_id=616678158]
+shape = SubResource("PlayerShape_1")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=498629363]
+
+[node name="Panel" type="PanelContainer" parent="CanvasLayer" unique_id=2093102437]
+offset_left = 24.0
+offset_top = 24.0
+offset_right = 640.0
+offset_bottom = 158.0
+
+[node name="Margin" type="MarginContainer" parent="CanvasLayer/Panel" unique_id=572680210]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 16
+
+[node name="VBox" type="VBoxContainer" parent="CanvasLayer/Panel/Margin" unique_id=2131024692]
+layout_mode = 2
+
+[node name="TitleLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=1721562095]
+layout_mode = 2
+text = "Imitation Learning Demo"
+label_settings = SubResource("TitleLabel_1")
+
+[node name="ObsLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=2002614317]
+layout_mode = 2
+text = "Observations: agent (x, y) and goal (x, y) — 4 floats normalized to [-1, 1]."
+label_settings = SubResource("InfoLabel_1")
+
+[node name="ActionLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=1151988875]
+layout_mode = 2
+text = "Action space: Stay / Up / Down / Left / Right (5 discrete)."
+label_settings = SubResource("InfoLabel_1")
+
+[node name="ControlsLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=2138673179]
+layout_mode = 2
+text = "Human controls: Arrow keys. Workflow: Record → BC Train → Run Inference."
+label_settings = SubResource("InfoLabel_1")
+autowrap_mode = 3

@@ -1,0 +1,182 @@
+[gd_scene format=3 uid="uid://dm0d3m0eaxt5"]
+
+[ext_resource type="Script" uid="uid://cnvi4hd0vhry1" path="res://addons/rl-agent-plugin/Runtime/Core/RLAcademy.cs" id="1_acad"]
+[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl-agent-plugin/Resources/Config/RLTrainingConfig.cs" id="2_train"]
+[ext_resource type="Script" uid="uid://ire111rjxew5" path="res://addons/rl-agent-plugin/Resources/Config/RLPPOConfig.cs" id="3_ppo"]
+[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl-agent-plugin/Resources/Config/RLPolicyGroupConfig.cs" id="4_pgcfg"]
+[ext_resource type="Script" uid="uid://d2aynl2n7g0v" path="res://addons/rl-agent-plugin/Resources/Config/RLStoppingConfig.cs" id="5_stop"]
+[ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl-agent-plugin/Resources/Config/RLRunConfig.cs" id="6_runcfg"]
+[ext_resource type="Script" uid="uid://oouep3l8683y" path="res://addons/rl-agent-plugin/Resources/Models/RLDenseLayerDef.cs" id="7_dense"]
+[ext_resource type="Script" uid="uid://covgl5skelf7g" path="res://addons/rl-agent-plugin/Resources/Models/RLNetworkGraph.cs" id="8_netgraph"]
+[ext_resource type="Script" uid="uid://lpmfdfvtxr5s" path="res://demo/10 ImitationMazeDemo/Scripts/MazeDemoPlayer.cs" id="9_player"]
+[ext_resource type="Script" uid="uid://d4j6tw8lawpid" path="res://demo/10 ImitationMazeDemo/Scripts/MazeDemoAgent.cs" id="10_agent"]
+
+[sub_resource type="Resource" id="PPOConfig_1"]
+script = ExtResource("3_ppo")
+
+[sub_resource type="Resource" id="TrainingConfig_1"]
+script = ExtResource("2_train")
+Algorithm = SubResource("PPOConfig_1")
+
+[sub_resource type="Resource" id="StoppingConfig_1"]
+script = ExtResource("5_stop")
+MaxSteps = 80000
+metadata/_custom_type_script = "uid://d2aynl2n7g0v"
+
+[sub_resource type="Resource" id="RunConfig_1"]
+script = ExtResource("6_runcfg")
+RunPrefix = "MazeDemo"
+SimulationSpeed = 4.0
+BatchSize = 32
+StoppingConditions = SubResource("StoppingConfig_1")
+
+[sub_resource type="RectangleShape2D" id="WallShape_1"]
+size = Vector2(440, 10)
+
+[sub_resource type="Resource" id="Dense_1"]
+script = ExtResource("7_dense")
+
+[sub_resource type="Resource" id="Dense_2"]
+script = ExtResource("7_dense")
+
+[sub_resource type="Resource" id="NetworkGraph_1"]
+script = ExtResource("8_netgraph")
+TrunkLayers = Array[Resource]([SubResource("Dense_1"), SubResource("Dense_2")])
+
+[sub_resource type="Resource" id="PolicyGroupConfig_1"]
+resource_name = "maze_agent"
+script = ExtResource("4_pgcfg")
+AgentId = "maze_agent"
+InferenceModelPath = "res://demo/10 ImitationMazeDemo/Model/bc_1776022265.rlmodel"
+StochasticInference = true
+NetworkGraph = SubResource("NetworkGraph_1")
+metadata/_custom_type_script = "uid://bniwqapplki00"
+
+[sub_resource type="RectangleShape2D" id="PlayerShape_1"]
+
+[sub_resource type="LabelSettings" id="TitleLabel_1"]
+font_size = 22
+font_color = Color(0.972549, 0.980392, 0.988235, 1)
+
+[sub_resource type="LabelSettings" id="InfoLabel_1"]
+font_size = 15
+font_color = Color(0.796078, 0.835294, 0.882353, 1)
+
+[node name="ImitationMazeDemo" type="Node2D" unique_id=1912737444]
+
+[node name="Academy" type="Node" parent="." unique_id=2009692607]
+script = ExtResource("1_acad")
+TrainingConfig = SubResource("TrainingConfig_1")
+MaxEpisodeSteps = 300
+RunConfig = SubResource("RunConfig_1")
+
+[node name="Background" type="Polygon2D" parent="." unique_id=48501876]
+color = Color(0.0470588, 0.0823529, 0.129412, 1)
+polygon = PackedVector2Array(0, 0, 800, 0, 800, 600, 0, 600)
+
+[node name="ArenaFill" type="Polygon2D" parent="." unique_id=1926522983]
+color = Color(0.0588235, 0.109804, 0.164706, 1)
+polygon = PackedVector2Array(100, 60, 700, 60, 700, 540, 100, 540)
+
+[node name="ArenaBorder" type="Line2D" parent="." unique_id=1486003937]
+points = PackedVector2Array(100, 60, 700, 60, 700, 540, 100, 540, 100, 60)
+width = 2.5
+default_color = Color(0.352941, 0.537255, 0.682353, 1)
+begin_cap_mode = 1
+end_cap_mode = 1
+
+[node name="Wall" type="StaticBody2D" parent="." unique_id=1305261140]
+position = Vector2(320, 300)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Wall" unique_id=112527111]
+shape = SubResource("WallShape_1")
+
+[node name="WallVisual" type="Polygon2D" parent="Wall" unique_id=749788494]
+color = Color(0.25, 0.38, 0.5, 1)
+polygon = PackedVector2Array(-220, -5, 220, -5, 220, 5, -220, 5)
+
+[node name="GapIndicator" type="Polygon2D" parent="." unique_id=1397635869]
+position = Vector2(620, 300)
+color = Color(0.352941, 0.537255, 0.682353, 0.2)
+polygon = PackedVector2Array(-80, -5, 80, -5, 80, 5, -80, 5)
+
+[node name="GapArrow" type="Line2D" parent="." unique_id=1599935175]
+points = PackedVector2Array(545, 285, 545, 315)
+width = 2.0
+default_color = Color(0.352941, 0.537255, 0.682353, 0.5)
+
+[node name="GoalMarker" type="Node2D" parent="." unique_id=938870584]
+position = Vector2(400, 420)
+
+[node name="GoalHalo" type="Polygon2D" parent="GoalMarker" unique_id=1709609902]
+color = Color(1, 0.819608, 0.4, 0.18)
+polygon = PackedVector2Array(0, -30, 30, 0, 0, 30, -30, 0)
+
+[node name="GoalVisual" type="Polygon2D" parent="GoalMarker" unique_id=1418334145]
+color = Color(1, 0.819608, 0.4, 1)
+polygon = PackedVector2Array(0, -15, 15, 0, 0, 15, -15, 0)
+
+[node name="Player" type="CharacterBody2D" parent="." unique_id=971279351]
+position = Vector2(300, 160)
+script = ExtResource("9_player")
+
+[node name="Agent" type="Node2D" parent="Player" unique_id=437589181]
+script = ExtResource("10_agent")
+PolicyGroupConfig = SubResource("PolicyGroupConfig_1")
+
+[node name="BodyVisual" type="Polygon2D" parent="Player" unique_id=1291976963]
+color = Color(0.34902, 0.854902, 0.980392, 1)
+polygon = PackedVector2Array(-10, -10, 10, -10, 10, 10, -10, 10)
+
+[node name="DirectionArrow" type="Line2D" parent="Player" unique_id=1170199820]
+points = PackedVector2Array(0, 0, 0, -14)
+width = 3.0
+default_color = Color(1, 1, 1, 0.6)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Player" unique_id=2101500082]
+shape = SubResource("PlayerShape_1")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=629714303]
+visible = false
+
+[node name="Panel" type="PanelContainer" parent="CanvasLayer" unique_id=1148203723]
+offset_left = 24.0
+offset_top = 24.0
+offset_right = 640.0
+offset_bottom = 178.0
+
+[node name="Margin" type="MarginContainer" parent="CanvasLayer/Panel" unique_id=596658997]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 16
+
+[node name="VBox" type="VBoxContainer" parent="CanvasLayer/Panel/Margin" unique_id=173653275]
+layout_mode = 2
+
+[node name="TitleLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=560329886]
+layout_mode = 2
+text = "Imitation Learning — Maze Demo"
+label_settings = SubResource("TitleLabel_1")
+
+[node name="ObsLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=207842499]
+layout_mode = 2
+text = "Observations (6): agent (x,y), goal (x,y), dist-to-gap, signed-dist-to-wall."
+label_settings = SubResource("InfoLabel_1")
+
+[node name="ActionLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=2104950022]
+layout_mode = 2
+text = "Action space: Stay / Up / Down / Left / Right (5 discrete)."
+label_settings = SubResource("InfoLabel_1")
+
+[node name="ChallengeLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=598544694]
+layout_mode = 2
+text = "Challenge: agent and goal always spawn on opposite sides of the wall — must find the gap."
+label_settings = SubResource("InfoLabel_1")
+autowrap_mode = 3
+
+[node name="ControlsLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=415995609]
+layout_mode = 2
+text = "Human controls: Arrow keys.  Scripted mode auto-navigates through the gap."
+label_settings = SubResource("InfoLabel_1")

@@ -39,25 +39,25 @@ Sources = Array[ExtResource("12_objsrc")]([SubResource("ObjectiveSource_reach_ta
 
 [sub_resource type="Resource" id="HPOParam_learning_rate"]
 script = ExtResource("8_hpoparam")
-ParameterName = "LearningRate"
+ParameterName = "Gamma"
 Low = 0.001
 High = 0.003
 
 [sub_resource type="Resource" id="HPOParam_gamma"]
 script = ExtResource("8_hpoparam")
-ParameterName = "Gamma"
+ParameterName = "MaxGradientNorm"
 Low = 0.97
 High = 0.999
 
 [sub_resource type="Resource" id="HPOParam_entropy"]
 script = ExtResource("8_hpoparam")
-ParameterName = "EntropyCoefficient"
+ParameterName = "BpttLength"
 Low = 0.0005
 High = 0.03
 
 [sub_resource type="Resource" id="HPOParam_minibatch"]
 script = ExtResource("8_hpoparam")
-ParameterName = "PpoMiniBatchSize"
+ParameterName = "GaeLambda"
 Kind = 2
 Low = 16.0
 High = 128.0
