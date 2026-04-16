@@ -1,0 +1,51 @@
+[gd_scene format=3 uid="uid://ccon4m0on8y0t"]
+
+[ext_resource type="Script" uid="uid://dei3868gv8lis" path="res://demo/13 FlappyBirdNEAT/Scripts/FlappyBirdBird.cs" id="1_bird"]
+[ext_resource type="Script" uid="uid://r2c71g8vvp02" path="res://demo/13 FlappyBirdNEAT/Scripts/FlappyBirdAgent.cs" id="2_agent"]
+[ext_resource type="Script" uid="uid://oouep3l8683y" path="res://addons/rl-agent-plugin/Resources/Models/RLDenseLayerDef.cs" id="3_5drc8"]
+[ext_resource type="Script" uid="uid://bniwqapplki00" path="res://addons/rl-agent-plugin/Resources/Config/RLPolicyGroupConfig.cs" id="3_pgcfg"]
+[ext_resource type="Script" uid="uid://covgl5skelf7g" path="res://addons/rl-agent-plugin/Resources/Models/RLNetworkGraph.cs" id="4_7tncm"]
+
+[sub_resource type="Resource" id="Resource_875wh"]
+script = ExtResource("3_5drc8")
+
+[sub_resource type="Resource" id="Resource_ovbbg"]
+script = ExtResource("3_5drc8")
+
+[sub_resource type="Resource" id="Resource_d2iqa"]
+script = ExtResource("4_7tncm")
+TrunkLayers = Array[Resource]([SubResource("Resource_875wh"), SubResource("Resource_ovbbg")])
+
+[sub_resource type="Resource" id="PolicyGroup"]
+resource_name = "flappy_neat"
+script = ExtResource("3_pgcfg")
+AgentId = "flappy_neat"
+NetworkGraph = SubResource("Resource_d2iqa")
+metadata/_custom_type_script = "uid://bniwqapplki00"
+
+[node name="BirdGroup" type="Node2D" unique_id=34139208]
+
+[node name="Bird" type="Node2D" parent="." unique_id=530970600]
+script = ExtResource("1_bird")
+
+[node name="Visual" type="Polygon2D" parent="Bird" unique_id=1891895208]
+color = Color(1, 0.85, 0.1, 1)
+polygon = PackedVector2Array(0, -12, 14, 0, 0, 12, -14, 0)
+
+[node name="Visual2" type="Polygon2D" parent="Bird" unique_id=34046945]
+color = Color(0.7322463, 0.4095311, 1.92523e-07, 1)
+polygon = PackedVector2Array(9.030735, -4.274359, 14, 0, 8.977747, 4.366457, 6, 0)
+
+[node name="Visual3" type="Polygon2D" parent="Bird" unique_id=19394380]
+position = Vector2(0, -5)
+scale = Vector2(0.25, 0.25)
+polygon = PackedVector2Array(8, -8.000001, 24, 0, 8, 8, 0, 0)
+
+[node name="Visual4" type="Polygon2D" parent="Bird" unique_id=1296143296]
+position = Vector2(-6, -5)
+color = Color(0, 0, 0, 1)
+polygon = PackedVector2Array(9, -1, 10, 0, 9, 1, 8, 0)
+
+[node name="Agent" type="Node2D" parent="." unique_id=1109757492]
+script = ExtResource("2_agent")
+PolicyGroupConfig = SubResource("PolicyGroup")

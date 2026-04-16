@@ -1,0 +1,101 @@
+[gd_scene format=3 uid="uid://cdahylamk8126"]
+
+[ext_resource type="Script" uid="uid://s3xpcsoun3rl" path="res://addons/rl-agent-plugin/Scenes/Academy/RLGeneticAcademy.cs" id="1_academy"]
+[ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl-agent-plugin/Resources/Config/RLRunConfig.cs" id="3_runcfg"]
+[ext_resource type="Script" uid="uid://diqyywakvtxao" path="res://addons/rl-agent-plugin/Resources/Config/RLNEATConfig.cs" id="4_neatcfg"]
+[ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl-agent-plugin/Resources/Config/RLTrainingConfig.cs" id="4_pfeg0"]
+[ext_resource type="Script" uid="uid://cpyqlga2mxj1j" path="res://addons/rl-agent-plugin/Scenes/Spawner/RLAgentSpawner.cs" id="5_spawner"]
+[ext_resource type="Script" uid="uid://c1c7o11ett8bx" path="res://demo/13 FlappyBirdNEAT/Scripts/FlappyBirdController.cs" id="6_controller"]
+[ext_resource type="PackedScene" uid="uid://ccon4m0on8y0t" path="res://demo/13 FlappyBirdNEAT/BirdGroup.tscn" id="7_birdgroup"]
+
+[sub_resource type="Resource" id="NeatConfig"]
+script = ExtResource("4_neatcfg")
+PopulationSize = 20
+
+[sub_resource type="Resource" id="Resource_pfeg0"]
+script = ExtResource("4_pfeg0")
+Algorithm = SubResource("NeatConfig")
+
+[sub_resource type="Resource" id="RunConfig"]
+script = ExtResource("3_runcfg")
+RunPrefix = "FlappyBirdNEAT"
+SimulationSpeed = 4.0
+ActionRepeat = 1
+
+[sub_resource type="LabelSettings" id="TitleStyle"]
+font_size = 22
+font_color = Color(0.97, 0.98, 0.99, 1)
+
+[sub_resource type="LabelSettings" id="BodyStyle"]
+font_size = 15
+font_color = Color(0.8, 0.84, 0.88, 1)
+
+[node name="FlappyBirdNEATDemo" type="Node2D" unique_id=334743896]
+script = ExtResource("6_controller")
+
+[node name="Academy" type="Node" parent="." unique_id=860881450]
+script = ExtResource("1_academy")
+EvolutionaryConfig = SubResource("NeatConfig")
+TrainingConfig = SubResource("Resource_pfeg0")
+MaxEpisodeSteps = 3000
+RunConfig = SubResource("RunConfig")
+
+[node name="RLAgentSpawner" type="Node" parent="." unique_id=2017211253]
+script = ExtResource("5_spawner")
+AgentScene = ExtResource("7_birdgroup")
+SpawnPosition = Vector2(75, 300)
+metadata/_custom_type_script = "uid://cpyqlga2mxj1j"
+
+[node name="Background" type="Polygon2D" parent="." unique_id=389972875]
+color = Color(0.4, 0.75, 0.95, 1)
+polygon = PackedVector2Array(0, 0, 800, 0, 800, 600, 0, 600)
+
+[node name="Ground" type="Polygon2D" parent="." unique_id=53076136]
+color = Color(0.55, 0.35, 0.15, 1)
+polygon = PackedVector2Array(0, 555, 800, 555, 800, 600, 0, 600)
+
+[node name="Ceiling" type="Polygon2D" parent="." unique_id=1787324743]
+color = Color(0.55, 0.82, 0.45, 1)
+polygon = PackedVector2Array(0, 0, 800, 0, 800, 35, 0, 35)
+
+[node name="Pipes" type="Node2D" parent="." unique_id=1353908400]
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=535599275]
+
+[node name="Panel" type="PanelContainer" parent="CanvasLayer" unique_id=1064675286]
+offset_left = 24.0
+offset_top = 24.0
+offset_right = 500.0
+offset_bottom = 175.0
+
+[node name="Margin" type="MarginContainer" parent="CanvasLayer/Panel" unique_id=937788715]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 16
+
+[node name="VBox" type="VBoxContainer" parent="CanvasLayer/Panel/Margin" unique_id=1221241388]
+layout_mode = 2
+
+[node name="TitleLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=429687208]
+layout_mode = 2
+text = "Flappy Bird — NEAT"
+label_settings = SubResource("TitleStyle")
+
+[node name="GenLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=735244000]
+layout_mode = 2
+text = "Generation: 0"
+label_settings = SubResource("BodyStyle")
+
+[node name="AliveLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=69575407]
+layout_mode = 2
+text = "Alive: 20 / 20"
+label_settings = SubResource("BodyStyle")
+
+[node name="InfoLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox" unique_id=1031333694]
+layout_mode = 2
+text = "Obs: birdY velY pipe1dx pipe1gapY pipe2dx pipe2gapY
+Reward: +0.01/step  +2.0/pipe  -1.0/death"
+label_settings = SubResource("BodyStyle")
+autowrap_mode = 3

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using Godot;
+using RlAgentPlugin.Runtime;
 
 namespace RlAgentPlugin.Demo;
 
@@ -31,6 +32,7 @@ public partial class Main : Node
         TestLstmLayer();
         TestGruLayer();
         TestCnnEncoder();
+        TestAcademyExtensibility();
 
         LogSummary(startedAt, DateTime.UtcNow);
         PrintReport();
@@ -1363,5 +1365,274 @@ public partial class Main : Node
     private void ExitAfterReport()
     {
         GetTree().Quit(_failCount > 0 ? 1 : 0);
+    }
+
+    // ── Academy extensibility tests ───────────────────────────────────────────
+
+    private void TestAcademyExtensibility()
+    {
+        var ctx = new StubAcademyContext();
+
+        // ── Token types ───────────────────────────────────────────────────────
+
+        RunTest("Academy: phase tokens are distinct sealed types", () =>
+        {
+            var a = typeof(PhaseAToken);
+            var b = typeof(PhaseBToken);
+            var c = typeof(PhaseCToken);
+            Ensure(a != b && b != c && a != c, "Phase token types must be distinct.");
+            Ensure(a.IsSealed && b.IsSealed && c.IsSealed, "Phase token types must be sealed.");
+            return $"{a.Name} / {b.Name} / {c.Name}";
+        });
+
+        // ── AcademyEpisodeEndArgs ─────────────────────────────────────────────
+
+        RunTest("Academy: AcademyEpisodeEndArgs default values", () =>
+        {
+            var args = new AcademyEpisodeEndArgs();
+            Ensure(args.Agent is null,                "Default Agent should be null.");
+            Ensure(args.GroupId == string.Empty,      "Default GroupId should be empty string.");
+            Ensure(args.EpisodeReward == 0f,          "Default EpisodeReward should be 0.");
+            Ensure(args.EpisodeSteps == 0,            "Default EpisodeSteps should be 0.");
+            Ensure(args.RewardBreakdown is not null,  "Default RewardBreakdown must not be null.");
+            Ensure(args.RewardBreakdown!.Count == 0,  "Default RewardBreakdown should be empty.");
+            Ensure(args.TotalSteps == 0L,             "Default TotalSteps should be 0.");
+            Ensure(args.GroupEpisodeCount == 0L,      "Default GroupEpisodeCount should be 0.");
+            Ensure(args.CurriculumProgress == 0f,     "Default CurriculumProgress should be 0.");
+            return "all defaults correct";
+        });
+
+        RunTest("Academy: AcademyEpisodeEndArgs init values round-trip", () =>
+        {
+            var breakdown = new Dictionary<string, float> { ["speed"] = 0.5f, ["goal"] = 2.0f };
+            var args = new AcademyEpisodeEndArgs
+            {
+                GroupId            = "player",
+                GroupDisplayName   = "Player Group",
+                EpisodeReward      = 3.5f,
+                EpisodeSteps       = 128,
+                RewardBreakdown    = breakdown,
+                TotalSteps         = 10_000L,
+                GroupEpisodeCount  = 42L,
+                CurriculumProgress = 0.75f,
+            };
+            Ensure(args.GroupId == "player",                         "GroupId mismatch.");
+            Ensure(Mathf.Abs(args.EpisodeReward - 3.5f) < 1e-6f,    "EpisodeReward mismatch.");
+            Ensure(args.EpisodeSteps == 128,                         "EpisodeSteps mismatch.");
+            Ensure(args.RewardBreakdown.Count == 2,                  "RewardBreakdown count mismatch.");
+            Ensure(Mathf.Abs(args.RewardBreakdown["goal"] - 2f) < 1e-6f, "RewardBreakdown value mismatch.");
+            Ensure(args.TotalSteps == 10_000L,                       "TotalSteps mismatch.");
+            Ensure(args.GroupEpisodeCount == 42L,                    "GroupEpisodeCount mismatch.");
+            Ensure(Mathf.Abs(args.CurriculumProgress - 0.75f) < 1e-6f, "CurriculumProgress mismatch.");
+            return $"reward={args.EpisodeReward} steps={args.EpisodeSteps} progress={args.CurriculumProgress:F2}";
+        });
+
+        // ── Base RLAcademy defaults ───────────────────────────────────────────
+
+        RunTest("Academy: base RLAcademy hooks are safe no-ops", () =>
+        {
+            var acad = new RLAcademy();
+            Ensure(!acad.OwnsTrainingStep, "Base OwnsTrainingStep must be false.");
+            Ensure(!acad.ShouldStop(ctx),  "Base ShouldStop must return false.");
+            // None of these should throw on a detached node with a stub context.
+            acad.OnTrainingInitialized(ctx);
+            acad.OnBeforeStep(ctx);
+            acad.OnAfterStep(ctx);
+            acad.OnEpisodeEnd(new AcademyEpisodeEndArgs());
+            acad.OnBeforeCheckpoint(ctx);
+            acad.TrainingStep(ctx);
+            return "all base no-ops safe";
+        });
+
+        // ── Tier 1: hook recording subclass ──────────────────────────────────
+
+        RunTest("Academy: Tier 1 subclass hooks fire in order", () =>
+        {
+            var rec = new HookRecordingAcademy();
+            rec.OnTrainingInitialized(ctx);
+            rec.OnBeforeStep(ctx);
+            rec.OnAfterStep(ctx);
+            rec.OnEpisodeEnd(new AcademyEpisodeEndArgs { EpisodeReward = 5f });
+            rec.OnBeforeCheckpoint(ctx);
+
+            Ensure(rec.InitCount == 1,           "OnTrainingInitialized not fired.");
+            Ensure(rec.BeforeStepCount == 1,     "OnBeforeStep not fired.");
+            Ensure(rec.AfterStepCount == 1,      "OnAfterStep not fired.");
+            Ensure(rec.EpisodeEndCount == 1,     "OnEpisodeEnd not fired.");
+            Ensure(rec.BeforeCheckpointCount == 1, "OnBeforeCheckpoint not fired.");
+            Ensure(Mathf.Abs(rec.LastEpisodeReward - 5f) < 1e-6f, "EpisodeReward not propagated.");
+            Ensure(!rec.OwnsTrainingStep,        "HookRecordingAcademy must not own training step.");
+            Ensure(!rec.ShouldStop(ctx),         "HookRecordingAcademy ShouldStop must return false.");
+
+            var total = rec.InitCount + rec.BeforeStepCount + rec.AfterStepCount
+                      + rec.EpisodeEndCount + rec.BeforeCheckpointCount;
+            return $"{total} hooks fired correctly";
+        });
+
+        // ── Tier 2: custom training loop ─────────────────────────────────────
+
+        RunTest("Academy: Tier 2 OwnsTrainingStep override", () =>
+        {
+            var t2 = new Tier2TestAcademy();
+            Ensure(t2.OwnsTrainingStep,       "Tier2TestAcademy OwnsTrainingStep must be true.");
+            Ensure(t2.TrainingStepCount == 0, "TrainingStepCount should start at 0.");
+            t2.TrainingStep(ctx);
+            t2.TrainingStep(ctx);
+            Ensure(t2.TrainingStepCount == 2, "TrainingStep should have been called twice.");
+            return $"TrainingStep called {t2.TrainingStepCount} times";
+        });
+
+        // ── GameDevAcademy (Demo 11) ──────────────────────────────────────────
+
+        RunTest("Academy: GameDevAcademy inspector property defaults", () =>
+        {
+            var acad = new GameDevAcademy();
+            Ensure(acad.StepBudget == 500_000L,
+                $"StepBudget default: expected 500000, got {acad.StepBudget}.");
+            Ensure(Mathf.Abs(acad.RewardThreshold - 0.8f) < 1e-6f,
+                $"RewardThreshold default: expected 0.8, got {acad.RewardThreshold}.");
+            Ensure(Mathf.Abs(acad.CurriculumStep - 0.02f) < 1e-6f,
+                $"CurriculumStep default: expected 0.02, got {acad.CurriculumStep}.");
+            Ensure(!acad.OwnsTrainingStep, "GameDevAcademy must not own training step.");
+            return $"StepBudget={acad.StepBudget} RewardThreshold={acad.RewardThreshold} CurriculumStep={acad.CurriculumStep}";
+        });
+
+        RunTest("Academy: GameDevAcademy ShouldStop respects StepBudget", () =>
+        {
+            var acad = new GameDevAcademy { StepBudget = 1000 };
+
+            ctx.TotalSteps = 999;
+            Ensure(!acad.ShouldStop(ctx), "Should not stop before budget.");
+
+            ctx.TotalSteps = 1000;
+            Ensure(acad.ShouldStop(ctx),  "Should stop at budget.");
+
+            ctx.TotalSteps = 1001;
+            Ensure(acad.ShouldStop(ctx),  "Should stop past budget.");
+
+            acad.StepBudget = 0;
+            Ensure(!acad.ShouldStop(ctx), "StepBudget=0 should run forever.");
+
+            ctx.TotalSteps = 0;
+            return "ShouldStop boundary correct";
+        });
+
+        RunTest("Academy: GameDevAcademy OnEpisodeEnd advances curriculum", () =>
+        {
+            var acad = new GameDevAcademy { RewardThreshold = 1.0f, CurriculumStep = 0.1f };
+
+            // Below threshold — curriculum must not change.
+            var before = acad.CurriculumProgress;
+            acad.OnEpisodeEnd(new AcademyEpisodeEndArgs { EpisodeReward = 0.5f, GroupEpisodeCount = 1 });
+            Ensure(Mathf.Abs(acad.CurriculumProgress - before) < 1e-6f,
+                "Curriculum must not advance below threshold.");
+
+            // At threshold — curriculum must increase.
+            acad.OnEpisodeEnd(new AcademyEpisodeEndArgs { EpisodeReward = 1.0f, GroupEpisodeCount = 2 });
+            Ensure(acad.CurriculumProgress > before,
+                "Curriculum must advance at/above threshold.");
+            Ensure(Mathf.Abs(acad.CurriculumProgress - 0.1f) < 1e-6f,
+                $"Curriculum should be 0.1 after one win, got {acad.CurriculumProgress}.");
+
+            return $"progress after win={acad.CurriculumProgress:F2}";
+        });
+
+        RunTest("Academy: GameDevAcademy OnBeforeCheckpoint resets counters", () =>
+        {
+            var acad = new GameDevAcademy();
+            // Feed two episodes.
+            acad.OnEpisodeEnd(new AcademyEpisodeEndArgs { EpisodeReward = 2.0f, GroupEpisodeCount = 1 });
+            acad.OnEpisodeEnd(new AcademyEpisodeEndArgs { EpisodeReward = 4.0f, GroupEpisodeCount = 2 });
+            // Checkpoint should not throw and should reset internal counters.
+            acad.OnBeforeCheckpoint(ctx);
+            // Second checkpoint with no new episodes should be a silent no-op.
+            acad.OnBeforeCheckpoint(ctx);
+            return "checkpoint fired without error, counters reset";
+        });
+
+        // ── ResearchAcademy (Demo 12) ─────────────────────────────────────────
+
+        RunTest("Academy: ResearchAcademy inspector property defaults", () =>
+        {
+            var acad = new ResearchAcademy();
+            Ensure(acad.OwnsTrainingStep, "ResearchAcademy must own training step.");
+            Ensure(Mathf.Abs(acad.ConvergenceEntropyThreshold - 0.05f) < 1e-6f,
+                $"ConvergenceEntropyThreshold default: expected 0.05, got {acad.ConvergenceEntropyThreshold}.");
+            Ensure(acad.ConvergenceGracePeriod == 100,
+                $"ConvergenceGracePeriod default: expected 100, got {acad.ConvergenceGracePeriod}.");
+            return $"threshold={acad.ConvergenceEntropyThreshold} grace={acad.ConvergenceGracePeriod}";
+        });
+
+        RunTest("Academy: ResearchAcademy ShouldStop requires grace period", () =>
+        {
+            var acad = new ResearchAcademy
+            {
+                ConvergenceEntropyThreshold = 0.5f,
+                ConvergenceGracePeriod      = 3,
+            };
+            // No entropy data yet — must not stop regardless of context.
+            Ensure(!acad.ShouldStop(ctx), "Must not stop before any entropy data.");
+            return "no early stop without entropy data";
+        });
+    }
+
+    // ── Stub helpers ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Minimal <see cref="IAcademyContext"/> that satisfies the interface contract
+    /// without a live <see cref="TrainingBootstrap"/>. Used by the extensibility tests.
+    /// </summary>
+    private sealed class StubAcademyContext : IAcademyContext
+    {
+        public long TotalSteps { get; set; }
+        public IReadOnlyDictionary<string, long> EpisodeCountByGroup { get; } =
+            new Dictionary<string, long>();
+        public IReadOnlyList<string> GroupIds { get; } = [];
+
+        public ITrainer? GetTrainer(string groupId) => null;
+        public IReadOnlyList<IRLAgent> GetGroupAgents(string groupId) => [];
+        public void RunGroupDecisionPipeline(string groupId) { }
+
+        public PhaseAToken EstimateNextValues(string groupId)
+            => throw new NotSupportedException("Stub does not support phase execution.");
+        public PhaseBToken RecordTransitionsAndReset(string groupId, PhaseAToken phaseA)
+            => throw new NotSupportedException("Stub does not support phase execution.");
+        public PhaseCToken SampleActions(string groupId, PhaseBToken phaseB)
+            => throw new NotSupportedException("Stub does not support phase execution.");
+        public void ApplyDecisions(string groupId, PhaseCToken phaseC) { }
+
+        public void TriggerCheckpoint(bool forceWrite = false) { }
+        public void LogMetric(string groupId, string metricKey, float value) { }
+        public void SetCurriculumProgress(float progress) { }
+        public void RequestStop(string reason = "Stopped by custom loop.") { }
+    }
+
+    /// <summary>Tier 1 subclass that counts every hook invocation.</summary>
+    private sealed partial class HookRecordingAcademy : RLAcademy
+    {
+        public int   InitCount;
+        public int   BeforeStepCount;
+        public int   AfterStepCount;
+        public int   EpisodeEndCount;
+        public int   BeforeCheckpointCount;
+        public float LastEpisodeReward;
+
+        public override void OnTrainingInitialized(IAcademyContext ctx) => InitCount++;
+        public override void OnBeforeStep(IAcademyContext ctx)           => BeforeStepCount++;
+        public override void OnAfterStep(IAcademyContext ctx)            => AfterStepCount++;
+        public override void OnBeforeCheckpoint(IAcademyContext ctx)     => BeforeCheckpointCount++;
+        public override void OnEpisodeEnd(AcademyEpisodeEndArgs args)
+        {
+            EpisodeEndCount++;
+            LastEpisodeReward = args.EpisodeReward;
+        }
+    }
+
+    /// <summary>Tier 2 subclass that claims the training loop and counts step calls.</summary>
+    private sealed partial class Tier2TestAcademy : RLAcademy
+    {
+        public int TrainingStepCount;
+        public override bool OwnsTrainingStep => true;
+        public override void TrainingStep(IAcademyContext ctx) => TrainingStepCount++;
     }
 }

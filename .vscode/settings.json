@@ -28,7 +28,7 @@
         "**/Thumbs.db": true,
         "**/*.uid": true
     },
-    "peacock.remoteColor": "#c9af05",
+    "peacock.remoteColor": "#694dda",
     "cmake.sourceDirectory": "/home/kasper/gameProjects/rl-agent-godot/addons/rl-agent-plugin/native",
     "cmake.buildDirectory": "${workspaceFolder}/addons/rl-agent-plugin/native/build",
     "cmake.configureSettings": {
