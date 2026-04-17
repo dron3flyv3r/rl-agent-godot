@@ -94,11 +94,6 @@ public partial class FlappyBirdAgent : RLAgent2D
         if (DebugActions && _debugActionFrames < 5)
         {
             _debugActionFrames++;
-            // Read the training slot from PolicyGroupConfig.AgentId if available,
-            // or fall back to the node path as a slot proxy.
-            GD.Print($"[NEAT-DBG] {GetParent().Name}/{Name}  action={action}  birdPos={_bird.GlobalPosition}  slot={_debugSlot}");
-            if (_debugActionFrames == 5)
-                GD.Print($"[NEAT-DBG] {GetParent().Name}/{Name}  (suppressing further per-step logs)");
         }
 
         _bird.WantFlap = action == 1;
@@ -159,4 +154,10 @@ public partial class FlappyBirdAgent : RLAgent2D
 
     /// <summary>Called by FlappyBirdController to inform this agent of its slot index.</summary>
     public void SetDebugSlot(int slot) => _debugSlot = slot;
+
+    protected override void OnHumanInput()
+    {
+        if (Input.IsActionJustPressed("ui_accept") || Input.IsActionJustPressed("ui_select") || Input.IsActionJustPressed("ui_up"))
+            _bird?.WantFlap = true;
+    }
 }

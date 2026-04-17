@@ -40,6 +40,7 @@ public partial class FlappyBirdController : Node2D
     [Export] public float BirdStartX      { get; set; } = 180f;
     [Export] public float BirdStartY      { get; set; } = 300f;
     [Export] public float PipeSpawnX      { get; set; } = 880f;
+    [Export] public int   InitialPipeCount { get; set; } = 3;
 
     // ── Public state ──────────────────────────────────────────────────────────
 
@@ -55,6 +56,9 @@ public partial class FlappyBirdController : Node2D
     private Node2D? _pipeContainer;
     private Label?  _genLabel;
     private Label?  _aliveLabel;
+
+    // Pooled visual rects — reused every frame instead of destroyed/recreated.
+    private readonly List<(ColorRect Top, ColorRect Bot)> _pipeRects = [];
 
     private int _totalBirds;
     private int _deadCount;
@@ -256,16 +260,32 @@ public partial class FlappyBirdController : Node2D
     private void SpawnInitialPipes()
     {
         _pipes.Clear();
-        _pipes.Add(new PipePair { Id = _nextPipeId++, X = PipeSpawnX,              GapCenterY = RandomGapY() });
-        _pipes.Add(new PipePair { Id = _nextPipeId++, X = PipeSpawnX + PipeSpacing, GapCenterY = RandomGapY() });
+        int pipeCount = Mathf.Max(2, InitialPipeCount);
+        for (int i = 0; i < pipeCount; i++)
+        {
+            _pipes.Add(new PipePair
+            {
+                Id = _nextPipeId++,
+                X = PipeSpawnX + i * PipeSpacing,
+                GapCenterY = RandomGapY()
+            });
+        }
         RebuildPipeVisuals();
     }
 
     private void ResetPipes()
     {
         _pipes.Clear();
-        _pipes.Add(new PipePair { Id = _nextPipeId++, X = PipeSpawnX,              GapCenterY = RandomGapY() });
-        _pipes.Add(new PipePair { Id = _nextPipeId++, X = PipeSpawnX + PipeSpacing, GapCenterY = RandomGapY() });
+        int pipeCount = Mathf.Max(2, InitialPipeCount);
+        for (int i = 0; i < pipeCount; i++)
+        {
+            _pipes.Add(new PipePair
+            {
+                Id = _nextPipeId++,
+                X = PipeSpawnX + i * PipeSpacing,
+                GapCenterY = RandomGapY()
+            });
+        }
         RebuildPipeVisuals();
     }
 
@@ -278,15 +298,42 @@ public partial class FlappyBirdController : Node2D
     private void RecyclePipes()
     {
         bool changed = false;
+
+        // Remove off-screen pipes and clear their pass markers to avoid unbounded growth.
         for (int i = _pipes.Count - 1; i >= 0; i--)
         {
             if (_pipes[i].X + PipeWidth / 2f < 0f)
             {
+                int removedId = _pipes[i].Id;
                 _pipes.RemoveAt(i);
-                _pipes.Add(new PipePair { Id = _nextPipeId++, X = PipeSpawnX, GapCenterY = RandomGapY() });
+                _passedSet.RemoveWhere(entry => entry.Item2 == removedId);
                 changed = true;
             }
         }
+
+        float rightmostX = PipeSpawnX - PipeSpacing;
+        for (int i = 0; i < _pipes.Count; i++)
+        {
+            if (_pipes[i].X > rightmostX)
+                rightmostX = _pipes[i].X;
+        }
+
+        // Keep at least one pipe queued off-screen to the right at all times.
+        while (rightmostX < PipeSpawnX)
+        {
+            rightmostX += PipeSpacing;
+            _pipes.Add(new PipePair { Id = _nextPipeId++, X = rightmostX, GapCenterY = RandomGapY() });
+            changed = true;
+        }
+
+        // Keep a minimum count for stability if a large delta removes multiple pipes.
+        while (_pipes.Count < 2)
+        {
+            rightmostX += PipeSpacing;
+            _pipes.Add(new PipePair { Id = _nextPipeId++, X = rightmostX, GapCenterY = RandomGapY() });
+            changed = true;
+        }
+
         _pipes.Sort((a, b) => a.X.CompareTo(b.X));
         if (changed) RebuildPipeVisuals();
     }
@@ -295,53 +342,71 @@ public partial class FlappyBirdController : Node2D
 
     private void RebuildPipeVisuals()
     {
-        // Called on topology changes (reset, recycle). No-op if container missing.
+        // Grow the pool if needed — never shrink/free nodes during gameplay.
         if (_pipeContainer == null) return;
-        foreach (Node child in _pipeContainer.GetChildren())
-            child.QueueFree();
-
         var green = new Color(0.22f, 0.70f, 0.29f);
-        foreach (var p in _pipes)
+        while (_pipeRects.Count < _pipes.Count)
         {
-            float topH     = Mathf.Max(0f, p.GapCenterY - GapHeight / 2f - CeilingY);
-            float botH     = Mathf.Max(0f, GroundY - (p.GapCenterY + GapHeight / 2f));
-            float pipeLeft = p.X - PipeWidth / 2f;
+            var top = new ColorRect { Color = green, Size = new Vector2(PipeWidth, 0f) };
+            var bot = new ColorRect { Color = green, Size = new Vector2(PipeWidth, 0f) };
+            _pipeContainer.AddChild(top);
+            _pipeContainer.AddChild(bot);
+            _pipeRects.Add((top, bot));
+        }
 
-            _pipeContainer.AddChild(new ColorRect
+        // Hide excess pool slots, position active ones.
+        for (int i = 0; i < _pipeRects.Count; i++)
+        {
+            var (top, bot) = _pipeRects[i];
+            if (i < _pipes.Count)
             {
-                Color = green, Size = new Vector2(PipeWidth, topH),
-                Position = new Vector2(pipeLeft, CeilingY),
-                Name = $"PipeTop_{p.Id}"
-            });
-            _pipeContainer.AddChild(new ColorRect
+                SyncPipeRect(_pipes[i], top, bot);
+                top.Visible = true;
+                bot.Visible = true;
+            }
+            else
             {
-                Color = green, Size = new Vector2(PipeWidth, botH),
-                Position = new Vector2(pipeLeft, p.GapCenterY + GapHeight / 2f),
-                Name = $"PipeBot_{p.Id}"
-            });
+                top.Visible = false;
+                bot.Visible = false;
+            }
         }
     }
 
     // Each visual frame we reposition existing ColorRects to match scrolled pipe X values.
     public override void _Process(double delta)
     {
-        if (_pipeContainer == null) return;
-        foreach (var p in _pipes)
-        {
-            float pipeLeft = p.X - PipeWidth / 2f;
-            var top = _pipeContainer.GetNodeOrNull<ColorRect>($"PipeTop_{p.Id}");
-            var bot = _pipeContainer.GetNodeOrNull<ColorRect>($"PipeBot_{p.Id}");
-            if (top != null) top.Position = new Vector2(pipeLeft, CeilingY);
-            if (bot != null) bot.Position = new Vector2(pipeLeft, p.GapCenterY + GapHeight / 2f);
-        }
+        for (int i = 0; i < _pipes.Count && i < _pipeRects.Count; i++)
+            SyncPipeRect(_pipes[i], _pipeRects[i].Top, _pipeRects[i].Bot);
+    }
+
+    private void SyncPipeRect(PipePair p, ColorRect top, ColorRect bot)
+    {
+        float pipeLeft = p.X - PipeWidth / 2f;
+        float topH     = Mathf.Max(0f, p.GapCenterY - GapHeight / 2f - CeilingY);
+        float botH     = Mathf.Max(0f, GroundY - (p.GapCenterY + GapHeight / 2f));
+        top.Position = new Vector2(pipeLeft, CeilingY);
+        top.Size     = new Vector2(PipeWidth, topH);
+        bot.Position = new Vector2(pipeLeft, p.GapCenterY + GapHeight / 2f);
+        bot.Size     = new Vector2(PipeWidth, botH);
     }
 
     // ── Labels ────────────────────────────────────────────────────────────────
 
+    private int _lastLabelGen  = -1;
+    private int _lastLabelAlive = -1;
+
     private void UpdateLabels()
     {
         int alive = _totalBirds - _deadCount;
-        if (_genLabel   != null) _genLabel.Text   = $"Generation: {Generation}";
-        if (_aliveLabel != null) _aliveLabel.Text = $"Alive: {alive} / {_totalBirds}";
+        if (_genLabel   != null && Generation != _lastLabelGen)
+        {
+            _genLabel.Text  = $"Generation: {Generation}";
+            _lastLabelGen   = Generation;
+        }
+        if (_aliveLabel != null && alive != _lastLabelAlive)
+        {
+            _aliveLabel.Text = $"Alive: {alive} / {_totalBirds}";
+            _lastLabelAlive  = alive;
+        }
     }
 }
