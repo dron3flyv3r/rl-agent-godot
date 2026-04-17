@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://cdahylamk8126"]
 
-[ext_resource type="Script" uid="uid://s3xpcsoun3rl" path="res://addons/rl-agent-plugin/Scenes/Academy/RLGeneticAcademy.cs" id="1_academy"]
+[ext_resource type="Script" uid="uid://ck0gyfahssjb5" path="res://demo/13 FlappyBirdNEAT/Scripts/FlappyBirdTrainingAcademy.cs" id="1_academy"]
 [ext_resource type="Script" uid="uid://mxltjhy7mqj4" path="res://addons/rl-agent-plugin/Resources/Config/RLRunConfig.cs" id="3_runcfg"]
 [ext_resource type="Script" uid="uid://diqyywakvtxao" path="res://addons/rl-agent-plugin/Resources/Config/RLNEATConfig.cs" id="4_neatcfg"]
 [ext_resource type="Script" uid="uid://c5c8btd632svh" path="res://addons/rl-agent-plugin/Resources/Config/RLTrainingConfig.cs" id="4_pfeg0"]
@@ -11,7 +11,15 @@
 
 [sub_resource type="Resource" id="NeatConfig"]
 script = ExtResource("4_neatcfg")
+CompatibilityThreshold = 0.12
+WeightDiffCoeff = 1.0
+AddConnectionRate = 0.08
+AddNodeRate = 0.05
+SurvivalThreshold = 0.35
+InitialConnectionDensity = 0.35
+StagnationLimit = 10
 PopulationSize = 20
+EpisodesPerGenome = 5
 
 [sub_resource type="Resource" id="Resource_id3k2"]
 script = ExtResource("4_pfeg0")
@@ -36,7 +44,6 @@ RunConfig = SubResource("RunConfig")
 [node name="RLAgentSpawner" type="Node" parent="." unique_id=2017211253]
 script = ExtResource("5_spawner")
 AgentScene = ExtResource("7_birdgroup")
-OverrideControlMode = true
 SpawnPosition = Vector2(75, 300)
 metadata/_custom_type_script = "uid://cpyqlga2mxj1j"
 

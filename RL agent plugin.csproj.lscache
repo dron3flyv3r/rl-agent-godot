@@ -288,6 +288,9 @@ addons/rl-agent-plugin/Runtime/Training/
  TrainerFactory.cs
  TrainingLaunchManifest.cs
  VectorBatch.cs
+addons/rl-agent-plugin/Runtime/UI/
+ NeatDataFeed.cs
+ RLUIGenericStatus.cs
 addons/rl-agent-plugin/Scenes/
  Academy/RLGeneticAcademy.cs
  Bootstrap/
@@ -341,6 +344,7 @@ demo/
   FlappyBirdAgent.cs
   FlappyBirdBird.cs
   FlappyBirdController.cs
+  FlappyBirdTrainingAcademy.cs
 
 [metadataReferences]
 ../../../../usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/8.0.25/ref/net8.0/

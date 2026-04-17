@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using Godot;
 using RlAgentPlugin.Runtime;
 
@@ -19,9 +22,10 @@ namespace RlAgentPlugin.Demo;
 ///   1 = flap
 ///
 /// Rewards:
-///   +0.01 per step survived
-///   +2.0  on passing a pipe
-///   -1.0  on death (applied once when the episode ends, not every frame)
+///   +0.0010 per step survived
+///   +0.0030 scaled centering bonus when approaching the next pipe
+///   +5.0    on passing a pipe
+///   -2.0    on death (applied once when the episode ends, not every frame)
 ///
 /// Episode ends via generation barrier — all birds must die before EndEpisode is called.
 /// </summary>
@@ -42,11 +46,15 @@ public partial class FlappyBirdAgent : RLAgent2D
     // ── Debug ────────────────────────────────────────────────────────────────
 
     // Set to true at runtime to print per-bird action logs for the next episode.
-    public static bool DebugActions = true;
+    public static bool DebugActions = false;
+    private const int MaxDecisionTraceEntries = 12;
 
     // Slot assigned by the training bootstrap (logged for verification).
     private int _debugSlot = -1;
     private int _debugActionFrames;
+    private int _debugFlapCount;
+    private int _debugIdleCount;
+    private readonly Queue<string> _decisionTrace = new();
 
     // ── RLAgent2D overrides ───────────────────────────────────────────────────
 
@@ -89,6 +97,9 @@ public partial class FlappyBirdAgent : RLAgent2D
         if (_bird == null || _bird.IsDead) return;
 
         int action = actions.GetDiscrete("flap");
+        if (action == 1) _debugFlapCount++;
+        else _debugIdleCount++;
+        AppendDecisionTrace(action);
 
         // Debug: print the first 5 actions this bird receives each episode.
         if (DebugActions && _debugActionFrames < 5)
@@ -114,12 +125,16 @@ public partial class FlappyBirdAgent : RLAgent2D
         var (p1dx, p1gy) = _controller.GetNextPipe(bx);
         var (p2dx, p2gy) = _controller.GetSecondPipe(bx);
 
-        obs.AddNormalized(by,              TopY,  BotY);
-        obs.AddNormalized(_bird.VelocityY, MinVel, MaxVel);
-        obs.AddNormalized(p1dx,            0f,    MaxDx);
-        obs.AddNormalized(p1gy,            TopY,  BotY);
-        obs.AddNormalized(p2dx,            0f,    MaxDx * 2f);
-        obs.AddNormalized(p2gy,            TopY,  BotY);
+        float nextGapOffset   = p1gy - by;
+        float secondGapOffset = p2gy - by;
+        float maxGapOffset    = BotY - TopY;
+
+        obs.AddNormalized(by,               TopY,         BotY);
+        obs.AddNormalized(_bird.VelocityY,  MinVel,       MaxVel);
+        obs.AddNormalized(p1dx,             0f,           MaxDx);
+        obs.AddNormalized(nextGapOffset,   -maxGapOffset, maxGapOffset);
+        obs.AddNormalized(p2dx,             0f,           MaxDx * 2f);
+        obs.AddNormalized(secondGapOffset, -maxGapOffset, maxGapOffset);
     }
 
     public override void OnStep()
@@ -130,17 +145,23 @@ public partial class FlappyBirdAgent : RLAgent2D
         {
             if (_controller.IsGenerationOver)
             {
-                AddReward(-1.0f, "death");
+                AddReward(-2.0f, "death");
                 EndEpisode();
             }
             return;
         }
 
-        AddReward(0.01f, "survival");
+        AddReward(0.0010f, "survival");
+
+        var (nextPipeDx, nextGapY) = _controller.GetNextPipe(_bird.GlobalPosition.X);
+        float nextGapOffset = Mathf.Abs(nextGapY - _bird.GlobalPosition.Y);
+        float approachWeight = 1f - Mathf.Clamp(nextPipeDx / (_controller.PipeSpacing * 1.25f), 0f, 1f);
+        float centering = 1f - Mathf.Clamp(nextGapOffset / Mathf.Max(1f, _controller.GetCurrentGapHeight() * 0.75f), 0f, 1f);
+        AddReward(0.0030f * approachWeight * centering, "approach_centering");
 
         // Check if we just passed any pipe
         if (_controller.CheckAndMarkPassed(_bird.GlobalPosition.X, _bird))
-            AddReward(2.0f, "pipe_passed");
+            AddReward(5.0f, "pipe_passed");
 
         if (_controller.IsGenerationOver)
             EndEpisode();
@@ -149,15 +170,54 @@ public partial class FlappyBirdAgent : RLAgent2D
     public override void OnEpisodeBegin()
     {
         _debugActionFrames = 0;
+        _debugFlapCount = 0;
+        _debugIdleCount = 0;
+        _decisionTrace.Clear();
         _controller?.OnBirdReset();
     }
 
     /// <summary>Called by FlappyBirdController to inform this agent of its slot index.</summary>
     public void SetDebugSlot(int slot) => _debugSlot = slot;
 
+    public int GetDebugSlot() => _debugSlot;
+
+    public int GetDebugFlapCount() => _debugFlapCount;
+
+    public int GetDebugIdleCount() => _debugIdleCount;
+
+    public string GetDecisionTrace() => string.Join(";", _decisionTrace);
+
+    public string GetLastObservationSummary()
+    {
+        var observation = GetLastObservation();
+        if (observation.Length == 0) return "none";
+        return string.Join(",", observation.Select(v => v.ToString("F3", CultureInfo.InvariantCulture)));
+    }
+
+    private void AppendDecisionTrace(int action)
+    {
+        var observation = GetLastObservation();
+        string obsSummary = observation.Length == 0
+            ? "none"
+            : string.Join(",", observation.Select(v => v.ToString("F2", CultureInfo.InvariantCulture)));
+        string trace =
+            $"step={EpisodeSteps}" +
+            $"|a={action}" +
+            $"|y={_bird?.GlobalPosition.Y.ToString("F1", CultureInfo.InvariantCulture) ?? "n/a"}" +
+            $"|vy={_bird?.VelocityY.ToString("F1", CultureInfo.InvariantCulture) ?? "n/a"}" +
+            $"|obs={obsSummary}";
+
+        if (_decisionTrace.Count >= MaxDecisionTraceEntries)
+            _decisionTrace.Dequeue();
+        _decisionTrace.Enqueue(trace);
+    }
+
     protected override void OnHumanInput()
     {
         if (Input.IsActionJustPressed("ui_accept") || Input.IsActionJustPressed("ui_select") || Input.IsActionJustPressed("ui_up"))
-            _bird?.WantFlap = true;
+        {
+            if (_bird != null)
+                _bird.WantFlap = true;
+        }
     }
 }
