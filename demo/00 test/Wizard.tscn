@@ -1,0 +1,11 @@
+[gd_scene format=3 uid="uid://co6228cgw3he5"]
+
+[node name="Wizard" type="Node" unique_id=1263309655]
+
+[node name="Player1" type="Node2D" parent="." unique_id=1170187484]
+
+[node name="Player2" type="Node2D" parent="." unique_id=266173598]
+
+[node name="Player3" type="Node2D" parent="." unique_id=1943225607]
+
+[node name="Player4" type="Node2D" parent="." unique_id=2107698939]

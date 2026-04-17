@@ -95,9 +95,7 @@ addons/rl-agent-plugin/Resources/Config/
  RLDQNConfig.cs
  RLEnums.cs
  RLEvaluationConfig.cs
- RLEvolutionaryConfig.cs
  RLMCTSConfig.cs
- RLNEATConfig.cs
  RLPolicyGroupConfig.cs
  RLPolicyPairingConfig.cs
  RLPPOConfig.cs
@@ -199,7 +197,6 @@ addons/rl-agent-plugin/Runtime/Inference/
  InferenceLaunchManifest.cs
  InferencePolicyFactory.cs
  MCTS/MctsInferencePolicy.cs
- NEAT/NeatInferencePolicy.cs
  PPO/
   PpoInferencePolicy.cs
   PpoInferencePolicyMultiStream.cs
@@ -260,7 +257,6 @@ addons/rl-agent-plugin/Runtime/Training/
  DQN/
   DqnTrainer.cs
   DynaWorldModel.cs
- Evolutionary/EvolutionaryTrainer.cs
  ITrainer.cs
  MCTS/
   IEnvironmentModel.cs
@@ -268,14 +264,6 @@ addons/rl-agent-plugin/Runtime/Training/
   MctsSearch.cs
   MctsTrainer.cs
  Metrics/RunMetricsWriter.cs
- NEAT/
-  GenomeNetwork.cs
-  NeatCheckpointSerializer.cs
-  NeatGenome.cs
-  NeatInnovationTracker.cs
-  NeatPopulation.cs
-  NeatSpecies.cs
-  NeatTrainer.cs
  PPO/PpoTrainer.cs
  SAC/SacTrainer.cs
  SelfPlay/
@@ -288,20 +276,15 @@ addons/rl-agent-plugin/Runtime/Training/
  TrainerFactory.cs
  TrainingLaunchManifest.cs
  VectorBatch.cs
-addons/rl-agent-plugin/Runtime/UI/
- NeatDataFeed.cs
- RLUIGenericStatus.cs
-addons/rl-agent-plugin/Scenes/
- Academy/RLGeneticAcademy.cs
- Bootstrap/
-  AcademyContextImpl.cs
-  DAggerBootstrap.cs
-  DAggerLaunchManifest.cs
-  InferenceBootstrap.cs
-  RecordingBootstrap.cs
-  RecordingLaunchManifest.cs
-  TrainingBootstrap.cs
- Spawner/RLAgentSpawner.cs
+addons/rl-agent-plugin/Scenes/Bootstrap/
+ AcademyContextImpl.cs
+ DAggerBootstrap.cs
+ DAggerLaunchManifest.cs
+ InferenceBootstrap.cs
+ RecordingBootstrap.cs
+ RecordingLaunchManifest.cs
+ TrainingBootstrap.cs
+addons/rl-agent-plugin/Scenes/Spawner/RLAgentSpawner.cs
 demo/00 test/Bench/
  AlgorithmBenchCatalog.cs
  AlgorithmBenchContracts.cs
@@ -340,11 +323,6 @@ demo/
   MazeDemoPlayer.cs
  11 CustomAcademyGameDev/Scripts/GameDevAcademy.cs
  12 CustomAcademyResearch/Scripts/ResearchAcademy.cs
- 13 FlappyBirdNEAT/Scripts/
-  FlappyBirdAgent.cs
-  FlappyBirdBird.cs
-  FlappyBirdController.cs
-  FlappyBirdTrainingAcademy.cs
 
 [metadataReferences]
 ../../../../usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/8.0.25/ref/net8.0/
